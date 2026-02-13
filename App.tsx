@@ -121,6 +121,7 @@ const App: React.FC = () => {
 
   const [depositSearch, setDepositSearch] = useState('');
   const [debouncedDepositSearch, setDebouncedDepositSearch] = useState('');
+  const [sortConfig, setSortConfig] = useState<{ key: keyof ManualEntry; direction: 'asc' | 'desc' } | null>(null);
 
   const [manualCalOpen, setManualCalOpen] = useState(false);
   const [manualCalMonth, setManualCalMonth] = useState(new Date());
@@ -202,6 +203,14 @@ const App: React.FC = () => {
         alert("삭제 중 오류가 발생했습니다: " + e);
       }
     }
+  };
+
+  const handleSort = (key: keyof ManualEntry) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
   };
 
   // ✅ Deposit Management Robust Handlers
@@ -1224,19 +1233,19 @@ const App: React.FC = () => {
                             />
                           </th>
                           <th className="py-1 px-1 border-r w-8 resize-x overflow-hidden">사진</th>
-                          <th className="py-1 px-1 border-r w-7 resize-x overflow-hidden">순번</th>
-                          <th className="py-1 px-1 border-r w-8 resize-x overflow-hidden">갯수</th>
-                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden">품목</th>
-                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden">날짜</th>
-                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden">이름1</th>
-                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden">받는사람</th>
-                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden">주문번호</th>
-                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden">받는주소</th>
-                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden">비고</th>
-                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden">결제금액</th>
-                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden">연락처</th>
-                          <th className="py-1 px-1 border-r w-28 resize-x overflow-hidden">계좌번호</th>
-                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden">송장번호</th>
+                          <th className="py-1 px-1 border-r w-7 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('id')}>순번 {sortConfig?.key === 'id' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-8 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('count')}>갯수 {sortConfig?.key === 'count' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('product')}>품목 {sortConfig?.key === 'product' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('date')}>날짜 {sortConfig?.key === 'date' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('name1')}>이름1 {sortConfig?.key === 'name1' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('name2')}>받는사람 {sortConfig?.key === 'name2' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('orderNumber')}>주문번호 {sortConfig?.key === 'orderNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('address')}>받는주소 {sortConfig?.key === 'address' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('memo')}>비고 {sortConfig?.key === 'memo' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('paymentAmount')}>결제금액 {sortConfig?.key === 'paymentAmount' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('emergencyContact')}>연락처 {sortConfig?.key === 'emergencyContact' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-28 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('accountNumber')}>계좌번호 {sortConfig?.key === 'accountNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden cursor-pointer hover:bg-gray-100" onClick={() => handleSort('trackingNumber')}>송장번호 {sortConfig?.key === 'trackingNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
                           <th className="py-1 px-1 border-r w-8 resize-x overflow-hidden text-blue-600">입금전</th>
                           <th className="py-1 px-1 border-r w-8 resize-x overflow-hidden text-green-600">입금후</th>
                         </tr>
@@ -1268,6 +1277,20 @@ const App: React.FC = () => {
 
                             return true;
                           });
+
+                          if (sortConfig !== null) {
+                            filtered.sort((a, b) => {
+                              const aValue = a[sortConfig.key] || '';
+                              const bValue = b[sortConfig.key] || '';
+                              if (aValue < bValue) {
+                                return sortConfig.direction === 'asc' ? -1 : 1;
+                              }
+                              if (aValue > bValue) {
+                                return sortConfig.direction === 'asc' ? 1 : -1;
+                              }
+                              return 0;
+                            });
+                          }
                           const limited = filtered.slice(0, 200);
                           return (<>
                             {limited.map((entry, idx) => {
