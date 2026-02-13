@@ -262,9 +262,12 @@ const App: React.FC = () => {
   };
 
   const handleDepositDelete = async (id: string) => {
+    console.log("Attempting to delete document with ID:", id);
     if (!window.confirm("정말로 이 항목을 영구 삭제하시겠습니까? (복구 불가)")) return;
     try {
+      console.log("Proceeding with deletion...");
       await deleteDoc(doc(db, 'manualEntries', id));
+      console.log("Deletion successful");
       alert("삭제되었습니다.");
     } catch (e) {
       console.error("Delete Error:", e);
