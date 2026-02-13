@@ -110,7 +110,7 @@ const App: React.FC = () => {
   const [depositSubTab, setDepositSubTab] = useState<'before' | 'after'>('before');
   const [selectedDepositIds, setSelectedDepositIds] = useState<Set<string>>(new Set());
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(new Set());
-  const [manualViewDate, setManualViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [manualViewDate, setManualViewDate] = useState<string>('all');
   const [selectedManualIds, setSelectedManualIds] = useState<Set<string>>(new Set());
 
   const [depositBeforeDate, setDepositBeforeDate] = useState<string>('all');
@@ -870,12 +870,21 @@ const App: React.FC = () => {
                       const beforeItems = manualEntries.filter(e => {
                         const isBefore = e.beforeDeposit && !e.afterDeposit;
                         if (!isBefore) return false;
+
+                        // 3개월 제한 (검색 시)
+                        const limitDate = new Date();
+                        limitDate.setMonth(limitDate.getMonth() - 3);
+                        const limitDateStr = limitDate.toISOString().split('T')[0];
+
                         if (debouncedDepositSearch) {
+                          // 검색 시 'all'이면 3개월 제한
+                          if (depositBeforeDate === 'all' && e.date < limitDateStr) return false;
+
                           const q = debouncedDepositSearch.toLowerCase();
-                          return (e.name1 || '').toLowerCase().includes(q)
-                            || (e.name2 || '').toLowerCase().includes(q)
-                            || (e.orderNumber || '').toLowerCase().includes(q)
-                            || (e.accountNumber || '').toLowerCase().includes(q);
+                          return String(e.name1 || '').toLowerCase().includes(q)
+                            || String(e.name2 || '').toLowerCase().includes(q)
+                            || String(e.orderNumber || '').toLowerCase().includes(q)
+                            || String(e.accountNumber || '').toLowerCase().includes(q);
                         }
                         return depositBeforeDate === 'all' || e.date === depositBeforeDate;
                       });
@@ -939,12 +948,21 @@ const App: React.FC = () => {
                       const afterItems = manualEntries.filter(e => {
                         const isAfter = e.afterDeposit;
                         if (!isAfter) return false;
+
+                        // 3개월 제한 (검색 시)
+                        const limitDate = new Date();
+                        limitDate.setMonth(limitDate.getMonth() - 3);
+                        const limitDateStr = limitDate.toISOString().split('T')[0];
+
                         if (debouncedDepositSearch) {
+                          // 검색 시 'all'이면 3개월 제한
+                          if (depositAfterDate === 'all' && e.date < limitDateStr) return false;
+
                           const q = debouncedDepositSearch.toLowerCase();
-                          return (e.name1 || '').toLowerCase().includes(q)
-                            || (e.name2 || '').toLowerCase().includes(q)
-                            || (e.orderNumber || '').toLowerCase().includes(q)
-                            || (e.accountNumber || '').toLowerCase().includes(q);
+                          return String(e.name1 || '').toLowerCase().includes(q)
+                            || String(e.name2 || '').toLowerCase().includes(q)
+                            || String(e.orderNumber || '').toLowerCase().includes(q)
+                            || String(e.accountNumber || '').toLowerCase().includes(q);
                         }
                         return depositAfterDate === 'all' || e.date === depositAfterDate;
                       });
