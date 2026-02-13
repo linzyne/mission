@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Product, Submission, AppMode, CustomerView, AppSettings, AdminTab, ManualEntry, ReviewEntry, ProductPrice } from './types';
 import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
-import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch } from 'firebase/firestore';
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('customer');
@@ -190,14 +190,16 @@ const App: React.FC = () => {
     if (selectedManualIds.size === 0) return;
     if (window.confirm(`${selectedManualIds.size}개의 항목을 삭제하시겠습니까?`)) {
       try {
-        const batch = Array.from(selectedManualIds);
-        const promises = batch.map(id => deleteDoc(doc(db, 'manualEntries', id)));
-        await Promise.all(promises);
+        const batch = writeBatch(db);
+        selectedManualIds.forEach(id => {
+          batch.delete(doc(db, 'manualEntries', id));
+        });
+        await batch.commit();
         setSelectedManualIds(new Set());
         alert("삭제되었습니다.");
       } catch (e) {
         console.error("Delete Error:", e);
-        alert("삭제 중 오류가 발생했습니다.");
+        alert("삭제 중 오류가 발생했습니다: " + e);
       }
     }
   };
