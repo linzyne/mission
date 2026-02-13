@@ -204,6 +204,54 @@ const App: React.FC = () => {
     }
   };
 
+  // ✅ Deposit Management Robust Handlers
+  const handleBulkDepositComplete = async () => {
+    if (selectedDepositIds.size === 0) return;
+    if (!window.confirm(`${selectedDepositIds.size}건을 입금완료 처리하시겠습니까?`)) return;
+
+    try {
+      const batch = writeBatch(db);
+      selectedDepositIds.forEach(id => {
+        batch.update(doc(db, 'manualEntries', id), { afterDeposit: true, depositDate: depositActionDate });
+      });
+      await batch.commit();
+      setSelectedDepositIds(new Set());
+      alert("처리되었습니다.");
+    } catch (e) {
+      console.error(e);
+      alert("오류가 발생했습니다: " + e);
+    }
+  };
+
+  const handleBulkDepositCancel = async () => {
+    if (selectedDepositIds.size === 0) return;
+    if (!window.confirm(`${selectedDepositIds.size}건의 입금완료를 취소하시겠습니까?`)) return;
+
+    try {
+      const batch = writeBatch(db);
+      selectedDepositIds.forEach(id => {
+        batch.update(doc(db, 'manualEntries', id), { afterDeposit: false });
+      });
+      await batch.commit();
+      setSelectedDepositIds(new Set());
+      alert("취소되었습니다.");
+    } catch (e) {
+      console.error(e);
+      alert("오류가 발생했습니다: " + e);
+    }
+  };
+
+  const handleDepositRelease = async (id: string, type: 'before' | 'after') => {
+    if (!window.confirm("해제하시겠습니까?")) return;
+    try {
+      const field = type === 'before' ? 'beforeDeposit' : 'afterDeposit';
+      await updateDoc(doc(db, 'manualEntries', id), { [field]: false });
+    } catch (e) {
+      console.error(e);
+      alert("해제 중 오류가 발생했습니다: " + e);
+    }
+  };
+
   const handleLotteDownload = async () => {
     const selectedEntries = manualEntries.filter(entry => selectedManualIds.has(entry.id));
     if (selectedEntries.length === 0) return alert("선택된 항목이 없습니다.");
@@ -816,12 +864,7 @@ const App: React.FC = () => {
                           <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl">
                             <input type="date" value={depositActionDate} onChange={e => setDepositActionDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none px-2 text-gray-600" />
                             <button
-                              onClick={async () => {
-                                if (selectedDepositIds.size === 0) return;
-                                const promises = Array.from(selectedDepositIds).map(id => updateDoc(doc(db, 'manualEntries', id), { afterDeposit: true, depositDate: depositActionDate }));
-                                await Promise.all(promises);
-                                setSelectedDepositIds(new Set());
-                              }}
+                              onClick={handleBulkDepositComplete}
                               className={`px-5 py-2 rounded-xl text-sm font-black transition-all ${selectedDepositIds.size > 0 ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
                             >
                               입금완료 ({selectedDepositIds.size}건)
@@ -831,12 +874,7 @@ const App: React.FC = () => {
                       )}
                       {depositSubTab === 'after' && manualEntries.filter(e => e.afterDeposit).length > 0 && (
                         <button
-                          onClick={async () => {
-                            if (selectedDepositIds.size === 0) return;
-                            const promises = Array.from(selectedDepositIds).map(id => updateDoc(doc(db, 'manualEntries', id), { afterDeposit: false }));
-                            await Promise.all(promises);
-                            setSelectedDepositIds(new Set());
-                          }}
+                          onClick={handleBulkDepositCancel}
                           className={`px-5 py-2 rounded-xl text-sm font-black transition-all ${selectedDepositIds.size > 0 ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
                         >
                           취소 ({selectedDepositIds.size}건)
@@ -939,7 +977,7 @@ const App: React.FC = () => {
                                 <td className="p-2">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
                                 <td className="p-2 text-blue-600">{entry.accountNumber}</td>
                                 <td className="p-2">
-                                  <button onClick={() => updateManualEntry(entry.id, 'beforeDeposit', false)} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-100 transition-all">해제</button>
+                                  <button onClick={() => handleDepositRelease(entry.id, 'before')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-100 transition-all">해제</button>
                                 </td>
                               </tr>
                             ))}
@@ -1016,7 +1054,7 @@ const App: React.FC = () => {
                                 <td className="p-2">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
                                 <td className="p-2 text-blue-600">{entry.accountNumber}</td>
                                 <td className="p-2">
-                                  <button onClick={() => updateManualEntry(entry.id, 'afterDeposit', false)} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-100 transition-all">해제</button>
+                                  <button onClick={() => handleDepositRelease(entry.id, 'after')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-100 transition-all">해제</button>
                                 </td>
                               </tr>
                             ))}
