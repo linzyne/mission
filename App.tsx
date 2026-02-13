@@ -1139,9 +1139,9 @@ const App: React.FC = () => {
                             <input type="checkbox" className="w-3 h-3 accent-blue-600"
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  // ✅ manualSearch 사용 (변경 사항 8)
                                   const visibleIds = manualEntries.filter(entry => {
                                     if (!entry) return false;
+                                    if (manualViewDate !== 'all' && entry.date !== manualViewDate) return false;
                                     if (manualSearch) {
                                       const q = manualSearch.toLowerCase();
                                       return (entry.name1 || '').toLowerCase().includes(q)
@@ -1150,8 +1150,8 @@ const App: React.FC = () => {
                                         || (entry.product || '').toLowerCase().includes(q)
                                         || (entry.accountNumber || '').toLowerCase().includes(q);
                                     }
-                                    return entry.date === manualViewDate;
-                                  }).map(e => e.id);
+                                    return true;
+                                  }).slice(0, 200).map(e => e.id);
                                   setSelectedManualIds(new Set(visibleIds));
                                 } else {
                                   setSelectedManualIds(new Set());
@@ -1178,24 +1178,25 @@ const App: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="text-[11px] font-bold divide-y divide-gray-100">
-                        {/* ✅ manualSearch 사용 + 안전성 체크 (변경 사항 9) */}
-                        {manualEntries.filter(entry => {
-                          if (!entry) return false;
-
-                          // 검색어가 있으면 즉시 검색 (디바운스 없이)
-                          if (manualSearch) {
-                            const q = manualSearch.toLowerCase();
-                            if ((entry.name1 || '').toLowerCase().includes(q)) return true;
-                            if ((entry.name2 || '').toLowerCase().includes(q)) return true;
-                            if ((entry.orderNumber || '').toLowerCase().includes(q)) return true;
-                            if ((entry.product || '').toLowerCase().includes(q)) return true;
-                            if ((entry.accountNumber || '').toLowerCase().includes(q)) return true;
-                            return false;
-                          }
-
-                          // 날짜 필터 (검색어 없을 때만)
-                          return entry.date === manualViewDate;
-                        }).map((entry, idx) => {
+                        {(() => {
+                          const filtered = manualEntries.filter(entry => {
+                            if (!entry) return false;
+                            // 날짜 필터 항상 적용 ('all'이면 전체)
+                            if (manualViewDate !== 'all' && entry.date !== manualViewDate) return false;
+                            // 검색 필터
+                            if (manualSearch) {
+                              const q = manualSearch.toLowerCase();
+                              return (entry.name1 || '').toLowerCase().includes(q)
+                                || (entry.name2 || '').toLowerCase().includes(q)
+                                || (entry.orderNumber || '').toLowerCase().includes(q)
+                                || (entry.product || '').toLowerCase().includes(q)
+                                || (entry.accountNumber || '').toLowerCase().includes(q);
+                            }
+                            return true;
+                          });
+                          const limited = filtered.slice(0, 200);
+                          return (<>
+                        {limited.map((entry, idx) => {
                           const isBlue = entry.afterDeposit;
                           const rowColor = isBlue ? 'text-blue-600' : '';
                           return (
@@ -1259,25 +1260,22 @@ const App: React.FC = () => {
                             </tr>
                           );
                         })}
-                        {/* ✅ 검색 결과 없을 때 표시 (변경 사항 11) */}
-                        {manualEntries.filter(entry => {
-                          if (!entry) return false;
-                          if (manualSearch && typeof manualSearch === 'string') {
-                            const q = manualSearch.toLowerCase();
-                            return (entry.name1 || '').toLowerCase().includes(q)
-                              || (entry.name2 || '').toLowerCase().includes(q)
-                              || (entry.orderNumber || '').toLowerCase().includes(q)
-                              || (entry.product || '').toLowerCase().includes(q)
-                              || (entry.accountNumber || '').toLowerCase().includes(q);
-                          }
-                          return entry.date === manualViewDate;
-                        }).length === 0 && (
+                        {filtered.length === 0 && (
                             <tr>
-                              <td colSpan={16} className="p-16 text-center text-gray-300 font-bold">
-                                {manualSearch ? `"${manualSearch}" 검색 결과가 없습니다.` : `${manualViewDate} 날짜에 데이터가 없습니다.`}
+                              <td colSpan={17} className="p-16 text-center text-gray-300 font-bold">
+                                {manualSearch ? `"${manualSearch}" 검색 결과가 없습니다.` : `${manualViewDate === 'all' ? '전체' : manualViewDate} 날짜에 데이터가 없습니다.`}
                               </td>
                             </tr>
-                          )}
+                        )}
+                        {filtered.length > 200 && (
+                            <tr>
+                              <td colSpan={17} className="p-4 text-center text-orange-500 font-bold text-xs">
+                                총 {filtered.length}건 중 200건만 표시됩니다. 검색어를 더 입력해주세요.
+                              </td>
+                            </tr>
+                        )}
+                          </>);
+                        })()}
                       </tbody>
                     </table>
                   </div>
