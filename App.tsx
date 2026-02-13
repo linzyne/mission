@@ -42,6 +42,7 @@ const App: React.FC = () => {
     paymentAmount: 0,
     emergencyContact: '',
     accountNumber: '',
+    trackingNumber: '',
     beforeDeposit: false,
     afterDeposit: false
   });
@@ -116,9 +117,7 @@ const App: React.FC = () => {
   const [depositAfterDate, setDepositAfterDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [depositActionDate, setDepositActionDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
-  // ✅ 디바운스 검색 추가 (변경 사항 1)
   const [manualSearch, setManualSearch] = useState('');
-  const [debouncedManualSearch, setDebouncedManualSearch] = useState('');
 
   const [depositSearch, setDepositSearch] = useState('');
   const [debouncedDepositSearch, setDebouncedDepositSearch] = useState('');
@@ -128,14 +127,6 @@ const App: React.FC = () => {
   const [depositCalOpen, setDepositCalOpen] = useState(false);
   const [depositCalMonth, setDepositCalMonth] = useState(new Date());
 
-  // ✅ 디바운스 로직 - 구매목록 검색 (변경 사항 2)
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedManualSearch(manualSearch);
-    }, 300); // 300ms 대기 후 검색 실행
-
-    return () => clearTimeout(timer);
-  }, [manualSearch]);
 
   // ✅ 디바운스 로직 - 입금관리 검색 (변경 사항 3)
   useEffect(() => {
@@ -351,11 +342,41 @@ const App: React.FC = () => {
     else if (e.key === 'ArrowRight') targetCol++;
     else return;
 
+    e.preventDefault();
     const nextInput = document.querySelector(`input[data-row="${targetRow}"][data-col="${targetCol}"]`) as HTMLInputElement;
     if (nextInput) {
-      e.preventDefault();
       nextInput.focus();
     }
+  };
+
+  const handleCellPaste = (e: React.ClipboardEvent, startRowIdx: number, startColIdx: number) => {
+    const text = e.clipboardData.getData('text/plain');
+    if (!text) return;
+
+    const rows = text.split(/\r?\n/).filter(r => r.length > 0);
+    if (rows.length === 0) return;
+
+    const cells = rows.map(r => r.split('\t'));
+
+    // 여러 셀 데이터가 있으면 셀 단위 붙여넣기
+    if (cells.length > 1 || cells[0].length > 1) {
+      e.preventDefault();
+      for (let r = 0; r < cells.length; r++) {
+        for (let c = 0; c < cells[r].length; c++) {
+          const targetRow = startRowIdx + r;
+          const targetCol = startColIdx + c;
+          const input = document.querySelector(`input[data-row="${targetRow}"][data-col="${targetCol}"]`) as HTMLInputElement;
+          if (input) {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+            if (nativeInputValueSetter) {
+              nativeInputValueSetter.call(input, cells[r][c].trim());
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+          }
+        }
+      }
+    }
+    // 단일 셀이면 기본 붙여넣기 동작 유지
   };
 
   const downloadBeforeDepositCsv = () => {
@@ -1087,9 +1108,6 @@ const App: React.FC = () => {
                             value={manualSearch}
                             onChange={e => setManualSearch(e.target.value)}
                           />
-                          {manualSearch && manualSearch !== debouncedManualSearch && (
-                            <span className="absolute right-3 top-2.5 text-[10px] text-gray-400">검색중...</span>
-                          )}
                         </div>
                         {selectedManualIds.size > 0 && (
                           <button onClick={deleteSelectedManualEntries} className="px-5 py-2.5 bg-red-100 text-red-600 rounded-xl font-black text-xs hover:bg-red-200 transition-colors">삭제 ({selectedManualIds.size})</button>
@@ -1121,11 +1139,11 @@ const App: React.FC = () => {
                             <input type="checkbox" className="w-3 h-3 accent-blue-600"
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  // ✅ debouncedManualSearch 사용 (변경 사항 8)
+                                  // ✅ manualSearch 사용 (변경 사항 8)
                                   const visibleIds = manualEntries.filter(entry => {
                                     if (!entry) return false;
-                                    if (debouncedManualSearch) {
-                                      const q = debouncedManualSearch.toLowerCase();
+                                    if (manualSearch) {
+                                      const q = manualSearch.toLowerCase();
                                       return (entry.name1 || '').toLowerCase().includes(q)
                                         || (entry.name2 || '').toLowerCase().includes(q)
                                         || (entry.orderNumber || '').toLowerCase().includes(q)
@@ -1141,25 +1159,26 @@ const App: React.FC = () => {
                               }}
                             />
                           </th>
-                          <th className="py-1 px-1 border-r w-10 resize-x overflow-hidden">사진</th>
-                          <th className="py-1 px-1 border-r w-8 resize-x overflow-hidden">순번</th>
-                          <th className="py-1 px-1 border-r w-10 resize-x overflow-hidden">갯수</th>
-                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden">품목</th>
-                          <th className="py-1 px-1 border-r w-24 resize-x overflow-hidden">날짜</th>
-                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden">이름1</th>
-                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden">받는사람</th>
-                          <th className="py-1 px-1 border-r w-24 resize-x overflow-hidden">주문번호</th>
-                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden">받는주소</th>
-                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden">비고</th>
-                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden">결제금액</th>
-                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden">연락처</th>
-                          <th className="py-1 px-1 border-r w-36 resize-x overflow-hidden">계좌번호</th>
-                          <th className="py-1 px-1 border-r w-10 resize-x overflow-hidden text-blue-600">입금전</th>
-                          <th className="py-1 px-1 border-r w-10 resize-x overflow-hidden text-green-600">입금후</th>
+                          <th className="py-1 px-1 border-r w-8 resize-x overflow-hidden">사진</th>
+                          <th className="py-1 px-1 border-r w-7 resize-x overflow-hidden">순번</th>
+                          <th className="py-1 px-1 border-r w-8 resize-x overflow-hidden">갯수</th>
+                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden">품목</th>
+                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden">날짜</th>
+                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden">이름1</th>
+                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden">받는사람</th>
+                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden">주문번호</th>
+                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden">받는주소</th>
+                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden">비고</th>
+                          <th className="py-1 px-1 border-r w-14 resize-x overflow-hidden">결제금액</th>
+                          <th className="py-1 px-1 border-r w-16 resize-x overflow-hidden">연락처</th>
+                          <th className="py-1 px-1 border-r w-28 resize-x overflow-hidden">계좌번호</th>
+                          <th className="py-1 px-1 border-r w-20 resize-x overflow-hidden">송장번호</th>
+                          <th className="py-1 px-1 border-r w-8 resize-x overflow-hidden text-blue-600">입금전</th>
+                          <th className="py-1 px-1 border-r w-8 resize-x overflow-hidden text-green-600">입금후</th>
                         </tr>
                       </thead>
                       <tbody className="text-[11px] font-bold divide-y divide-gray-100">
-                        {/* ✅ debouncedManualSearch 사용 + 안전성 체크 (변경 사항 9) */}
+                        {/* ✅ manualSearch 사용 + 안전성 체크 (변경 사항 9) */}
                         {manualEntries.filter(entry => {
                           if (!entry) return false;
 
@@ -1243,8 +1262,8 @@ const App: React.FC = () => {
                         {/* ✅ 검색 결과 없을 때 표시 (변경 사항 11) */}
                         {manualEntries.filter(entry => {
                           if (!entry) return false;
-                          if (debouncedManualSearch && typeof debouncedManualSearch === 'string') {
-                            const q = debouncedManualSearch.toLowerCase();
+                          if (manualSearch && typeof manualSearch === 'string') {
+                            const q = manualSearch.toLowerCase();
                             return (entry.name1 || '').toLowerCase().includes(q)
                               || (entry.name2 || '').toLowerCase().includes(q)
                               || (entry.orderNumber || '').toLowerCase().includes(q)
@@ -1255,7 +1274,7 @@ const App: React.FC = () => {
                         }).length === 0 && (
                             <tr>
                               <td colSpan={16} className="p-16 text-center text-gray-300 font-bold">
-                                {debouncedManualSearch ? `"${debouncedManualSearch}" 검색 결과가 없습니다.` : `${manualViewDate} 날짜에 데이터가 없습니다.`}
+                                {manualSearch ? `"${manualSearch}" 검색 결과가 없습니다.` : `${manualViewDate} 날짜에 데이터가 없습니다.`}
                               </td>
                             </tr>
                           )}
