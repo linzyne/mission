@@ -110,7 +110,7 @@ const App: React.FC = () => {
   const [depositSubTab, setDepositSubTab] = useState<'before' | 'after'>('before');
   const [selectedDepositIds, setSelectedDepositIds] = useState<Set<string>>(new Set());
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(new Set());
-  const [manualViewDate, setManualViewDate] = useState<string>('all');
+  const [manualViewDate, setManualViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [selectedManualIds, setSelectedManualIds] = useState<Set<string>>(new Set());
 
   const [depositBeforeDate, setDepositBeforeDate] = useState<string>('all');
@@ -189,10 +189,16 @@ const App: React.FC = () => {
   const deleteSelectedManualEntries = async () => {
     if (selectedManualIds.size === 0) return;
     if (window.confirm(`${selectedManualIds.size}개의 항목을 삭제하시겠습니까?`)) {
-      const batch = selectedManualIds;
-      const promises = Array.from(batch).map(id => deleteDoc(doc(db, 'manualEntries', id)));
-      await Promise.all(promises);
-      setSelectedManualIds(new Set());
+      try {
+        const batch = Array.from(selectedManualIds);
+        const promises = batch.map(id => deleteDoc(doc(db, 'manualEntries', id)));
+        await Promise.all(promises);
+        setSelectedManualIds(new Set());
+        alert("삭제되었습니다.");
+      } catch (e) {
+        console.error("Delete Error:", e);
+        alert("삭제 중 오류가 발생했습니다.");
+      }
     }
   };
 
@@ -1205,14 +1211,10 @@ const App: React.FC = () => {
                           const filtered = manualEntries.filter(entry => {
                             if (!entry) return false;
 
-                            // 날짜 필터 항상 적용 ('all'이면 전체)
-                            if (manualViewDate !== 'all' && entry.date !== manualViewDate) return false;
-
-                            // 검색 시 최근 3개월 데이터만 검색 (기본 설정)
-                            if (manualSearch && manualViewDate === 'all' && entry.date < limitDateStr) return false;
-
-                            // 검색 필터
+                            // 검색 시 동작: 날짜 필터 무시하고 3개월 이내 데이터 전체 검색
                             if (manualSearch) {
+                              if (entry.date < limitDateStr) return false;
+
                               const q = manualSearch.toLowerCase();
                               return String(entry.name1 || '').toLowerCase().includes(q)
                                 || String(entry.name2 || '').toLowerCase().includes(q)
@@ -1220,6 +1222,10 @@ const App: React.FC = () => {
                                 || String(entry.product || '').toLowerCase().includes(q)
                                 || String(entry.accountNumber || '').toLowerCase().includes(q);
                             }
+
+                            // 일반 조회 시: 선택된 날짜('all' 또는 특정 날짜)만 필터링
+                            if (manualViewDate !== 'all' && entry.date !== manualViewDate) return false;
+
                             return true;
                           });
                           const limited = filtered.slice(0, 200);
