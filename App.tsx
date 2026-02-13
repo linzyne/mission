@@ -1191,19 +1191,16 @@ const App: React.FC = () => {
                               <td className="p-1 border-r text-center text-gray-400 text-[10px]">{idx + 1}</td>
                               <td className="p-0 border-r"><input data-row={idx} data-col={0} onKeyDown={(e) => handleKeyDown(e, idx, 0)} type="number" className={`excel-input ${rowColor}`} value={entry.count > 0 ? entry.count : ''} onChange={e => updateManualEntry(entry.id, 'count', Number(e.target.value))} /></td>
                               <td className="p-0 border-r">
-                                <select
+                                <input
                                   data-row={idx}
                                   data-col={1}
                                   onKeyDown={(e) => handleKeyDown(e, idx, 1)}
+                                  type="text"
                                   className={`excel-input ${rowColor} cursor-pointer`}
                                   value={entry.product}
                                   onChange={e => updateManualEntry(entry.id, 'product', e.target.value)}
-                                >
-                                  <option value="">(선택)</option>
-                                  {productPrices.map(p => (
-                                    <option key={p.id} value={p.name}>{p.name}</option>
-                                  ))}
-                                </select>
+                                  placeholder="(입력)"
+                                />
                               </td>
                               <td className="p-0 border-r"><input data-row={idx} data-col={2} onKeyDown={(e) => handleKeyDown(e, idx, 2)} type="date" className={`excel-input px-1 ${rowColor}`} value={entry.date} onChange={e => updateManualEntry(entry.id, 'date', e.target.value)} /></td>
                               <td className="p-0 border-r"><input data-row={idx} data-col={3} onKeyDown={(e) => handleKeyDown(e, idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.name1} onChange={e => updateManualEntry(entry.id, 'name1', e.target.value)} /></td>
