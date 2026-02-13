@@ -1174,9 +1174,7 @@ const App: React.FC = () => {
                               || (entry.name2 || '').toLowerCase().includes(q)
                               || (entry.orderNumber || '').toLowerCase().includes(q)
                               || (entry.product || '').toLowerCase().includes(q)
-                              || (entry.accountNumber || '').toLowerCase().includes(q)
-                              || (entry.address || '').toLowerCase().includes(q)
-                              || (entry.emergencyContact || '').toLowerCase().includes(q);
+                              || (entry.accountNumber || '').toLowerCase().includes(q);
                           }
                           // Date Filter (Only if no search)
                           return entry.date === manualViewDate;
