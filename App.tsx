@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Product, Submission, AppMode, CustomerView, AppSettings, AdminTab, ManualEntry, ReviewEntry, ProductPrice } from './types';
 import { verifyImage } from './services/geminiService';
@@ -61,12 +60,9 @@ const App: React.FC = () => {
   // Firestore Sync: Manual Entries
   const [manualEntries, setManualEntries] = useState<ManualEntry[]>([]);
   useEffect(() => {
-    const q = query(collection(db, 'manualEntries')); // Optionally add orderBy('date', 'desc')
+    const q = query(collection(db, 'manualEntries'));
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ManualEntry));
-      // Sort locally or use query orderBy. Sorting by date desc implies new ones top?
-      // Original logic didn't strictly sort but appended.
-      // Let's sort by date descending to keep it organized
       list.sort((a, b) => b.date.localeCompare(a.date));
       setManualEntries(list);
     });
@@ -119,12 +115,36 @@ const App: React.FC = () => {
   const [depositBeforeDate, setDepositBeforeDate] = useState<string>('all');
   const [depositAfterDate, setDepositAfterDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [depositActionDate, setDepositActionDate] = useState<string>(new Date().toISOString().split('T')[0]);
+
+  // ✅ 디바운스 검색 추가 (변경 사항 1)
   const [manualSearch, setManualSearch] = useState('');
+  const [debouncedManualSearch, setDebouncedManualSearch] = useState('');
+
   const [depositSearch, setDepositSearch] = useState('');
+  const [debouncedDepositSearch, setDebouncedDepositSearch] = useState('');
+
   const [manualCalOpen, setManualCalOpen] = useState(false);
   const [manualCalMonth, setManualCalMonth] = useState(new Date());
   const [depositCalOpen, setDepositCalOpen] = useState(false);
   const [depositCalMonth, setDepositCalMonth] = useState(new Date());
+
+  // ✅ 디바운스 로직 - 구매목록 검색 (변경 사항 2)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedManualSearch(manualSearch);
+    }, 300); // 300ms 대기 후 검색 실행
+
+    return () => clearTimeout(timer);
+  }, [manualSearch]);
+
+  // ✅ 디바운스 로직 - 입금관리 검색 (변경 사항 3)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedDepositSearch(depositSearch);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [depositSearch]);
 
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -178,9 +198,7 @@ const App: React.FC = () => {
   const deleteSelectedManualEntries = async () => {
     if (selectedManualIds.size === 0) return;
     if (window.confirm(`${selectedManualIds.size}개의 항목을 삭제하시겠습니까?`)) {
-      const batch = selectedManualIds; // Copy set
-      // Delete one by one or use batch write? Standard SDK batch is limited to 500.
-      // For simplicity loop deleteDoc
+      const batch = selectedManualIds;
       const promises = Array.from(batch).map(id => deleteDoc(doc(db, 'manualEntries', id)));
       await Promise.all(promises);
       setSelectedManualIds(new Set());
@@ -234,17 +252,13 @@ const App: React.FC = () => {
         guideText: newProduct.guideText || '',
         refundAmount: newProduct.refundAmount || 0,
         totalQuota: newProduct.totalQuota || 0,
-        remainingQuota: newProduct.totalQuota || 0, // Reset logic? Original: totalQuota.
+        remainingQuota: newProduct.totalQuota || 0,
         thumbnail: newProduct.thumbnail
       });
       setEditingProductId(null);
     } else {
       const product: Product = {
-        id: Date.now().toString(), // Will be overwritten by firestore if logic differs, but here we keep ID for now? 
-        // Better to let Firestore generate ID or use this. 
-        // I will use setDoc with this ID to keep it consistent or addDoc. 
-        // Let's use addDoc for auto ID or setDoc with this ID.
-        // Original code used Date.now().
+        id: Date.now().toString(),
         name: newProduct.name,
         guideText: newProduct.guideText || '',
         reviewGuideText: '',
@@ -253,7 +267,6 @@ const App: React.FC = () => {
         remainingQuota: newProduct.totalQuota || 10,
         thumbnail: newProduct.thumbnail,
       };
-      // For products, let's use addDoc to get a nice ID or just use the generated one.
       await addDoc(collection(db, 'products'), product);
     }
     setNewProduct({ name: '', guideText: '', refundAmount: 0, totalQuota: 10, thumbnail: '' });
@@ -266,8 +279,6 @@ const App: React.FC = () => {
   };
 
   const addMoreRows = async (count: number) => {
-    // Add 'count' empty docs
-    // We can use batch for speed
     const promises = Array.from({ length: count }).map(() => {
       const newRow = createEmptyRow(manualViewDate);
       return setDoc(doc(db, 'manualEntries', newRow.id), newRow);
@@ -275,23 +286,7 @@ const App: React.FC = () => {
     await Promise.all(promises);
   };
 
-  // Ensure at least 10 rows for the current date logic 
-  // This logic runs on every render/effect.
-  // "CurrentRows" is calculated from manualEntries state (synced).
-  // If < 10, we add more.
-  // WARNING: If multiple users open the app on the same date, they might ALL add rows simultaneously, causing 10xN rows.
-  // Race condition.
-  // For now, I will Comment out this auto-add logic to prevent explosion, or rely on manual "Add 10 rows".
-  // Or check if "I am the one" who added? Hard.
-  // Let's REMOVE the useEffect for auto-adding rows to be safe in multi-user env.
-
-  /* useEffect(() => {
-     // Removed auto-add logic for multi-user safety
-  }, [manualViewDate]); */
-
-
   const updateManualEntry = async (id: string, field: keyof ManualEntry, value: any) => {
-    // 1. Find current entry for calculation
     const entry = manualEntries.find(e => e.id === id);
     if (!entry) return;
 
@@ -314,7 +309,6 @@ const App: React.FC = () => {
 
     await updateDoc(doc(db, 'manualEntries', id), updates);
   };
-
 
   const handleManualImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -347,7 +341,6 @@ const App: React.FC = () => {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent, rowIdx: number, colIdx: number) => {
-    // 한글 입력 중(조합 중)일 때 방향키 입력 무시 (중복 이동 방지)
     if (e.nativeEvent.isComposing) return;
 
     let targetRow = rowIdx;
@@ -369,7 +362,6 @@ const App: React.FC = () => {
     const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
     if (beforeItems.length === 0) return;
     const rows = beforeItems.map(e => {
-      // 계좌번호 필드에서 은행명/계좌번호 분리 (구분자: 공백, /, |)
       const parts = e.accountNumber.split(/[\s\/\|]+/).filter(Boolean);
       const bankName = parts.length >= 2 ? parts[0] : '';
       const accountNum = parts.length >= 2 ? parts.slice(1).join('') : e.accountNumber;
@@ -404,13 +396,6 @@ const App: React.FC = () => {
     }
     setIsSubmitting(true);
 
-    // Save application to manualEntries for now, or a new 'submissions' collection?
-    // User flow implies 'manualEntries' are the core order list.
-    // Let's add it to manualEntries as a new row? 
-    // Or just save to a separate collection. The manualEntries is for "Manual Input" from admin usually.
-    // But "Customer/Apply" flow typically feeds into the same system.
-    // Let's add to 'manualEntries' to be useful.
-
     try {
       const selectedProduct = products.find(p => p.id === selectedProductId);
       const newEntry: ManualEntry = {
@@ -420,11 +405,9 @@ const App: React.FC = () => {
         name1: customerForm.kakaoNick,
         emergencyContact: customerForm.phoneNumber,
         date: new Date().toISOString().split('T')[0],
-        paymentAmount: selectedProduct?.price || 0, // Assuming product has price? Product type doesn't have price, productPrices does.
-        // We'll leave paymentAmount 0 or try to find it.
+        paymentAmount: selectedProduct?.price || 0,
       };
 
-      // Try to find price
       const priceObj = productPrices.find(p => p.name === newEntry.product);
       if (priceObj) newEntry.paymentAmount = priceObj.price;
 
@@ -452,46 +435,30 @@ const App: React.FC = () => {
 
     setIsSubmitting(true);
 
-    // 1. Convert to Base64
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onloadend = async () => {
       const base64Image = reader.result as string;
 
-      // 즉시 제출 완료 처리
       setLastSubmittedType('review');
       setIsSubmitting(false);
       setShowSuccess(true);
 
-      // 백그라운드에서 OCR 매칭 (사용자에게 알림 없이 내부 처리)
       try {
         const { extractOrderInfo } = await import('./services/geminiService');
         const { orderNumber: extractedOrderNumber, ordererName } = await extractOrderInfo(base64Image);
 
-        // 후기완료 탭에 데이터 저장 (OCR 결과와 무관하게 항상 저장)
         const reviewEntry: ReviewEntry = {
-          id: Math.random().toString(36).substr(2, 9), // Firestore will generate ID if we use addDoc, but we typically use custom objects.
-          // Let's use addDoc return ID or just keeping random ID is fine if we store it in field.
-          // Firestore 'id' is document ID.
-          // Let's rely on addDoc.
+          id: Math.random().toString(36).substr(2, 9),
           image: base64Image,
           orderNumber: extractedOrderNumber || '',
           ordererName: ordererName || '',
           bankInfo: customerForm.orderNumber || '',
           date: new Date().toISOString().split('T')[0],
         };
-        // await addDoc(collection(db, 'reviewEntries'), reviewEntry); 
-        // Note: reviewEntry type has 'id'. addDoc ignores 'id' field in data usually? 
-        // Actually we should put 'id' in the data if we want to read it back as part of data.
         await addDoc(collection(db, 'reviewEntries'), reviewEntry);
 
         if (extractedOrderNumber) {
-          // Find matching order in Firestore
-          // We need to query.
-          // Since manualEntries is synced, we can look it up in 'manualEntries' state?
-          // YES, 'manualEntries' is synced!
-          // We can use the synced state to find the ID, then updateDoc.
-
           const matchedEntry = manualEntries.find(entry => entry.orderNumber === extractedOrderNumber);
           if (matchedEntry) {
             await updateDoc(doc(db, 'manualEntries', matchedEntry.id), { beforeDeposit: true });
@@ -512,7 +479,7 @@ const App: React.FC = () => {
     setShowSuccess(false);
     setCustomerView('landing');
     setSelectedProductId(null);
-    setCustomerForm({ kakaoNick: '', phoneNumber: '', proofImage: '' });
+    setCustomerForm({ kakaoNick: '', phoneNumber: '', proofImage: '', orderNumber: '' });
   };
 
   const renderDatePicker = (
@@ -631,7 +598,6 @@ const App: React.FC = () => {
 
               {adminTab === 'dashboard' ? (
                 <div className="space-y-10 animate-in fade-in duration-500">
-                  {/* Global Settings Section */}
                   <section className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm space-y-6">
                     <h2 className="text-xl font-black text-gray-900">환경 설정</h2>
                     <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
@@ -640,7 +606,7 @@ const App: React.FC = () => {
                         <p className="text-xs text-gray-400">활성화시 메인화면에 신청하기 버튼이 표시됩니다.</p>
                       </div>
                       <div
-                        onClick={() => setSettings({ ...settings, isApplyActive: !settings.isApplyActive })}
+                        onClick={() => updateSettings({ ...settings, isApplyActive: !settings.isApplyActive })}
                         className={`relative w-14 h-8 rounded-full transition-colors cursor-pointer ${settings.isApplyActive ? 'bg-blue-600' : 'bg-gray-300'}`}
                       >
                         <div className={`absolute top-1 left-1 w-6 h-6 bg-white rounded-full transition-transform shadow-sm ${settings.isApplyActive ? 'translate-x-6' : 'translate-x-0'}`} />
@@ -711,7 +677,6 @@ const App: React.FC = () => {
 
                             const targetOrderNumbers = new Set(selectedReviews.map(e => (e.orderNumber || '').trim()).filter(Boolean));
 
-                            // Check for at least one match
                             const hasMatch = manualEntries.some(e => targetOrderNumbers.has((e.orderNumber || '').trim()));
 
                             if (!hasMatch) {
@@ -848,20 +813,25 @@ const App: React.FC = () => {
                           취소 ({selectedDepositIds.size}건)
                         </button>
                       )}
-
                     </div>
+
+                    {/* ✅ 입금관리 검색 (변경 사항 4) */}
                     <div className="px-6 pb-4">
                       <div className="relative">
                         <input
                           type="text"
-                          placeholder="이름 / 주문번호 / 계좌번호 검색 (엔터)"
+                          placeholder="이름 / 주문번호 / 계좌번호 검색"
                           className="w-full pl-10 pr-4 py-3 bg-gray-50 rounded-2xl text-sm font-bold outline-none border border-transparent focus:border-blue-500 transition-all"
                           value={depositSearch}
                           onChange={(e) => setDepositSearch(e.target.value)}
                         />
                         <span className="absolute left-4 top-3.5 text-gray-400">🔍</span>
+                        {depositSearch && depositSearch !== debouncedDepositSearch && (
+                          <span className="absolute right-4 top-3.5 text-xs text-gray-400">검색중...</span>
+                        )}
                       </div>
                     </div>
+
                     {renderDatePicker(
                       depositSubTab === 'before' ? depositBeforeDate : depositAfterDate,
                       depositSubTab === 'before' ? setDepositBeforeDate : setDepositAfterDate,
@@ -875,11 +845,12 @@ const App: React.FC = () => {
                   </div>
                   <div className="overflow-x-auto">
                     {depositSubTab === 'before' ? (() => {
+                      // ✅ debouncedDepositSearch 사용 (변경 사항 5)
                       const beforeItems = manualEntries.filter(e => {
                         const isBefore = e.beforeDeposit && !e.afterDeposit;
                         if (!isBefore) return false;
-                        if (depositSearch) {
-                          const q = depositSearch.toLowerCase();
+                        if (debouncedDepositSearch) {
+                          const q = debouncedDepositSearch.toLowerCase();
                           return (e.name1 || '').toLowerCase().includes(q)
                             || (e.name2 || '').toLowerCase().includes(q)
                             || (e.orderNumber || '').toLowerCase().includes(q)
@@ -935,17 +906,20 @@ const App: React.FC = () => {
                               </tr>
                             ))}
                             {beforeItems.length === 0 && (
-                              <tr><td colSpan={8} className="p-16 text-gray-300 font-bold">입금 대기 항목이 없습니다.</td></tr>
+                              <tr><td colSpan={8} className="p-16 text-gray-300 font-bold">
+                                {debouncedDepositSearch ? `"${debouncedDepositSearch}" 검색 결과가 없습니다.` : '입금 대기 항목이 없습니다.'}
+                              </td></tr>
                             )}
                           </tbody>
                         </table>
                       );
                     })() : (() => {
+                      // ✅ debouncedDepositSearch 사용 (변경 사항 6)
                       const afterItems = manualEntries.filter(e => {
                         const isAfter = e.afterDeposit;
                         if (!isAfter) return false;
-                        if (depositSearch) {
-                          const q = depositSearch.toLowerCase();
+                        if (debouncedDepositSearch) {
+                          const q = debouncedDepositSearch.toLowerCase();
                           return (e.name1 || '').toLowerCase().includes(q)
                             || (e.name2 || '').toLowerCase().includes(q)
                             || (e.orderNumber || '').toLowerCase().includes(q)
@@ -1000,7 +974,9 @@ const App: React.FC = () => {
                               </tr>
                             ))}
                             {afterItems.length === 0 && (
-                              <tr><td colSpan={8} className="p-16 text-gray-300 font-bold">입금 완료된 항목이 없습니다.</td></tr>
+                              <tr><td colSpan={9} className="p-16 text-gray-300 font-bold">
+                                {debouncedDepositSearch ? `"${debouncedDepositSearch}" 검색 결과가 없습니다.` : '입금 완료된 항목이 없습니다.'}
+                              </td></tr>
                             )}
                           </tbody>
                         </table>
@@ -1102,7 +1078,19 @@ const App: React.FC = () => {
                     <div className="flex justify-between items-center">
                       <h2 className="text-xl font-black text-gray-900">구매목록</h2>
                       <div className="flex gap-2">
-                        <input type="text" placeholder="검색 (이름, 주문번호...)" className="px-3 py-2 bg-gray-50 rounded-xl text-xs font-bold outline-none border border-gray-200 focus:border-blue-500 w-48" value={manualSearch} onChange={e => setManualSearch(e.target.value)} />
+                        {/* ✅ 구매목록 검색 (변경 사항 7) */}
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="검색 (이름, 주문번호...)"
+                            className="px-3 py-2 bg-gray-50 rounded-xl text-xs font-bold outline-none border border-gray-200 focus:border-blue-500 w-48"
+                            value={manualSearch}
+                            onChange={e => setManualSearch(e.target.value)}
+                          />
+                          {manualSearch && manualSearch !== debouncedManualSearch && (
+                            <span className="absolute right-3 top-2.5 text-[10px] text-gray-400">검색중...</span>
+                          )}
+                        </div>
                         {selectedManualIds.size > 0 && (
                           <button onClick={deleteSelectedManualEntries} className="px-5 py-2.5 bg-red-100 text-red-600 rounded-xl font-black text-xs hover:bg-red-200 transition-colors">삭제 ({selectedManualIds.size})</button>
                         )}
@@ -1133,11 +1121,16 @@ const App: React.FC = () => {
                             <input type="checkbox" className="w-3 h-3 accent-blue-600"
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  // Select visible items
+                                  // ✅ debouncedManualSearch 사용 (변경 사항 8)
                                   const visibleIds = manualEntries.filter(entry => {
-                                    if (manualSearch) {
-                                      const q = manualSearch.toLowerCase();
-                                      return (entry.name1 || '').toLowerCase().includes(q) || (entry.orderNumber || '').toLowerCase().includes(q);
+                                    if (!entry) return false;
+                                    if (debouncedManualSearch) {
+                                      const q = debouncedManualSearch.toLowerCase();
+                                      return (entry.name1 || '').toLowerCase().includes(q)
+                                        || (entry.name2 || '').toLowerCase().includes(q)
+                                        || (entry.orderNumber || '').toLowerCase().includes(q)
+                                        || (entry.product || '').toLowerCase().includes(q)
+                                        || (entry.accountNumber || '').toLowerCase().includes(q);
                                     }
                                     return entry.date === manualViewDate;
                                   }).map(e => e.id);
@@ -1166,17 +1159,26 @@ const App: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="text-[11px] font-bold divide-y divide-gray-100">
+                        {/* ✅ debouncedManualSearch 사용 + 안전성 체크 (변경 사항 9) */}
                         {manualEntries.filter(entry => {
-                          // Search Filter (Overrides Date Filter)
-                          if (manualSearch) {
-                            const q = manualSearch.toLowerCase();
-                            return (entry.name1 || '').toLowerCase().includes(q)
-                              || (entry.name2 || '').toLowerCase().includes(q)
-                              || (entry.orderNumber || '').toLowerCase().includes(q)
-                              || (entry.product || '').toLowerCase().includes(q)
-                              || (entry.accountNumber || '').toLowerCase().includes(q);
+                          // 안전성 체크
+                          if (!entry) return false;
+
+                          // 검색 필터 (디바운스된 값 사용)
+                          if (debouncedManualSearch && typeof debouncedManualSearch === 'string') {
+                            const q = debouncedManualSearch.toLowerCase();
+
+                            // Early return으로 성능 향상
+                            if ((entry.name1 || '').toLowerCase().includes(q)) return true;
+                            if ((entry.name2 || '').toLowerCase().includes(q)) return true;
+                            if ((entry.orderNumber || '').toLowerCase().includes(q)) return true;
+                            if ((entry.product || '').toLowerCase().includes(q)) return true;
+                            if ((entry.accountNumber || '').toLowerCase().includes(q)) return true;
+
+                            return false;
                           }
-                          // Date Filter (Only if no search)
+
+                          // 날짜 필터 (검색어 없을 때만)
                           return entry.date === manualViewDate;
                         }).map((entry, idx) => {
                           const isBlue = entry.afterDeposit;
@@ -1229,21 +1231,44 @@ const App: React.FC = () => {
                               <td className="p-0 border-r"><input data-row={idx} data-col={9} onKeyDown={(e) => handleKeyDown(e, idx, 9)} type="text" className={`excel-input ${rowColor}`} value={entry.emergencyContact} onChange={e => updateManualEntry(entry.id, 'emergencyContact', e.target.value)} /></td>
                               <td className="p-0 border-r"><input data-row={idx} data-col={10} onKeyDown={(e) => handleKeyDown(e, idx, 10)} type="text" className={`excel-input ${rowColor}`} value={entry.accountNumber} onChange={e => updateManualEntry(entry.id, 'accountNumber', e.target.value)} /></td>
                               <td className="p-0 border-r text-center align-middle">
-                                <input type="checkbox" className="w-5 h-5 accent-blue-600" checked={entry.beforeDeposit} onChange={e => {
+                                {/* ✅ Firestore 동기화 수정 (변경 사항 10) */}
+                                <input type="checkbox" className="w-5 h-5 accent-blue-600" checked={entry.beforeDeposit} onChange={async (e) => {
                                   const checked = e.target.checked;
-                                  setManualEntries(prev => prev.map(mm => mm.id === entry.id ? { ...mm, beforeDeposit: checked, isManualCheck: checked } : mm));
+                                  await updateDoc(doc(db, 'manualEntries', entry.id), {
+                                    beforeDeposit: checked,
+                                    isManualCheck: checked
+                                  });
                                 }} />
                               </td>
                               <td className="p-0 text-center align-middle"><input type="checkbox" className="w-5 h-5 accent-green-600" checked={entry.afterDeposit} onChange={e => updateManualEntry(entry.id, 'afterDeposit', e.target.checked)} /></td>
                             </tr>
                           );
                         })}
+                        {/* ✅ 검색 결과 없을 때 표시 (변경 사항 11) */}
+                        {manualEntries.filter(entry => {
+                          if (!entry) return false;
+                          if (debouncedManualSearch && typeof debouncedManualSearch === 'string') {
+                            const q = debouncedManualSearch.toLowerCase();
+                            return (entry.name1 || '').toLowerCase().includes(q)
+                              || (entry.name2 || '').toLowerCase().includes(q)
+                              || (entry.orderNumber || '').toLowerCase().includes(q)
+                              || (entry.product || '').toLowerCase().includes(q)
+                              || (entry.accountNumber || '').toLowerCase().includes(q);
+                          }
+                          return entry.date === manualViewDate;
+                        }).length === 0 && (
+                            <tr>
+                              <td colSpan={16} className="p-16 text-center text-gray-300 font-bold">
+                                {debouncedManualSearch ? `"${debouncedManualSearch}" 검색 결과가 없습니다.` : `${manualViewDate} 날짜에 데이터가 없습니다.`}
+                              </td>
+                            </tr>
+                          )}
                       </tbody>
                     </table>
                   </div>
-                </section >
+                </section>
               )}
-            </div >
+            </div>
           )
         ) : (
           /* Customer Flow */
@@ -1401,30 +1426,8 @@ const App: React.FC = () => {
             )}
           </div>
         )}
-      </main >
-
-      <style>{`
-        .excel-input {
-          width: 100%;
-          height: 100%;
-          min-height: 28px;
-          padding: 2px 4px;
-          border: 1px solid transparent;
-          background: transparent;
-          font-family: inherit;
-          font-size: 11px;
-          font-weight: 700;
-          outline: none;
-        }
-        .excel-input:focus {
-          background: white;
-          border-color: #0071E3;
-          box-shadow: 0 0 10px rgba(0,113,227,0.1);
-        }
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-      `}</style>
-    </div >
+      </main>
+    </div>
   );
 };
 
