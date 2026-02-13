@@ -1,0 +1,8 @@
+
+{
+  "name": "Mission Hub Pro",
+  "description": "Professional purchase and review mission automation platform with Excel-like grid management.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
