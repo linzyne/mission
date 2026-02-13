@@ -1050,7 +1050,7 @@ const App: React.FC = () => {
                       <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase">
                         <tr>
                           <th className="p-4 rounded-tl-xl">No.</th>
-                          <th className="p-4">품목명</th>
+                          <th className="p-4 text-left">품목명</th>
                           <th className="p-4">가격</th>
                           <th className="p-4 rounded-tr-xl w-24">관리</th>
                         </tr>
@@ -1059,8 +1059,22 @@ const App: React.FC = () => {
                         {productPrices.map((price, idx) => (
                           <tr key={price.id} className="hover:bg-gray-50 transition-colors">
                             <td className="p-4 text-gray-300">{idx + 1}</td>
-                            <td className="p-4 text-gray-900">{price.name}</td>
-                            <td className="p-4 text-blue-600">{price.price.toLocaleString()}원</td>
+                            <td className="p-4 text-left">
+                              <input
+                                type="text"
+                                value={price.name}
+                                onChange={(e) => updateDoc(doc(db, 'productPrices', price.id), { name: e.target.value })}
+                                className="w-full bg-transparent outline-none font-bold text-gray-900 border-b border-transparent focus:border-blue-500 transition-colors"
+                              />
+                            </td>
+                            <td className="p-4">
+                              <input
+                                type="number"
+                                value={price.price}
+                                onChange={(e) => updateDoc(doc(db, 'productPrices', price.id), { price: Number(e.target.value) })}
+                                className="w-full bg-transparent outline-none text-blue-600 font-bold text-center border-b border-transparent focus:border-blue-500 transition-colors"
+                              />
+                            </td>
                             <td className="p-4">
                               <button
                                 onClick={async () => {
@@ -1160,7 +1174,9 @@ const App: React.FC = () => {
                               || (entry.name2 || '').toLowerCase().includes(q)
                               || (entry.orderNumber || '').toLowerCase().includes(q)
                               || (entry.product || '').toLowerCase().includes(q)
-                              || (entry.accountNumber || '').toLowerCase().includes(q);
+                              || (entry.accountNumber || '').toLowerCase().includes(q)
+                              || (entry.address || '').toLowerCase().includes(q)
+                              || (entry.emergencyContact || '').toLowerCase().includes(q);
                           }
                           // Date Filter (Only if no search)
                           return entry.date === manualViewDate;
@@ -1191,16 +1207,19 @@ const App: React.FC = () => {
                               <td className="p-1 border-r text-center text-gray-400 text-[10px]">{idx + 1}</td>
                               <td className="p-0 border-r"><input data-row={idx} data-col={0} onKeyDown={(e) => handleKeyDown(e, idx, 0)} type="number" className={`excel-input ${rowColor}`} value={entry.count > 0 ? entry.count : ''} onChange={e => updateManualEntry(entry.id, 'count', Number(e.target.value))} /></td>
                               <td className="p-0 border-r">
-                                <input
+                                <select
                                   data-row={idx}
                                   data-col={1}
                                   onKeyDown={(e) => handleKeyDown(e, idx, 1)}
-                                  type="text"
                                   className={`excel-input ${rowColor} cursor-pointer`}
                                   value={entry.product}
                                   onChange={e => updateManualEntry(entry.id, 'product', e.target.value)}
-                                  placeholder="(입력)"
-                                />
+                                >
+                                  <option value="">(선택)</option>
+                                  {productPrices.map(p => (
+                                    <option key={p.id} value={p.name}>{p.name}</option>
+                                  ))}
+                                </select>
                               </td>
                               <td className="p-0 border-r"><input data-row={idx} data-col={2} onKeyDown={(e) => handleKeyDown(e, idx, 2)} type="date" className={`excel-input px-1 ${rowColor}`} value={entry.date} onChange={e => updateManualEntry(entry.id, 'date', e.target.value)} /></td>
                               <td className="p-0 border-r"><input data-row={idx} data-col={3} onKeyDown={(e) => handleKeyDown(e, idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.name1} onChange={e => updateManualEntry(entry.id, 'name1', e.target.value)} /></td>
