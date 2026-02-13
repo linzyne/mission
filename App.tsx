@@ -261,6 +261,17 @@ const App: React.FC = () => {
     }
   };
 
+  const handleDepositDelete = async (id: string) => {
+    if (!window.confirm("정말로 이 항목을 영구 삭제하시겠습니까? (복구 불가)")) return;
+    try {
+      await deleteDoc(doc(db, 'manualEntries', id));
+      alert("삭제되었습니다.");
+    } catch (e) {
+      console.error("Delete Error:", e);
+      alert("삭제 중 오류가 발생했습니다: " + e);
+    }
+  };
+
   const toggleBeforeDeposit = async (id: string, currentVal: boolean) => {
     try {
       await updateDoc(doc(db, 'manualEntries', id), {
@@ -1009,7 +1020,8 @@ const App: React.FC = () => {
                                 <td className="p-2">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
                                 <td className="p-2 text-blue-600">{entry.accountNumber}</td>
                                 <td className="p-2">
-                                  <button onClick={() => handleDepositRelease(entry.id, 'before')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-100 transition-all">해제</button>
+                                  <button onClick={() => handleDepositRelease(entry.id, 'before')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-100 transition-all mr-1">해제</button>
+                                  <button onClick={() => handleDepositDelete(entry.id)} className="px-2 py-1 bg-gray-100 text-gray-400 rounded-lg text-[10px] font-black hover:bg-gray-200 transition-all">삭제</button>
                                 </td>
                               </tr>
                             ))}
@@ -1086,7 +1098,8 @@ const App: React.FC = () => {
                                 <td className="p-2">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
                                 <td className="p-2 text-blue-600">{entry.accountNumber}</td>
                                 <td className="p-2">
-                                  <button onClick={() => handleDepositRelease(entry.id, 'after')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-100 transition-all">해제</button>
+                                  <button onClick={() => handleDepositRelease(entry.id, 'after')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-100 transition-all mr-1">해제</button>
+                                  <button onClick={() => handleDepositDelete(entry.id)} className="px-2 py-1 bg-gray-100 text-gray-400 rounded-lg text-[10px] font-black hover:bg-gray-200 transition-all">삭제</button>
                                 </td>
                               </tr>
                             ))}
