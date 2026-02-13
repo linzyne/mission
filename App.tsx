@@ -1179,101 +1179,111 @@ const App: React.FC = () => {
                       </thead>
                       <tbody className="text-[11px] font-bold divide-y divide-gray-100">
                         {(() => {
+                          // 3개월 전 날짜 계산 (검색 최적화)
+                          const limitDate = new Date();
+                          limitDate.setMonth(limitDate.getMonth() - 3);
+                          const limitDateStr = limitDate.toISOString().split('T')[0];
+
                           const filtered = manualEntries.filter(entry => {
                             if (!entry) return false;
+
                             // 날짜 필터 항상 적용 ('all'이면 전체)
                             if (manualViewDate !== 'all' && entry.date !== manualViewDate) return false;
+
+                            // 검색 시 최근 3개월 데이터만 검색 (기본 설정)
+                            if (manualSearch && manualViewDate === 'all' && entry.date < limitDateStr) return false;
+
                             // 검색 필터
                             if (manualSearch) {
                               const q = manualSearch.toLowerCase();
-                              return (entry.name1 || '').toLowerCase().includes(q)
-                                || (entry.name2 || '').toLowerCase().includes(q)
-                                || (entry.orderNumber || '').toLowerCase().includes(q)
-                                || (entry.product || '').toLowerCase().includes(q)
-                                || (entry.accountNumber || '').toLowerCase().includes(q);
+                              return String(entry.name1 || '').toLowerCase().includes(q)
+                                || String(entry.name2 || '').toLowerCase().includes(q)
+                                || String(entry.orderNumber || '').toLowerCase().includes(q)
+                                || String(entry.product || '').toLowerCase().includes(q)
+                                || String(entry.accountNumber || '').toLowerCase().includes(q);
                             }
                             return true;
                           });
                           const limited = filtered.slice(0, 200);
                           return (<>
-                        {limited.map((entry, idx) => {
-                          const isBlue = entry.afterDeposit;
-                          const rowColor = isBlue ? 'text-blue-600' : '';
-                          return (
-                            <tr key={entry.id} className={`group hover:bg-blue-50/20 transition-colors ${isBlue ? 'bg-blue-50/30' : ''}`}>
-                              <td className="p-2 border-r text-center sticky left-0 bg-white z-20">
-                                <input type="checkbox" className="w-3 h-3 accent-blue-600"
-                                  checked={selectedManualIds.has(entry.id)}
-                                  onChange={() => {
-                                    const next = new Set(selectedManualIds);
-                                    next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
-                                    setSelectedManualIds(next);
-                                  }}
-                                />
-                              </td>
-                              <td className="p-1 border-r"
-                                onDragOver={(e) => e.preventDefault()}
-                                onDrop={(e) => handleManualImageDrop(entry.id, e)}
-                              >
-                                <label className="cursor-pointer block relative h-7 w-7 mx-auto group/img">
-                                  {entry.proofImage ? <img src={entry.proofImage} onClick={() => setPreviewImage(entry.proofImage)} className="w-full h-full object-cover rounded-md border" /> : <div className="w-full h-full bg-gray-50 rounded-md border-2 border-dashed border-gray-100 flex items-center justify-center text-[8px] text-gray-300">UP</div>}
-                                  <input type="file" className="hidden" onChange={(e) => handleManualImageUpload(entry.id, e)} />
-                                </label>
-                              </td>
-                              <td className="p-1 border-r text-center text-gray-400 text-[10px]">{idx + 1}</td>
-                              <td className="p-0 border-r"><input data-row={idx} data-col={0} onKeyDown={(e) => handleKeyDown(e, idx, 0)} type="number" className={`excel-input ${rowColor}`} value={entry.count > 0 ? entry.count : ''} onChange={e => updateManualEntry(entry.id, 'count', Number(e.target.value))} /></td>
-                              <td className="p-0 border-r">
-                                <select
-                                  data-row={idx}
-                                  data-col={1}
-                                  onKeyDown={(e) => handleKeyDown(e, idx, 1)}
-                                  className={`excel-input ${rowColor} cursor-pointer`}
-                                  value={entry.product}
-                                  onChange={e => updateManualEntry(entry.id, 'product', e.target.value)}
-                                >
-                                  <option value="">(선택)</option>
-                                  {productPrices.map(p => (
-                                    <option key={p.id} value={p.name}>{p.name}</option>
-                                  ))}
-                                </select>
-                              </td>
-                              <td className="p-0 border-r"><input data-row={idx} data-col={2} onKeyDown={(e) => handleKeyDown(e, idx, 2)} type="date" className={`excel-input px-1 ${rowColor}`} value={entry.date} onChange={e => updateManualEntry(entry.id, 'date', e.target.value)} /></td>
-                              <td className="p-0 border-r"><input data-row={idx} data-col={3} onKeyDown={(e) => handleKeyDown(e, idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.name1} onChange={e => updateManualEntry(entry.id, 'name1', e.target.value)} /></td>
-                              <td className="p-0 border-r"><input data-row={idx} data-col={4} onKeyDown={(e) => handleKeyDown(e, idx, 4)} type="text" className={`excel-input text-center ${rowColor}`} placeholder="받는사람" value={entry.name2} onChange={e => updateManualEntry(entry.id, 'name2', e.target.value)} /></td>
-                              <td className="p-0 border-r"><input data-row={idx} data-col={5} onKeyDown={(e) => handleKeyDown(e, idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.orderNumber} onChange={e => updateManualEntry(entry.id, 'orderNumber', e.target.value)} /></td>
-                              <td className="p-0 border-r"><input data-row={idx} data-col={6} onKeyDown={(e) => handleKeyDown(e, idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} value={entry.address} onChange={e => updateManualEntry(entry.id, 'address', e.target.value)} /></td>
-                              <td className="p-0 border-r"><input data-row={idx} data-col={7} onKeyDown={(e) => handleKeyDown(e, idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} value={entry.memo} onChange={e => updateManualEntry(entry.id, 'memo', e.target.value)} /></td>
-                              <td className="p-0 border-r"><input data-row={idx} data-col={8} onKeyDown={(e) => handleKeyDown(e, idx, 8)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''} onChange={e => updateManualEntry(entry.id, 'paymentAmount', Number(e.target.value.replace(/,/g, '')))} /></td>
-                              <td className="p-0 border-r"><input data-row={idx} data-col={9} onKeyDown={(e) => handleKeyDown(e, idx, 9)} type="text" className={`excel-input ${rowColor}`} value={entry.emergencyContact} onChange={e => updateManualEntry(entry.id, 'emergencyContact', e.target.value)} /></td>
-                              <td className="p-0 border-r"><input data-row={idx} data-col={10} onKeyDown={(e) => handleKeyDown(e, idx, 10)} type="text" className={`excel-input ${rowColor}`} value={entry.accountNumber} onChange={e => updateManualEntry(entry.id, 'accountNumber', e.target.value)} /></td>
-                              <td className="p-0 border-r text-center align-middle">
-                                {/* ✅ Firestore 동기화 수정 (변경 사항 10) */}
-                                <input type="checkbox" className="w-5 h-5 accent-blue-600" checked={entry.beforeDeposit} onChange={async (e) => {
-                                  const checked = e.target.checked;
-                                  await updateDoc(doc(db, 'manualEntries', entry.id), {
-                                    beforeDeposit: checked,
-                                    isManualCheck: checked
-                                  });
-                                }} />
-                              </td>
-                              <td className="p-0 text-center align-middle"><input type="checkbox" className="w-5 h-5 accent-green-600" checked={entry.afterDeposit} onChange={e => updateManualEntry(entry.id, 'afterDeposit', e.target.checked)} /></td>
-                            </tr>
-                          );
-                        })}
-                        {filtered.length === 0 && (
-                            <tr>
-                              <td colSpan={17} className="p-16 text-center text-gray-300 font-bold">
-                                {manualSearch ? `"${manualSearch}" 검색 결과가 없습니다.` : `${manualViewDate === 'all' ? '전체' : manualViewDate} 날짜에 데이터가 없습니다.`}
-                              </td>
-                            </tr>
-                        )}
-                        {filtered.length > 200 && (
-                            <tr>
-                              <td colSpan={17} className="p-4 text-center text-orange-500 font-bold text-xs">
-                                총 {filtered.length}건 중 200건만 표시됩니다. 검색어를 더 입력해주세요.
-                              </td>
-                            </tr>
-                        )}
+                            {limited.map((entry, idx) => {
+                              const isBlue = entry.afterDeposit;
+                              const rowColor = isBlue ? 'text-blue-600' : '';
+                              return (
+                                <tr key={entry.id} className={`group hover:bg-blue-50/20 transition-colors ${isBlue ? 'bg-blue-50/30' : ''}`}>
+                                  <td className="p-2 border-r text-center sticky left-0 bg-white z-20">
+                                    <input type="checkbox" className="w-3 h-3 accent-blue-600"
+                                      checked={selectedManualIds.has(entry.id)}
+                                      onChange={() => {
+                                        const next = new Set(selectedManualIds);
+                                        next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
+                                        setSelectedManualIds(next);
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="p-1 border-r"
+                                    onDragOver={(e) => e.preventDefault()}
+                                    onDrop={(e) => handleManualImageDrop(entry.id, e)}
+                                  >
+                                    <label className="cursor-pointer block relative h-7 w-7 mx-auto group/img">
+                                      {entry.proofImage ? <img src={entry.proofImage} onClick={() => setPreviewImage(entry.proofImage)} className="w-full h-full object-cover rounded-md border" /> : <div className="w-full h-full bg-gray-50 rounded-md border-2 border-dashed border-gray-100 flex items-center justify-center text-[8px] text-gray-300">UP</div>}
+                                      <input type="file" className="hidden" onChange={(e) => handleManualImageUpload(entry.id, e)} />
+                                    </label>
+                                  </td>
+                                  <td className="p-1 border-r text-center text-gray-400 text-[10px]">{idx + 1}</td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={0} onKeyDown={(e) => handleKeyDown(e, idx, 0)} type="number" className={`excel-input ${rowColor}`} value={entry.count > 0 ? entry.count : ''} onChange={e => updateManualEntry(entry.id, 'count', Number(e.target.value))} /></td>
+                                  <td className="p-0 border-r">
+                                    <select
+                                      data-row={idx}
+                                      data-col={1}
+                                      onKeyDown={(e) => handleKeyDown(e, idx, 1)}
+                                      className={`excel-input ${rowColor} cursor-pointer`}
+                                      value={entry.product}
+                                      onChange={e => updateManualEntry(entry.id, 'product', e.target.value)}
+                                    >
+                                      <option value="">(선택)</option>
+                                      {productPrices.map(p => (
+                                        <option key={p.id} value={p.name}>{p.name}</option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={2} onKeyDown={(e) => handleKeyDown(e, idx, 2)} type="date" className={`excel-input px-1 ${rowColor}`} value={entry.date} onChange={e => updateManualEntry(entry.id, 'date', e.target.value)} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={3} onKeyDown={(e) => handleKeyDown(e, idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.name1} onChange={e => updateManualEntry(entry.id, 'name1', e.target.value)} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={4} onKeyDown={(e) => handleKeyDown(e, idx, 4)} type="text" className={`excel-input text-center ${rowColor}`} placeholder="받는사람" value={entry.name2} onChange={e => updateManualEntry(entry.id, 'name2', e.target.value)} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={5} onKeyDown={(e) => handleKeyDown(e, idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.orderNumber} onChange={e => updateManualEntry(entry.id, 'orderNumber', e.target.value)} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={6} onKeyDown={(e) => handleKeyDown(e, idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} value={entry.address} onChange={e => updateManualEntry(entry.id, 'address', e.target.value)} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={7} onKeyDown={(e) => handleKeyDown(e, idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} value={entry.memo} onChange={e => updateManualEntry(entry.id, 'memo', e.target.value)} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={8} onKeyDown={(e) => handleKeyDown(e, idx, 8)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''} onChange={e => updateManualEntry(entry.id, 'paymentAmount', Number(e.target.value.replace(/,/g, '')))} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={9} onKeyDown={(e) => handleKeyDown(e, idx, 9)} type="text" className={`excel-input ${rowColor}`} value={entry.emergencyContact} onChange={e => updateManualEntry(entry.id, 'emergencyContact', e.target.value)} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={10} onKeyDown={(e) => handleKeyDown(e, idx, 10)} type="text" className={`excel-input ${rowColor}`} value={entry.accountNumber} onChange={e => updateManualEntry(entry.id, 'accountNumber', e.target.value)} /></td>
+                                  <td className="p-0 border-r text-center align-middle">
+                                    {/* ✅ Firestore 동기화 수정 (변경 사항 10) */}
+                                    <input type="checkbox" className="w-5 h-5 accent-blue-600" checked={entry.beforeDeposit} onChange={async (e) => {
+                                      const checked = e.target.checked;
+                                      await updateDoc(doc(db, 'manualEntries', entry.id), {
+                                        beforeDeposit: checked,
+                                        isManualCheck: checked
+                                      });
+                                    }} />
+                                  </td>
+                                  <td className="p-0 text-center align-middle"><input type="checkbox" className="w-5 h-5 accent-green-600" checked={entry.afterDeposit} onChange={e => updateManualEntry(entry.id, 'afterDeposit', e.target.checked)} /></td>
+                                </tr>
+                              );
+                            })}
+                            {filtered.length === 0 && (
+                              <tr>
+                                <td colSpan={17} className="p-16 text-center text-gray-300 font-bold">
+                                  {manualSearch ? `"${manualSearch}" 검색 결과가 없습니다.` : `${manualViewDate === 'all' ? '전체' : manualViewDate} 날짜에 데이터가 없습니다.`}
+                                </td>
+                              </tr>
+                            )}
+                            {filtered.length > 200 && (
+                              <tr>
+                                <td colSpan={17} className="p-4 text-center text-orange-500 font-bold text-xs">
+                                  총 {filtered.length}건 중 200건만 표시됩니다. 검색어를 더 입력해주세요.
+                                </td>
+                              </tr>
+                            )}
                           </>);
                         })()}
                       </tbody>
