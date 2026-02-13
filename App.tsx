@@ -1163,11 +1163,9 @@ const App: React.FC = () => {
                         {manualEntries.filter(entry => {
                           if (!entry) return false;
 
-                          // 검색창에 입력 중이면 날짜 필터 해제 (manualSearch 즉시값 사용)
+                          // 검색어가 있으면 즉시 검색 (디바운스 없이)
                           if (manualSearch) {
-                            // 실제 검색은 디바운스된 값으로 수행
-                            if (!debouncedManualSearch) return true; // 디바운스 대기 중: 전체 표시
-                            const q = debouncedManualSearch.toLowerCase();
+                            const q = manualSearch.toLowerCase();
                             if ((entry.name1 || '').toLowerCase().includes(q)) return true;
                             if ((entry.name2 || '').toLowerCase().includes(q)) return true;
                             if ((entry.orderNumber || '').toLowerCase().includes(q)) return true;
