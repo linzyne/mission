@@ -261,6 +261,29 @@ const App: React.FC = () => {
     }
   };
 
+  const toggleBeforeDeposit = async (id: string, currentVal: boolean) => {
+    try {
+      await updateDoc(doc(db, 'manualEntries', id), {
+        beforeDeposit: !currentVal,
+        isManualCheck: !currentVal
+      });
+    } catch (e) {
+      console.error("Toggle Error:", e);
+      alert("오류가 발생했습니다: " + e);
+    }
+  };
+
+  const toggleAfterDeposit = async (id: string, currentVal: boolean) => {
+    try {
+      await updateDoc(doc(db, 'manualEntries', id), {
+        afterDeposit: !currentVal
+      });
+    } catch (e) {
+      console.error("Toggle Error:", e);
+      alert("오류가 발생했습니다: " + e);
+    }
+  };
+
   const handleLotteDownload = async () => {
     const selectedEntries = manualEntries.filter(entry => selectedManualIds.has(entry.id));
     if (selectedEntries.length === 0) return alert("선택된 항목이 없습니다.");
@@ -1360,16 +1383,11 @@ const App: React.FC = () => {
                                   <td className="p-0 border-r"><input data-row={idx} data-col={10} onKeyDown={(e) => handleKeyDown(e, idx, 10)} type="text" className={`excel-input ${rowColor}`} value={entry.accountNumber} onChange={e => updateManualEntry(entry.id, 'accountNumber', e.target.value)} /></td>
                                   <td className="p-0 border-r"><input data-row={idx} data-col={11} onKeyDown={(e) => handleKeyDown(e, idx, 11)} type="text" className={`excel-input ${rowColor}`} value={entry.trackingNumber || ''} onChange={e => updateManualEntry(entry.id, 'trackingNumber', e.target.value)} /></td>
                                   <td className="p-0 border-r text-center align-middle">
-                                    {/* ✅ Firestore 동기화 수정 (변경 사항 10) */}
-                                    <input type="checkbox" className="w-5 h-5 accent-blue-600" checked={entry.beforeDeposit} onChange={async (e) => {
-                                      const checked = e.target.checked;
-                                      await updateDoc(doc(db, 'manualEntries', entry.id), {
-                                        beforeDeposit: checked,
-                                        isManualCheck: checked
-                                      });
-                                    }} />
+                                    <input type="checkbox" className="w-5 h-5 accent-blue-600" checked={entry.beforeDeposit} onChange={() => toggleBeforeDeposit(entry.id, entry.beforeDeposit)} />
                                   </td>
-                                  <td className="p-0 text-center align-middle"><input type="checkbox" className="w-5 h-5 accent-green-600" checked={entry.afterDeposit} onChange={e => updateManualEntry(entry.id, 'afterDeposit', e.target.checked)} /></td>
+                                  <td className="p-0 text-center align-middle">
+                                    <input type="checkbox" className="w-5 h-5 accent-green-600" checked={entry.afterDeposit} onChange={() => toggleAfterDeposit(entry.id, entry.afterDeposit)} />
+                                  </td>
                                 </tr>
                               );
                             })}
