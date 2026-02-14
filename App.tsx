@@ -483,20 +483,31 @@ const App: React.FC = () => {
 
   const downloadBeforeDepositCsv = () => {
     const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
-    if (beforeItems.length === 0) return;
-    const rows = beforeItems.map(e => {
-      const parts = e.accountNumber.split(/[\s\/\|]+/).filter(Boolean);
-      const bankName = parts.length >= 2 ? parts[0] : '';
-      const accountNum = parts.length >= 2 ? parts.slice(1).join('') : e.accountNumber;
-      return [bankName, accountNum, e.paymentAmount || '', e.name1 || e.name2, '안군농원환불'].join(',');
-    });
-    const csvContent = rows.join('\n');
-    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `입금전_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+    if (beforeItems.length === 0) return alert("다운로드할 데이터가 없습니다.");
+
+    const chunkSize = 15;
+    const today = new Date().toISOString().split('T')[0];
+
+    for (let i = 0; i < beforeItems.length; i += chunkSize) {
+      const chunk = beforeItems.slice(i, i + chunkSize);
+      const rows = chunk.map(e => {
+        const parts = e.accountNumber.split(/[\s\/\|]+/).filter(Boolean);
+        const bankName = parts.length >= 2 ? parts[0] : '';
+        const accountNum = parts.length >= 2 ? parts.slice(1).join('') : e.accountNumber;
+        return [bankName, accountNum, e.paymentAmount || '', e.name1 || e.name2, '안군농원환불'].join(',');
+      });
+
+      const csvContent = rows.join('\n');
+      const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const fileIndex = (i / chunkSize) + 1;
+      link.download = `${today} 환불입금내역_${fileIndex}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
   const downloadManualCsv = () => {
