@@ -289,7 +289,7 @@ const App: React.FC = () => {
           const matchedPrice = productPrices.find(p => p.name === entry.product);
           if (matchedPrice) {
             let finalPrice = matchedPrice.price;
-            if ((entry.orderNumber || '').includes('실배')) {
+            if (String(entry.orderNumber || '').includes('실배')) {
               finalPrice -= 1000;
             }
             updates.paymentAmount = finalPrice;
@@ -410,7 +410,7 @@ const App: React.FC = () => {
       if (matchedPrice) {
         let finalPrice = matchedPrice.price;
         const orderNum = field === 'orderNumber' ? value : entry.orderNumber;
-        if ((orderNum || '').includes('실배')) {
+        if (String(orderNum || '').includes('실배')) {
           finalPrice -= 1000;
         }
         updates.paymentAmount = finalPrice;
