@@ -63,8 +63,32 @@ const App: React.FC = () => {
   useEffect(() => {
     const q = query(collection(db, 'manualEntries'));
     const unsub = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ManualEntry));
-      list.sort((a, b) => b.date.localeCompare(a.date));
+      const defaults = createEmptyRow();
+      const list = snapshot.docs.map(d => {
+        const data = d.data();
+        return {
+          ...defaults,
+          ...data,
+          id: d.id,
+          count: data.count ?? 0,
+          paymentAmount: data.paymentAmount ?? 0,
+          beforeDeposit: data.beforeDeposit ?? false,
+          afterDeposit: data.afterDeposit ?? false,
+          proofImage: data.proofImage ?? '',
+          product: data.product ?? '',
+          date: data.date ?? '',
+          name1: data.name1 ?? '',
+          name2: data.name2 ?? '',
+          ordererName: data.ordererName ?? '',
+          orderNumber: data.orderNumber ?? '',
+          address: data.address ?? '',
+          memo: data.memo ?? '',
+          emergencyContact: data.emergencyContact ?? '',
+          accountNumber: data.accountNumber ?? '',
+          trackingNumber: data.trackingNumber ?? '',
+        } as ManualEntry;
+      });
+      list.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       setManualEntries(list);
     });
     return () => unsub();
@@ -277,22 +301,17 @@ const App: React.FC = () => {
 
   const toggleBeforeDeposit = async (id: string, currentVal: boolean) => {
     try {
-      const updates: Partial<ManualEntry> = {
+      const updates: Record<string, any> = {
         beforeDeposit: !currentVal,
         isManualCheck: !currentVal
       };
 
-      // 입금전 체크를 활성화할 때(!currentVal이 true), 결제금액이 비어있으면 품목 매칭 시도
       if (!currentVal) {
         const entry = manualEntries.find(e => e.id === id);
-        if (entry && (!entry.paymentAmount || entry.paymentAmount === 0)) {
+        if (entry && !entry.paymentAmount) {
           const matchedPrice = productPrices.find(p => p.name === entry.product);
           if (matchedPrice) {
-            let finalPrice = matchedPrice.price;
-            if (String(entry.orderNumber || '').includes('실배')) {
-              finalPrice -= 1000;
-            }
-            updates.paymentAmount = finalPrice;
+            updates.paymentAmount = matchedPrice.price;
           }
         }
       }
@@ -410,7 +429,7 @@ const App: React.FC = () => {
       if (matchedPrice) {
         let finalPrice = matchedPrice.price;
         const orderNum = field === 'orderNumber' ? value : entry.orderNumber;
-        if (String(orderNum || '').includes('실배')) {
+        if ((orderNum || '').includes('실배')) {
           finalPrice -= 1000;
         }
         updates.paymentAmount = finalPrice;
@@ -433,16 +452,16 @@ const App: React.FC = () => {
         const result = await extractOrderInfo(base64Image);
         console.log('[Upload OCR] 결과:', result);
 
-        setManualEntries(prev => prev.map(entry => {
-          if (entry.id !== id) return entry;
-          const updated = { ...entry };
-          if (result.orderNumber) updated.orderNumber = result.orderNumber;
-          if (result.receiverName) updated.name2 = result.receiverName;
-          else if (result.ordererName) updated.name2 = result.ordererName;
-          if (result.address) updated.address = result.address;
-          if (result.phone) updated.emergencyContact = result.phone;
-          return updated;
-        }));
+        const ocrUpdates: Partial<ManualEntry> = {};
+        if (result.orderNumber) ocrUpdates.orderNumber = result.orderNumber;
+        if (result.receiverName) ocrUpdates.name2 = result.receiverName;
+        else if (result.ordererName) ocrUpdates.name2 = result.ordererName;
+        if (result.address) ocrUpdates.address = result.address;
+        if (result.phone) ocrUpdates.emergencyContact = result.phone;
+
+        if (Object.keys(ocrUpdates).length > 0) {
+          await updateDoc(doc(db, 'manualEntries', id), ocrUpdates);
+        }
       } catch (err) {
         console.error('[Upload OCR] 실패:', err);
       }
@@ -455,20 +474,16 @@ const App: React.FC = () => {
 
     let targetRow = rowIdx;
     let targetCol = colIdx;
-    let isArrowKey = true;
-
     if (e.key === 'ArrowUp') targetRow--;
     else if (e.key === 'ArrowDown') targetRow++;
     else if (e.key === 'ArrowLeft') targetCol--;
     else if (e.key === 'ArrowRight') targetCol++;
-    else isArrowKey = false;
+    else return;
 
-    if (isArrowKey) {
-      e.preventDefault();
-      const nextInput = document.querySelector(`input[data-row="${targetRow}"][data-col="${targetCol}"]`) as HTMLInputElement;
-      if (nextInput) {
-        nextInput.focus();
-      }
+    e.preventDefault();
+    const nextInput = document.querySelector(`input[data-row="${targetRow}"][data-col="${targetCol}"]`) as HTMLInputElement;
+    if (nextInput) {
+      nextInput.focus();
     }
   };
 
@@ -1383,10 +1398,22 @@ const App: React.FC = () => {
                                     onDragOver={(e) => e.preventDefault()}
                                     onDrop={(e) => handleManualImageDrop(entry.id, e)}
                                   >
-                                    <label className="cursor-pointer block relative h-7 w-7 mx-auto group/img">
-                                      {entry.proofImage ? <img src={entry.proofImage} onClick={() => setPreviewImage(entry.proofImage)} className="w-full h-full object-cover rounded-md border" /> : <div className="w-full h-full bg-gray-50 rounded-md border-2 border-dashed border-gray-100 flex items-center justify-center text-[8px] text-gray-300">UP</div>}
-                                      <input type="file" className="hidden" onChange={(e) => handleManualImageUpload(entry.id, e)} />
-                                    </label>
+                                    <div className="relative h-7 w-7 mx-auto group/img">
+                                      {entry.proofImage ? (
+                                        <>
+                                          <img src={entry.proofImage} onClick={() => setPreviewImage(entry.proofImage)} className="w-full h-full object-cover rounded-md border cursor-pointer" />
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); updateManualEntry(entry.id, 'proofImage', ''); }}
+                                            className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] leading-none flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity shadow-sm"
+                                          >&times;</button>
+                                        </>
+                                      ) : (
+                                        <label className="cursor-pointer block w-full h-full">
+                                          <div className="w-full h-full bg-gray-50 rounded-md border-2 border-dashed border-gray-100 flex items-center justify-center text-[8px] text-gray-300">UP</div>
+                                          <input type="file" className="hidden" onChange={(e) => handleManualImageUpload(entry.id, e)} />
+                                        </label>
+                                      )}
+                                    </div>
                                   </td>
                                   <td className="p-1 border-r text-center text-gray-400 text-[10px]">{idx + 1}</td>
                                   <td className="p-0 border-r"><input data-row={idx} data-col={0} onKeyDown={(e) => handleKeyDown(e, idx, 0)} type="number" className={`excel-input ${rowColor}`} value={entry.count > 0 ? entry.count : ''} onChange={e => updateManualEntry(entry.id, 'count', Number(e.target.value))} /></td>
