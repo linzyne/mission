@@ -277,10 +277,27 @@ const App: React.FC = () => {
 
   const toggleBeforeDeposit = async (id: string, currentVal: boolean) => {
     try {
-      await updateDoc(doc(db, 'manualEntries', id), {
+      const updates: Partial<ManualEntry> = {
         beforeDeposit: !currentVal,
         isManualCheck: !currentVal
-      });
+      };
+
+      // 입금전 체크를 활성화할 때(!currentVal이 true), 결제금액이 비어있으면 품목 매칭 시도
+      if (!currentVal) {
+        const entry = manualEntries.find(e => e.id === id);
+        if (entry && (!entry.paymentAmount || entry.paymentAmount === 0)) {
+          const matchedPrice = productPrices.find(p => p.name === entry.product);
+          if (matchedPrice) {
+            let finalPrice = matchedPrice.price;
+            if ((entry.orderNumber || '').includes('실배')) {
+              finalPrice -= 1000;
+            }
+            updates.paymentAmount = finalPrice;
+          }
+        }
+      }
+
+      await updateDoc(doc(db, 'manualEntries', id), updates);
     } catch (e) {
       console.error("Toggle Error:", e);
       alert("오류가 발생했습니다: " + e);
@@ -438,16 +455,20 @@ const App: React.FC = () => {
 
     let targetRow = rowIdx;
     let targetCol = colIdx;
+    let isArrowKey = true;
+
     if (e.key === 'ArrowUp') targetRow--;
     else if (e.key === 'ArrowDown') targetRow++;
     else if (e.key === 'ArrowLeft') targetCol--;
     else if (e.key === 'ArrowRight') targetCol++;
-    else return;
+    else isArrowKey = false;
 
-    e.preventDefault();
-    const nextInput = document.querySelector(`input[data-row="${targetRow}"][data-col="${targetCol}"]`) as HTMLInputElement;
-    if (nextInput) {
-      nextInput.focus();
+    if (isArrowKey) {
+      e.preventDefault();
+      const nextInput = document.querySelector(`input[data-row="${targetRow}"][data-col="${targetCol}"]`) as HTMLInputElement;
+      if (nextInput) {
+        nextInput.focus();
+      }
     }
   };
 
