@@ -954,6 +954,26 @@ const App: React.FC = () => {
                           <button onClick={downloadBeforeDepositCsv} className="px-5 py-2 rounded-xl text-sm font-black bg-gray-100 text-gray-600 hover:bg-gray-200 transition-all">
                             엑셀 다운 📥
                           </button>
+                          <button
+                            onClick={async () => {
+                              if (selectedDepositIds.size === 0) return;
+                              if (!window.confirm(`${selectedDepositIds.size}건의 계좌번호를 김성아 계좌로 변경하시겠습니까?`)) return;
+                              try {
+                                const batch = writeBatch(db);
+                                selectedDepositIds.forEach(id => {
+                                  batch.update(doc(db, 'manualEntries', id), { accountNumber: '국민 228 002 04 129095 김성아' });
+                                });
+                                await batch.commit();
+                                alert('변경되었습니다.');
+                              } catch (e) {
+                                console.error(e);
+                                alert('오류가 발생했습니다: ' + e);
+                              }
+                            }}
+                            className={`px-5 py-2 rounded-xl text-sm font-black transition-all ${selectedDepositIds.size > 0 ? 'bg-purple-600 text-white hover:bg-purple-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                          >
+                            성아 ({selectedDepositIds.size}건)
+                          </button>
                           <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl">
                             <input type="date" value={depositActionDate} onChange={e => setDepositActionDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none px-2 text-gray-600" />
                             <button
