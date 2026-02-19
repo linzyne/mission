@@ -134,7 +134,8 @@ const App: React.FC = () => {
   const [depositSubTab, setDepositSubTab] = useState<'before' | 'after'>('before');
   const [selectedDepositIds, setSelectedDepositIds] = useState<Set<string>>(new Set());
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(new Set());
-  const [manualViewDate, setManualViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  // manualViewDate kept for backward compat but no longer used directly (replaced by range)
+  const [manualViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [selectedManualIds, setSelectedManualIds] = useState<Set<string>>(new Set());
 
   const [depositBeforeDate, setDepositBeforeDate] = useState<string>('all');
@@ -146,6 +147,17 @@ const App: React.FC = () => {
   const [depositSearch, setDepositSearch] = useState('');
   const [debouncedDepositSearch, setDebouncedDepositSearch] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: keyof ManualEntry; direction: 'asc' | 'desc' } | null>(null);
+
+  const composingRef = useRef(false);
+  const [debouncedManualSearch, setDebouncedManualSearch] = useState('');
+
+  // Date range for purchase list
+  const [manualViewDateStart, setManualViewDateStart] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [manualViewDateEnd, setManualViewDateEnd] = useState<string>(new Date().toISOString().split('T')[0]);
+
+  // Drag selection
+  const isDraggingRef = useRef(false);
+  const dragStartIndexRef = useRef<number>(-1);
 
   const [manualCalOpen, setManualCalOpen] = useState(false);
   const [manualCalMonth, setManualCalMonth] = useState(new Date());
@@ -161,6 +173,14 @@ const App: React.FC = () => {
 
     return () => clearTimeout(timer);
   }, [depositSearch]);
+
+  // 디바운스 로직 - 구매목록 검색 (한글 깨짐 방지)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedManualSearch(manualSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [manualSearch]);
 
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -268,6 +288,23 @@ const App: React.FC = () => {
       await batch.commit();
       setSelectedDepositIds(new Set());
       alert("취소되었습니다.");
+    } catch (e) {
+      console.error(e);
+      alert("오류가 발생했습니다: " + e);
+    }
+  };
+
+  const handleReservationComplete = async () => {
+    if (selectedManualIds.size === 0) return;
+    if (!window.confirm(`${selectedManualIds.size}건을 예약완료 처리하시겠습니까?`)) return;
+    try {
+      const batch = writeBatch(db);
+      selectedManualIds.forEach(id => {
+        batch.update(doc(db, 'manualEntries', id), { reservationComplete: true });
+      });
+      await batch.commit();
+      setSelectedManualIds(new Set());
+      alert("예약완료 처리되었습니다.");
     } catch (e) {
       console.error(e);
       alert("오류가 발생했습니다: " + e);
@@ -547,8 +584,12 @@ const App: React.FC = () => {
   };
 
   const downloadManualCsv = () => {
+    const entriesToExport = selectedManualIds.size > 0
+      ? manualEntries.filter(e => selectedManualIds.has(e.id))
+      : manualEntries.filter(e => e.product || e.name1 || e.ordererName);
+    if (entriesToExport.length === 0) return alert("다운로드할 데이터가 없습니다.");
     const headers = ["구매인증샷", "갯수", "품목", "날짜", "이름1", "이름2/주문자명", "주문번호", "주소", "비고", "결제금액", "계좌번호", "입금전", "입금후"];
-    const rows = manualEntries.filter(e => e.product || e.name1 || e.ordererName).map(e => [
+    const rows = entriesToExport.map(e => [
       "IMAGE_DATA", e.count, `"${e.product}"`, e.date, `"${e.name1}"`, `"${e.name2}/${e.ordererName}"`, `"${e.orderNumber}"`, `"${e.address}"`, `"${e.memo}"`, e.paymentAmount, `"${e.accountNumber}"`, e.beforeDeposit ? "O" : "X", e.afterDeposit ? "O" : "X"
     ]);
     const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
@@ -718,6 +759,97 @@ const App: React.FC = () => {
     );
   };
 
+  const manualRangeStepRef = useRef<'start' | 'end'>('start');
+
+  const renderDateRangePicker = (
+    startDate: string, endDate: string,
+    onSelectStart: (d: string) => void, onSelectEnd: (d: string) => void,
+    isOpen: boolean, setOpen: (b: boolean) => void,
+    viewMonth: Date, setViewMonth: (d: Date) => void,
+    dateCounts: Record<string, number>
+  ) => {
+    const year = viewMonth.getFullYear();
+    const month = viewMonth.getMonth();
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const days: (number | null)[] = [];
+    for (let i = 0; i < firstDay; i++) days.push(null);
+    for (let i = 1; i <= daysInMonth; i++) days.push(i);
+    const todayStr = new Date().toISOString().split('T')[0];
+    const isAll = startDate === 'all';
+    const displayText = isAll ? '전체' : (startDate === endDate ? startDate : `${startDate} ~ ${endDate}`);
+    return (
+      <div className="relative inline-block">
+        <div className="flex gap-2 items-center">
+          <button onClick={() => setOpen(!isOpen)} className="flex items-center gap-2 px-4 py-1.5 bg-white border border-gray-200 rounded-xl text-xs font-bold hover:border-blue-500 transition-all">
+            <span>📅</span>
+            <span>{displayText}</span>
+            <span className="text-gray-300 text-[10px]">▼</span>
+          </button>
+          {!isAll && (
+            <button onClick={() => { onSelectStart('all'); onSelectEnd('all'); }} className="px-3 py-1.5 bg-gray-100 rounded-xl text-[10px] font-black text-gray-500 hover:bg-gray-200">전체</button>
+          )}
+        </div>
+        {isOpen && (<>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute top-full left-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 p-4 z-50 w-64">
+            <div className="text-center text-[10px] font-bold text-gray-400 mb-2">
+              {manualRangeStepRef.current === 'start' ? '시작일을 선택하세요' : '종료일을 선택하세요'}
+            </div>
+            <div className="flex items-center justify-between mb-3">
+              <button onClick={() => setViewMonth(new Date(year, month - 1, 1))} className="p-1 hover:bg-gray-100 rounded-lg text-gray-400 font-bold text-xs">◀</button>
+              <span className="font-black text-xs">{year}년 {month + 1}월</span>
+              <button onClick={() => setViewMonth(new Date(year, month + 1, 1))} className="p-1 hover:bg-gray-100 rounded-lg text-gray-400 font-bold text-xs">▶</button>
+            </div>
+            <div className="grid grid-cols-7 gap-0.5 text-center text-[9px] font-bold text-gray-400 mb-1">
+              {['일', '월', '화', '수', '목', '금', '토'].map(d => <div key={d}>{d}</div>)}
+            </div>
+            <div className="grid grid-cols-7 gap-0.5">
+              {days.map((day, i) => {
+                if (!day) return <div key={i} />;
+                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const count = dateCounts[dateStr] || 0;
+                const isStart = dateStr === startDate;
+                const isEnd = dateStr === endDate;
+                const inRange = !isAll && startDate !== 'all' && dateStr >= startDate && dateStr <= endDate;
+                const isToday = dateStr === todayStr;
+                return (
+                  <button key={i} onClick={() => {
+                    if (manualRangeStepRef.current === 'start') {
+                      onSelectStart(dateStr);
+                      onSelectEnd(dateStr);
+                      manualRangeStepRef.current = 'end';
+                    } else {
+                      let s = startDate, e = dateStr;
+                      if (e < s) { [s, e] = [e, s]; }
+                      onSelectStart(s);
+                      onSelectEnd(e);
+                      manualRangeStepRef.current = 'start';
+                      setOpen(false);
+                    }
+                  }}
+                    className={`relative p-1.5 rounded-lg text-[11px] font-bold transition-all ${
+                      isStart || isEnd ? 'bg-blue-600 text-white' :
+                      inRange ? 'bg-blue-100 text-blue-700' :
+                      isToday ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-300' :
+                      count > 0 ? 'hover:bg-gray-100 text-gray-800' : 'text-gray-300'
+                    }`}>
+                    {day}
+                    {count > 0 && !isStart && !isEnd && !inRange && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 bg-blue-400 rounded-full" />}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-3 pt-2 border-t flex justify-between">
+              <button onClick={() => { const t = todayStr; onSelectStart(t); onSelectEnd(t); manualRangeStepRef.current = 'start'; setOpen(false); setViewMonth(new Date()); }} className="text-[10px] font-black text-blue-600 hover:underline">오늘</button>
+              <button onClick={() => { onSelectStart('all'); onSelectEnd('all'); manualRangeStepRef.current = 'start'; setOpen(false); }} className="text-[10px] font-black text-gray-500 hover:underline">전체 보기</button>
+            </div>
+          </div>
+        </>)}
+      </div>
+    );
+  };
+
   const selectedProduct = products.find(p => p.id === selectedProductId);
 
   return (
@@ -874,12 +1006,12 @@ const App: React.FC = () => {
                       <p className="font-bold">아직 제출된 후기 인증이 없습니다.</p>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto" onMouseUp={() => { isDraggingRef.current = false; }} onMouseLeave={() => { isDraggingRef.current = false; }}>
                       <table className="w-full text-center">
                         <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase">
                           <tr>
-                            <th className="p-4 w-12">
-                              <input type="checkbox" className="w-5 h-5 accent-blue-600"
+                            <th className="p-2 w-10">
+                              <input type="checkbox" className="w-4 h-4 accent-blue-600"
                                 checked={reviewEntries.length > 0 && selectedReviewIds.size === reviewEntries.length}
                                 onChange={(e) => {
                                   if (e.target.checked) setSelectedReviewIds(new Set(reviewEntries.map(e => e.id)));
@@ -887,21 +1019,42 @@ const App: React.FC = () => {
                                 }}
                               />
                             </th>
-                            <th className="p-4 w-12">No.</th>
-                            <th className="p-4 w-32">인증 이미지</th>
-                            <th className="p-4">주문번호</th>
-                            <th className="p-4">주문자명</th>
-                            <th className="p-4">은행명</th>
-                            <th className="p-4">계좌번호</th>
-                            <th className="p-4">이름</th>
-                            <th className="p-4">제출일</th>
+                            <th className="p-2 w-10">No.</th>
+                            <th className="p-2 w-24">인증 이미지</th>
+                            <th className="p-2">주문번호</th>
+                            <th className="p-2">주문자명</th>
+                            <th className="p-2">은행명</th>
+                            <th className="p-2">계좌번호</th>
+                            <th className="p-2">이름</th>
+                            <th className="p-2">제출일</th>
                           </tr>
                         </thead>
                         <tbody className="text-[11px] font-bold divide-y divide-gray-100">
                           {reviewEntries.map((entry, idx) => (
-                            <tr key={entry.id} className={`hover:bg-orange-50/30 transition-colors ${selectedReviewIds.has(entry.id) ? 'bg-blue-50' : ''}`}>
-                              <td className="p-2">
-                                <input type="checkbox" className="w-4 h-4 accent-blue-600"
+                            <tr key={entry.id}
+                              className={`hover:bg-orange-50/30 transition-colors cursor-default ${selectedReviewIds.has(entry.id) ? 'bg-blue-50' : ''}`}
+                              onMouseDown={(e) => {
+                                if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'BUTTON' || (e.target as HTMLElement).tagName === 'IMG') return;
+                                isDraggingRef.current = true;
+                                dragStartIndexRef.current = idx;
+                                const next = new Set(selectedReviewIds);
+                                if (!e.shiftKey) next.clear();
+                                next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
+                                setSelectedReviewIds(next);
+                              }}
+                              onMouseEnter={() => {
+                                if (!isDraggingRef.current) return;
+                                const start = Math.min(dragStartIndexRef.current, idx);
+                                const end = Math.max(dragStartIndexRef.current, idx);
+                                const next = new Set<string>();
+                                for (let i = start; i <= end; i++) {
+                                  if (reviewEntries[i]) next.add(reviewEntries[i].id);
+                                }
+                                setSelectedReviewIds(next);
+                              }}
+                            >
+                              <td className="p-1">
+                                <input type="checkbox" className="w-3 h-3 accent-blue-600"
                                   checked={selectedReviewIds.has(entry.id)}
                                   onChange={() => {
                                     const next = new Set(selectedReviewIds);
@@ -910,26 +1063,26 @@ const App: React.FC = () => {
                                   }}
                                 />
                               </td>
-                              <td className="p-2 text-gray-300">{idx + 1}</td>
-                              <td className="p-1">
+                              <td className="p-1 text-gray-300">{idx + 1}</td>
+                              <td className="p-0.5">
                                 <img
                                   src={entry.image}
-                                  className="w-8 h-8 object-cover rounded-lg border border-gray-100 mx-auto cursor-pointer hover:scale-150 transition-transform origin-center z-10 relative"
+                                  className="w-7 h-7 object-cover rounded-lg border border-gray-100 mx-auto cursor-pointer hover:scale-150 transition-transform origin-center z-10 relative"
                                   onClick={() => setPreviewImage(entry.image)}
                                   alt="후기 인증"
                                 />
                               </td>
-                              <td className="p-2 text-blue-600 font-black">{entry.orderNumber || <span className="text-gray-300 font-normal">미인식</span>}</td>
-                              <td className="p-2">{entry.ordererName || <span className="text-gray-300 font-normal">미인식</span>}</td>
+                              <td className="p-1 text-blue-600 font-black">{entry.orderNumber || <span className="text-gray-300 font-normal">미인식</span>}</td>
+                              <td className="p-1">{entry.ordererName || <span className="text-gray-300 font-normal">미인식</span>}</td>
                               {(() => {
                                 const parts = (entry.bankInfo || '').split(/[\/\s]+/).filter(Boolean);
                                 return (<>
-                                  <td className="p-2">{parts[0] || <span className="text-gray-300 font-normal">-</span>}</td>
-                                  <td className="p-2 text-blue-600">{parts[1] || <span className="text-gray-300 font-normal">-</span>}</td>
-                                  <td className="p-2">{parts[2] || <span className="text-gray-300 font-normal">-</span>}</td>
+                                  <td className="p-1">{parts[0] || <span className="text-gray-300 font-normal">-</span>}</td>
+                                  <td className="p-1 text-blue-600">{parts[1] || <span className="text-gray-300 font-normal">-</span>}</td>
+                                  <td className="p-1">{parts[2] || <span className="text-gray-300 font-normal">-</span>}</td>
                                 </>);
                               })()}
-                              <td className="p-2 text-gray-400">{entry.date}</td>
+                              <td className="p-1 text-gray-400">{entry.date}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1003,7 +1156,7 @@ const App: React.FC = () => {
                       }, {} as Record<string, number>)
                     )}
                   </div>
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto" onMouseUp={() => { isDraggingRef.current = false; }} onMouseLeave={() => { isDraggingRef.current = false; }}>
                     {depositSubTab === 'before' ? (() => {
                       // ✅ debouncedDepositSearch 사용 (변경 사항 5)
                       const beforeItems = manualEntries.filter(e => {
@@ -1032,8 +1185,8 @@ const App: React.FC = () => {
                         <table className="w-full text-center">
                           <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase">
                             <tr>
-                              <th className="p-4 w-12">
-                                <input type="checkbox" className="w-5 h-5 accent-blue-600" checked={allSelected} onChange={() => {
+                              <th className="p-2 w-10">
+                                <input type="checkbox" className="w-4 h-4 accent-blue-600" checked={allSelected} onChange={() => {
                                   if (allSelected) {
                                     setSelectedDepositIds(new Set());
                                   } else {
@@ -1041,37 +1194,58 @@ const App: React.FC = () => {
                                   }
                                 }} />
                               </th>
-                              <th className="p-4">날짜</th>
-                              <th className="p-4">이름1</th>
-                              <th className="p-4">이름2</th>
-                              <th className="p-4">주문번호</th>
-                              <th className="p-4">결제금액</th>
-                              <th className="p-4">계좌번호</th>
-                              <th className="p-4 w-16">해제</th>
+                              <th className="p-2">날짜</th>
+                              <th className="p-2">이름1</th>
+                              <th className="p-2">이름2</th>
+                              <th className="p-2">주문번호</th>
+                              <th className="p-2">결제금액</th>
+                              <th className="p-2">계좌번호</th>
+                              <th className="p-2 w-16">해제</th>
                             </tr>
                           </thead>
                           <tbody className="text-[11px] font-bold divide-y divide-gray-100">
-                            {beforeItems.map(entry => (
-                              <tr key={entry.id} className={`transition-colors ${selectedDepositIds.has(entry.id) ? 'bg-blue-50' : 'hover:bg-gray-50'}`}>
-                                <td className="p-2">
-                                  <input type="checkbox" className="w-4 h-4 accent-blue-600" checked={selectedDepositIds.has(entry.id)} onChange={() => {
+                            {beforeItems.map((entry, idx) => (
+                              <tr key={entry.id}
+                                className={`transition-colors cursor-default ${selectedDepositIds.has(entry.id) ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+                                onMouseDown={(e) => {
+                                  if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'BUTTON') return;
+                                  isDraggingRef.current = true;
+                                  dragStartIndexRef.current = idx;
+                                  const next = new Set(selectedDepositIds);
+                                  if (!e.shiftKey) next.clear();
+                                  next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
+                                  setSelectedDepositIds(next);
+                                }}
+                                onMouseEnter={() => {
+                                  if (!isDraggingRef.current) return;
+                                  const start = Math.min(dragStartIndexRef.current, idx);
+                                  const end = Math.max(dragStartIndexRef.current, idx);
+                                  const next = new Set<string>();
+                                  for (let i = start; i <= end; i++) {
+                                    if (beforeItems[i]) next.add(beforeItems[i].id);
+                                  }
+                                  setSelectedDepositIds(next);
+                                }}
+                              >
+                                <td className="p-1">
+                                  <input type="checkbox" className="w-3 h-3 accent-blue-600" checked={selectedDepositIds.has(entry.id)} onChange={() => {
                                     const next = new Set(selectedDepositIds);
                                     next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
                                     setSelectedDepositIds(next);
                                   }} />
                                 </td>
-                                <td className="p-2">
-                                  {entry.isManualCheck && <span className="inline-block px-1.5 py-0.5 rounded bg-orange-100 text-orange-600 text-[10px] font-black mr-1">수동</span>}
+                                <td className="p-1">
+                                  {entry.isManualCheck && <span className="inline-block px-1 py-0.5 rounded bg-orange-100 text-orange-600 text-[9px] font-black mr-0.5">수동</span>}
                                   {entry.date}
                                 </td>
-                                <td className="p-2">{entry.name1}</td>
-                                <td className="p-2">{entry.name2}</td>
-                                <td className="p-2 text-blue-600 font-black">{entry.orderNumber}</td>
-                                <td className="p-2">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
-                                <td className="p-2 text-blue-600">{entry.accountNumber}</td>
-                                <td className="p-2">
-                                  <button onClick={() => handleDepositRelease(entry.id, 'before')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-100 transition-all mr-1">해제</button>
-                                  <button onClick={() => handleDepositDelete(entry.id)} className="px-2 py-1 bg-gray-100 text-gray-400 rounded-lg text-[10px] font-black hover:bg-gray-200 transition-all">삭제</button>
+                                <td className="p-1">{entry.name1}</td>
+                                <td className="p-1">{entry.name2}</td>
+                                <td className="p-1 text-blue-600 font-black">{entry.orderNumber}</td>
+                                <td className="p-1">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
+                                <td className="p-1 text-blue-600">{entry.accountNumber}</td>
+                                <td className="p-1">
+                                  <button onClick={() => handleDepositRelease(entry.id, 'before')} className="px-1.5 py-0.5 bg-red-50 text-red-500 rounded-lg text-[9px] font-black hover:bg-red-100 transition-all mr-0.5">해제</button>
+                                  <button onClick={() => handleDepositDelete(entry.id)} className="px-1.5 py-0.5 bg-gray-100 text-gray-400 rounded-lg text-[9px] font-black hover:bg-gray-200 transition-all">삭제</button>
                                 </td>
                               </tr>
                             ))}
@@ -1111,8 +1285,8 @@ const App: React.FC = () => {
                         <table className="w-full text-center">
                           <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase">
                             <tr>
-                              <th className="p-4 w-12">
-                                <input type="checkbox" className="w-5 h-5 accent-green-600" checked={allAfterSelected} onChange={() => {
+                              <th className="p-2 w-10">
+                                <input type="checkbox" className="w-4 h-4 accent-green-600" checked={allAfterSelected} onChange={() => {
                                   if (allAfterSelected) {
                                     setSelectedDepositIds(new Set());
                                   } else {
@@ -1120,36 +1294,57 @@ const App: React.FC = () => {
                                   }
                                 }} />
                               </th>
-                              <th className="p-4">날짜</th>
-                              <th className="p-4 text-blue-600">입금날짜</th>
-                              <th className="p-4">이름1</th>
-                              <th className="p-4">이름2</th>
-                              <th className="p-4">주문번호</th>
-                              <th className="p-4">결제금액</th>
-                              <th className="p-4">계좌번호</th>
-                              <th className="p-4 w-16">해제</th>
+                              <th className="p-2">날짜</th>
+                              <th className="p-2 text-blue-600">입금날짜</th>
+                              <th className="p-2">이름1</th>
+                              <th className="p-2">이름2</th>
+                              <th className="p-2">주문번호</th>
+                              <th className="p-2">결제금액</th>
+                              <th className="p-2">계좌번호</th>
+                              <th className="p-2 w-16">해제</th>
                             </tr>
                           </thead>
                           <tbody className="text-[11px] font-bold divide-y divide-gray-100">
-                            {afterItems.map(entry => (
-                              <tr key={entry.id} className={`transition-colors ${selectedDepositIds.has(entry.id) ? 'bg-red-50' : 'bg-green-50/30'}`}>
-                                <td className="p-2">
-                                  <input type="checkbox" className="w-4 h-4 accent-green-600" checked={selectedDepositIds.has(entry.id)} onChange={() => {
+                            {afterItems.map((entry, idx) => (
+                              <tr key={entry.id}
+                                className={`transition-colors cursor-default ${selectedDepositIds.has(entry.id) ? 'bg-red-50' : 'bg-green-50/30'}`}
+                                onMouseDown={(e) => {
+                                  if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'BUTTON') return;
+                                  isDraggingRef.current = true;
+                                  dragStartIndexRef.current = idx;
+                                  const next = new Set(selectedDepositIds);
+                                  if (!e.shiftKey) next.clear();
+                                  next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
+                                  setSelectedDepositIds(next);
+                                }}
+                                onMouseEnter={() => {
+                                  if (!isDraggingRef.current) return;
+                                  const start = Math.min(dragStartIndexRef.current, idx);
+                                  const end = Math.max(dragStartIndexRef.current, idx);
+                                  const next = new Set<string>();
+                                  for (let i = start; i <= end; i++) {
+                                    if (afterItems[i]) next.add(afterItems[i].id);
+                                  }
+                                  setSelectedDepositIds(next);
+                                }}
+                              >
+                                <td className="p-1">
+                                  <input type="checkbox" className="w-3 h-3 accent-green-600" checked={selectedDepositIds.has(entry.id)} onChange={() => {
                                     const next = new Set(selectedDepositIds);
                                     next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
                                     setSelectedDepositIds(next);
                                   }} />
                                 </td>
-                                <td className="p-2">{entry.date}</td>
-                                <td className="p-2 text-blue-600">{entry.depositDate || '-'}</td>
-                                <td className="p-2">{entry.name1}</td>
-                                <td className="p-2">{entry.name2}</td>
-                                <td className="p-2 text-blue-600 font-black">{entry.orderNumber}</td>
-                                <td className="p-2">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
-                                <td className="p-2 text-blue-600">{entry.accountNumber}</td>
-                                <td className="p-2">
-                                  <button onClick={() => handleDepositRelease(entry.id, 'after')} className="px-2 py-1 bg-red-50 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-100 transition-all mr-1">해제</button>
-                                  <button onClick={() => handleDepositDelete(entry.id)} className="px-2 py-1 bg-gray-100 text-gray-400 rounded-lg text-[10px] font-black hover:bg-gray-200 transition-all">삭제</button>
+                                <td className="p-1">{entry.date}</td>
+                                <td className="p-1 text-blue-600">{entry.depositDate || '-'}</td>
+                                <td className="p-1">{entry.name1}</td>
+                                <td className="p-1">{entry.name2}</td>
+                                <td className="p-1 text-blue-600 font-black">{entry.orderNumber}</td>
+                                <td className="p-1">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
+                                <td className="p-1 text-blue-600">{entry.accountNumber}</td>
+                                <td className="p-1">
+                                  <button onClick={() => handleDepositRelease(entry.id, 'after')} className="px-1.5 py-0.5 bg-red-50 text-red-500 rounded-lg text-[9px] font-black hover:bg-red-100 transition-all mr-0.5">해제</button>
+                                  <button onClick={() => handleDepositDelete(entry.id)} className="px-1.5 py-0.5 bg-gray-100 text-gray-400 rounded-lg text-[9px] font-black hover:bg-gray-200 transition-all">삭제</button>
                                 </td>
                               </tr>
                             ))}
@@ -1290,6 +1485,22 @@ const App: React.FC = () => {
                           >
                             성아
                           </button>
+                          <button onClick={handleReservationComplete} className="px-5 py-2.5 bg-pink-500 text-white rounded-xl font-black text-xs hover:bg-pink-600 transition-colors">
+                            예약완료
+                          </button>
+                          <button
+                            onClick={() => {
+                              const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                              if (selected.length === 0) return;
+                              const text = selected.map(e => `${e.name2 || ''}\t${e.orderNumber || ''}`).join('\n');
+                              navigator.clipboard.writeText(text).then(() => {
+                                alert(`${selected.length}건 복사완료 (받는사람 / 주문번호)`);
+                              });
+                            }}
+                            className="px-5 py-2.5 bg-orange-500 text-white rounded-xl font-black text-xs hover:bg-orange-600 transition-colors"
+                          >
+                            가예약
+                          </button>
                         </>)}
                         <button onClick={downloadManualCsv} className="px-5 py-2.5 bg-gray-100 text-gray-600 rounded-xl font-black text-xs">내보내기 📥</button>
                         <button onClick={handleLotteDownload} className="px-5 py-2.5 bg-red-600 text-white rounded-xl font-black text-xs hover:bg-red-700 transition-colors flex items-center shadow-lg shadow-red-200">
@@ -1299,8 +1510,9 @@ const App: React.FC = () => {
                       </div>
                     </div>
                     <div>
-                      {renderDatePicker(
-                        manualViewDate, setManualViewDate,
+                      {renderDateRangePicker(
+                        manualViewDateStart, manualViewDateEnd,
+                        setManualViewDateStart, setManualViewDateEnd,
                         manualCalOpen, setManualCalOpen,
                         manualCalMonth, setManualCalMonth,
                         manualEntries.reduce((acc, e) => {
@@ -1310,7 +1522,7 @@ const App: React.FC = () => {
                       )}
                     </div>
                   </div>
-                  <div className="overflow-x-auto relative scrollbar-hide">
+                  <div className="overflow-x-auto relative scrollbar-hide" onMouseUp={() => { isDraggingRef.current = false; }} onMouseLeave={() => { isDraggingRef.current = false; }}>
                     <table className="w-full border-collapse min-w-[1100px] table-fixed text-center text-[12px]">
                       <thead className="sticky top-0 z-20 bg-gray-50 border-b border-gray-200">
                         <tr className="text-[9px] font-black uppercase text-gray-400">
@@ -1320,9 +1532,11 @@ const App: React.FC = () => {
                                 if (e.target.checked) {
                                   const visibleIds = manualEntries.filter(entry => {
                                     if (!entry) return false;
-                                    if (manualViewDate !== 'all' && entry.date !== manualViewDate) return false;
-                                    if (manualSearch) {
-                                      const q = manualSearch.toLowerCase();
+                                    if (manualViewDateStart !== 'all') {
+                                      if (entry.date < manualViewDateStart || entry.date > manualViewDateEnd) return false;
+                                    }
+                                    if (debouncedManualSearch) {
+                                      const q = debouncedManualSearch.toLowerCase();
                                       return (entry.name1 || '').toLowerCase().includes(q)
                                         || (entry.name2 || '').toLowerCase().includes(q)
                                         || (entry.orderNumber || '').toLowerCase().includes(q)
@@ -1367,10 +1581,10 @@ const App: React.FC = () => {
                             if (!entry) return false;
 
                             // 검색 시 동작: 날짜 필터 무시하고 3개월 이내 데이터 전체 검색
-                            if (manualSearch) {
+                            if (debouncedManualSearch) {
                               if (entry.date < limitDateStr) return false;
 
-                              const q = manualSearch.toLowerCase();
+                              const q = debouncedManualSearch.toLowerCase();
                               return String(entry.name1 || '').toLowerCase().includes(q)
                                 || String(entry.name2 || '').toLowerCase().includes(q)
                                 || String(entry.orderNumber || '').toLowerCase().includes(q)
@@ -1378,8 +1592,10 @@ const App: React.FC = () => {
                                 || String(entry.accountNumber || '').toLowerCase().includes(q);
                             }
 
-                            // 일반 조회 시: 선택된 날짜('all' 또는 특정 날짜)만 필터링
-                            if (manualViewDate !== 'all' && entry.date !== manualViewDate) return false;
+                            // 일반 조회 시: 날짜 범위로 필터링
+                            if (manualViewDateStart !== 'all') {
+                              if (entry.date < manualViewDateStart || entry.date > manualViewDateEnd) return false;
+                            }
 
                             return true;
                           });
@@ -1402,9 +1618,39 @@ const App: React.FC = () => {
                             {limited.map((entry, idx) => {
                               const isBlue = entry.afterDeposit;
                               const rowColor = isBlue ? 'text-blue-600' : '';
+                              const isPink = entry.reservationComplete;
+                              const compStart = () => { composingRef.current = true; };
+                              const compEnd = (field: keyof ManualEntry) => (e: React.CompositionEvent<HTMLInputElement>) => {
+                                composingRef.current = false;
+                                updateManualEntry(entry.id, field, e.currentTarget.value);
+                              };
+                              const safeChange = (field: keyof ManualEntry) => (e: React.ChangeEvent<HTMLInputElement>) => {
+                                if (!composingRef.current) updateManualEntry(entry.id, field, e.target.value);
+                              };
                               return (
-                                <tr key={entry.id} className={`group hover:bg-blue-50/20 transition-colors ${isBlue ? 'bg-blue-50/30' : ''}`}>
-                                  <td className="p-2 border-r text-center sticky left-0 bg-white z-20">
+                                <tr key={entry.id}
+                                  className={`group hover:bg-blue-50/20 transition-colors ${isBlue ? 'bg-blue-50/30' : ''}`}
+                                  onMouseDown={(e) => {
+                                    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+                                    isDraggingRef.current = true;
+                                    dragStartIndexRef.current = idx;
+                                    const next = new Set(selectedManualIds);
+                                    if (!e.shiftKey) next.clear();
+                                    next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
+                                    setSelectedManualIds(next);
+                                  }}
+                                  onMouseEnter={() => {
+                                    if (!isDraggingRef.current) return;
+                                    const start = Math.min(dragStartIndexRef.current, idx);
+                                    const end = Math.max(dragStartIndexRef.current, idx);
+                                    const next = new Set<string>();
+                                    for (let i = start; i <= end; i++) {
+                                      if (limited[i]) next.add(limited[i].id);
+                                    }
+                                    setSelectedManualIds(next);
+                                  }}
+                                >
+                                  <td className="p-1 border-r text-center sticky left-0 bg-white z-20">
                                     <input type="checkbox" className="w-3 h-3 accent-blue-600"
                                       checked={selectedManualIds.has(entry.id)}
                                       onChange={() => {
@@ -1414,11 +1660,11 @@ const App: React.FC = () => {
                                       }}
                                     />
                                   </td>
-                                  <td className="p-1 border-r"
+                                  <td className="p-0.5 border-r"
                                     onDragOver={(e) => e.preventDefault()}
                                     onDrop={(e) => handleManualImageDrop(entry.id, e)}
                                   >
-                                    <div className="relative h-7 w-7 mx-auto group/img">
+                                    <div className="relative h-6 w-6 mx-auto group/img">
                                       {entry.proofImage ? (
                                         <>
                                           <img src={entry.proofImage} onClick={() => setPreviewImage(entry.proofImage)} className="w-full h-full object-cover rounded-md border cursor-pointer" />
@@ -1435,53 +1681,38 @@ const App: React.FC = () => {
                                       )}
                                     </div>
                                   </td>
-                                  <td className="p-1 border-r text-center text-gray-400 text-[10px]">{idx + 1}</td>
+                                  <td className="p-0.5 border-r text-center text-gray-400 text-[10px]">{idx + 1}</td>
                                   <td className="p-0 border-r"><input data-row={idx} data-col={0} onKeyDown={(e) => handleKeyDown(e, idx, 0)} type="number" className={`excel-input ${rowColor}`} value={entry.count > 0 ? entry.count : ''} onChange={e => updateManualEntry(entry.id, 'count', Number(e.target.value))} /></td>
                                   <td className="p-0 border-r">
                                     {entry.date >= '2026-02-09' ? (
-                                      <>
-                                        <input
-                                          data-row={idx}
-                                          data-col={1}
-                                          onKeyDown={(e) => handleKeyDown(e, idx, 1)}
-                                          type="text"
-                                          list="product-list-manual"
-                                          className={`excel-input ${rowColor}`}
-                                          value={entry.product}
-                                          onChange={e => updateManualEntry(entry.id, 'product', e.target.value)}
-                                        />
-                                      </>
+                                        <input data-row={idx} data-col={1} onKeyDown={(e) => handleKeyDown(e, idx, 1)} type="text" list="product-list-manual"
+                                          className={`excel-input ${rowColor}`} value={entry.product}
+                                          onCompositionStart={compStart} onCompositionEnd={compEnd('product')}
+                                          onChange={safeChange('product')} />
                                     ) : (
-                                      <select
-                                        data-row={idx}
-                                        data-col={1}
-                                        onKeyDown={(e) => handleKeyDown(e, idx, 1)}
-                                        className={`excel-input ${rowColor} cursor-pointer`}
-                                        value={entry.product}
-                                        onChange={e => updateManualEntry(entry.id, 'product', e.target.value)}
-                                      >
+                                      <select data-row={idx} data-col={1} onKeyDown={(e) => handleKeyDown(e, idx, 1)}
+                                        className={`excel-input ${rowColor} cursor-pointer`} value={entry.product}
+                                        onChange={e => updateManualEntry(entry.id, 'product', e.target.value)}>
                                         <option value="">(선택)</option>
-                                        {productPrices.map(p => (
-                                          <option key={p.id} value={p.name}>{p.name}</option>
-                                        ))}
+                                        {productPrices.map(p => (<option key={p.id} value={p.name}>{p.name}</option>))}
                                       </select>
                                     )}
                                   </td>
                                   <td className="p-0 border-r"><input data-row={idx} data-col={2} onKeyDown={(e) => handleKeyDown(e, idx, 2)} type="date" className={`excel-input px-1 ${rowColor}`} value={entry.date} onChange={e => updateManualEntry(entry.id, 'date', e.target.value)} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={3} onKeyDown={(e) => handleKeyDown(e, idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.name1} onChange={e => updateManualEntry(entry.id, 'name1', e.target.value)} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={4} onKeyDown={(e) => handleKeyDown(e, idx, 4)} type="text" className={`excel-input text-center ${rowColor}`} placeholder="받는사람" value={entry.name2} onChange={e => updateManualEntry(entry.id, 'name2', e.target.value)} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={5} onKeyDown={(e) => handleKeyDown(e, idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.orderNumber} onChange={e => updateManualEntry(entry.id, 'orderNumber', e.target.value)} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={6} onKeyDown={(e) => handleKeyDown(e, idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} value={entry.address} onChange={e => updateManualEntry(entry.id, 'address', e.target.value)} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={7} onKeyDown={(e) => handleKeyDown(e, idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} value={entry.memo} onChange={e => updateManualEntry(entry.id, 'memo', e.target.value)} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={3} onKeyDown={(e) => handleKeyDown(e, idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.name1} onCompositionStart={compStart} onCompositionEnd={compEnd('name1')} onChange={safeChange('name1')} /></td>
+                                  <td className={`p-0 border-r ${isPink ? 'bg-pink-100' : ''}`}><input data-row={idx} data-col={4} onKeyDown={(e) => handleKeyDown(e, idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'text-pink-600 font-black' : rowColor}`} placeholder="받는사람" value={entry.name2} onCompositionStart={compStart} onCompositionEnd={compEnd('name2')} onChange={safeChange('name2')} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={5} onKeyDown={(e) => handleKeyDown(e, idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.orderNumber} onCompositionStart={compStart} onCompositionEnd={compEnd('orderNumber')} onChange={safeChange('orderNumber')} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={6} onKeyDown={(e) => handleKeyDown(e, idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} value={entry.address} onCompositionStart={compStart} onCompositionEnd={compEnd('address')} onChange={safeChange('address')} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={7} onKeyDown={(e) => handleKeyDown(e, idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} value={entry.memo} onCompositionStart={compStart} onCompositionEnd={compEnd('memo')} onChange={safeChange('memo')} /></td>
                                   <td className="p-0 border-r"><input data-row={idx} data-col={8} onKeyDown={(e) => handleKeyDown(e, idx, 8)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''} onChange={e => updateManualEntry(entry.id, 'paymentAmount', Number(e.target.value.replace(/,/g, '')))} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={9} onKeyDown={(e) => handleKeyDown(e, idx, 9)} type="text" className={`excel-input ${rowColor}`} value={entry.emergencyContact} onChange={e => updateManualEntry(entry.id, 'emergencyContact', e.target.value)} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={10} onKeyDown={(e) => handleKeyDown(e, idx, 10)} type="text" className={`excel-input ${rowColor}`} value={entry.accountNumber} onChange={e => updateManualEntry(entry.id, 'accountNumber', e.target.value)} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={11} onKeyDown={(e) => handleKeyDown(e, idx, 11)} type="text" className={`excel-input ${rowColor}`} value={entry.trackingNumber || ''} onChange={e => updateManualEntry(entry.id, 'trackingNumber', e.target.value)} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={9} onKeyDown={(e) => handleKeyDown(e, idx, 9)} type="text" className={`excel-input ${rowColor}`} value={entry.emergencyContact} onCompositionStart={compStart} onCompositionEnd={compEnd('emergencyContact')} onChange={safeChange('emergencyContact')} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={10} onKeyDown={(e) => handleKeyDown(e, idx, 10)} type="text" className={`excel-input ${rowColor}`} value={entry.accountNumber} onCompositionStart={compStart} onCompositionEnd={compEnd('accountNumber')} onChange={safeChange('accountNumber')} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={11} onKeyDown={(e) => handleKeyDown(e, idx, 11)} type="text" className={`excel-input ${rowColor}`} value={entry.trackingNumber || ''} onCompositionStart={compStart} onCompositionEnd={compEnd('trackingNumber')} onChange={safeChange('trackingNumber')} /></td>
                                   <td className="p-0 border-r text-center align-middle">
-                                    <input type="checkbox" className="w-5 h-5 accent-blue-600" checked={entry.beforeDeposit} onChange={() => toggleBeforeDeposit(entry.id, entry.beforeDeposit)} />
+                                    <input type="checkbox" className="w-4 h-4 accent-blue-600" checked={entry.beforeDeposit} onChange={() => toggleBeforeDeposit(entry.id, entry.beforeDeposit)} />
                                   </td>
                                   <td className="p-0 text-center align-middle">
-                                    <input type="checkbox" className="w-5 h-5 accent-green-600" checked={entry.afterDeposit} onChange={() => toggleAfterDeposit(entry.id, entry.afterDeposit)} />
+                                    <input type="checkbox" className="w-4 h-4 accent-green-600" checked={entry.afterDeposit} onChange={() => toggleAfterDeposit(entry.id, entry.afterDeposit)} />
                                   </td>
                                 </tr>
                               );
@@ -1489,7 +1720,7 @@ const App: React.FC = () => {
                             {filtered.length === 0 && (
                               <tr>
                                 <td colSpan={17} className="p-16 text-center text-gray-300 font-bold">
-                                  {manualSearch ? `"${manualSearch}" 검색 결과가 없습니다.` : `${manualViewDate === 'all' ? '전체' : manualViewDate} 날짜에 데이터가 없습니다.`}
+                                  {debouncedManualSearch ? `"${debouncedManualSearch}" 검색 결과가 없습니다.` : `${manualViewDateStart === 'all' ? '전체' : manualViewDateStart === manualViewDateEnd ? manualViewDateStart : manualViewDateStart + ' ~ ' + manualViewDateEnd} 날짜에 데이터가 없습니다.`}
                                 </td>
                               </tr>
                             )}
@@ -1676,8 +1907,8 @@ const App: React.FC = () => {
         .excel-input {
           width: 100%;
           height: 100%;
-          min-height: 28px;
-          padding: 2px 4px;
+          min-height: 20px;
+          padding: 1px 3px;
           border: 1px solid transparent;
           background: transparent;
           font-family: inherit;
@@ -1692,6 +1923,8 @@ const App: React.FC = () => {
         }
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        table tbody tr { user-select: none; -webkit-user-select: none; }
+        table tbody tr input, table tbody tr button { user-select: auto; -webkit-user-select: auto; }
       `}</style>
     </div>
   );

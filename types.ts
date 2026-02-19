@@ -47,6 +47,7 @@ export interface ManualEntry {
   afterDeposit: boolean;
   depositDate?: string;
   isManualCheck?: boolean;
+  reservationComplete?: boolean;
 }
 
 export type AppMode = 'customer' | 'admin';
@@ -59,7 +60,7 @@ export interface ReviewEntry {
   date: string;
 }
 
-export type AdminTab = 'dashboard' | 'manual' | 'deposit' | 'reviewComplete';
+export type AdminTab = 'dashboard' | 'manual' | 'deposit' | 'reviewComplete' | 'productPrices';
 export type CustomerView = 'landing' | 'apply' | 'review';
 
 export interface AppSettings {
