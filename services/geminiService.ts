@@ -70,10 +70,10 @@ const ORDER_NUM_PATTERNS = [
   /(\d{10,20})/,
 ];
 
-// 받는사람(수취인) 이름 추출 패턴
+// 받는사람(수취인) 이름 추출 패턴 - "정보" 제외 (PC 쿠팡 "받는사람 정보" 헤더 오인식 방지)
 const RECEIVER_PATTERNS = [
-  /받는\s*사람\s*[:.·\-]?\s*([가-힣]{2,5})/,
-  /받는\s*사람\s*\n\s*([가-힣]{2,5})/,
+  /받는\s*사람\s*[:.·\-]?\s*(?!정보)([가-힣]{2,5})/,
+  /받는\s*사람\s*\n\s*(?!정보)([가-힣]{2,5})/,
   /수취인\s*[:.·\-]?\s*([가-힣]{2,5})/,
   /수취인\s*\n\s*([가-힣]{2,5})/,
   /수령인\s*[:.·\-]?\s*([가-힣]{2,5})/,
@@ -89,6 +89,13 @@ const ORDERER_PATTERNS = [
   /구매자\s*[:.·\-]?\s*([가-힣]{2,5})/,
 ];
 
+// 주소 추출 패턴 (레이블 기반 - PC 쿠팡 등)
+const ADDRESS_PATTERNS = [
+  /받는\s*주소\s*[:.·\-]?\s*(.+)/,
+  /배송\s*지\s*[:.·\-]?\s*(.+)/,
+  /배송\s*주소\s*[:.·\-]?\s*(.+)/,
+];
+
 // 연락처 추출 패턴
 const PHONE_PATTERNS = [
   /연락처\s*[:.·\-]?\s*(01[016789][\-\s]?\d{3,4}[\-\s]?\d{4})/,
@@ -97,7 +104,7 @@ const PHONE_PATTERNS = [
   /(01[016789]-\d{3,4}-\d{4})/,
 ];
 
-// 주소+이름+연락처를 줄 단위로 추출 (우편번호 기준)
+// 주소+이름+연락처를 줄 단위로 추출 (레이블 기반 + 우편번호 기준)
 function extractAddressBlock(lines: string[]) {
   let receiverName = '';
   let address = '';
@@ -105,7 +112,14 @@ function extractAddressBlock(lines: string[]) {
   const phoneRegex = /01[016789][\-\s]?\d{3,4}[\-\s]?\d{4}/;
 
   for (let i = 0; i < lines.length; i++) {
-    // (우편번호)로 시작하는 줄 = 주소 시작
+    // 1) "받는주소" 레이블이 있는 줄 (PC 쿠팡 형식)
+    const labelMatch = lines[i].match(/받는\s*주소\s*[:.·\-]?\s*(.+)/);
+    if (labelMatch) {
+      address = labelMatch[1].trim();
+      break;
+    }
+
+    // 2) (우편번호)로 시작하는 줄 (모바일 쿠팡 형식)
     if (/^\(?\d{5}\)?/.test(lines[i])) {
       // 윗줄 = 이름
       if (i > 0) {
@@ -153,9 +167,12 @@ export const extractOrderInfo = async (base64Image: string): Promise<OcrResult> 
     let receiverName = matchFirst(text, RECEIVER_PATTERNS);
     const phone = matchFirst(text, PHONE_PATTERNS);
 
-    // 우편번호 기준으로 주소/이름/연락처 추출
+    // 레이블 기반 주소 추출 시도 (PC 쿠팡 형식)
+    let address = matchFirst(text, ADDRESS_PATTERNS);
+
+    // 우편번호 기준으로 주소/이름/연락처 추출 (모바일 쿠팡 형식 fallback)
     const block = extractAddressBlock(lines);
-    const address = block.address;
+    if (!address) address = block.address;
     if (!receiverName && block.receiverName) receiverName = block.receiverName;
     const finalPhone = phone || block.phone;
 
