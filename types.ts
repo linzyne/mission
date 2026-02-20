@@ -104,4 +104,7 @@ export interface ProductPrice {
   id: string;
   name: string;
   price: number;
+  supplyPrice?: number;
+  sellingPrice?: number;
+  margin?: number;
 }

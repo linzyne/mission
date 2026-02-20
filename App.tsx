@@ -155,15 +155,26 @@ const App: React.FC = () => {
   const [manualViewDateStart, setManualViewDateStart] = useState<string>(new Date().toISOString().split('T')[0]);
   const [manualViewDateEnd, setManualViewDateEnd] = useState<string>(new Date().toISOString().split('T')[0]);
 
-  // Drag selection
+  // Row drag selection
   const isDraggingRef = useRef(false);
   const dragStartIndexRef = useRef<number>(-1);
+
+  // Cell drag selection (Excel-like)
+  const [cellSelection, setCellSelection] = useState<{startRow: number, startCol: number, endRow: number, endCol: number} | null>(null);
+  const cellDragRef = useRef({row: -1, col: -1, active: false});
 
   const [manualCalOpen, setManualCalOpen] = useState(false);
   const [manualCalMonth, setManualCalMonth] = useState(new Date());
   const [depositCalOpen, setDepositCalOpen] = useState(false);
   const [depositCalMonth, setDepositCalMonth] = useState(new Date());
 
+  // (localEdits removed - using uncontrolled inputs now)
+
+  // Undo stack
+  const [undoStack, setUndoStack] = useState<{ type: string, entries: { id: string, data: any }[], description: string }[]>([]);
+
+  // Saved sort order (stable across data changes)
+  const [sortedIds, setSortedIds] = useState<string[] | null>(null);
 
   // ✅ 디바운스 로직 - 입금관리 검색 (변경 사항 3)
   useEffect(() => {
@@ -182,6 +193,85 @@ const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [manualSearch]);
 
+  // --- Uncontrolled input helpers (no cursor jump, no IME issues) ---
+  // Sync uncontrolled input from Firestore when cell is NOT focused
+  const syncInputValue = (el: HTMLInputElement | null, value: any) => {
+    if (el && document.activeElement !== el) {
+      const strVal = (value != null && value !== 0 && value !== false) ? String(value) : '';
+      if (el.value !== strVal) el.value = strVal;
+    }
+  };
+
+  // Commit cell value on blur (only if changed)
+  const handleCellBlur = (e: React.FocusEvent<HTMLInputElement>, entry: ManualEntry, field: keyof ManualEntry) => {
+    const rawVal = e.target.value;
+    let newVal: any = rawVal;
+    if (field === 'count') newVal = Number(rawVal) || 0;
+    else if (field === 'paymentAmount') newVal = Number(rawVal.replace(/,/g, '')) || 0;
+
+    const oldVal = entry[field];
+    if (String(newVal) !== String(oldVal != null ? oldVal : '')) {
+      updateManualEntry(entry.id, field, newVal);
+    }
+  };
+
+  // Handle Enter (commit + move down), Escape (revert)
+  const handleCellKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, entry: ManualEntry, field: keyof ManualEntry, idx: number, col: number) => {
+    if (e.key === 'Enter') {
+      if (e.nativeEvent.isComposing) return; // Don't commit during IME composition
+      e.preventDefault();
+      const rawVal = e.currentTarget.value;
+      let newVal: any = rawVal;
+      if (field === 'count') newVal = Number(rawVal) || 0;
+      else if (field === 'paymentAmount') newVal = Number(rawVal.replace(/,/g, '')) || 0;
+      if (String(newVal) !== String(entry[field] != null ? entry[field] : '')) {
+        updateManualEntry(entry.id, field, newVal);
+      }
+      const nextInput = document.querySelector(`input[data-row="${idx + 1}"][data-col="${col}"]`) as HTMLInputElement;
+      if (nextInput) nextInput.focus();
+      else e.currentTarget.blur();
+    } else if (e.key === 'Escape') {
+      const origVal = entry[field];
+      e.currentTarget.value = (origVal != null && origVal !== 0) ? String(origVal) : '';
+      e.currentTarget.blur();
+    } else {
+      handleKeyDown(e, idx, col);
+    }
+  };
+
+  // --- Undo helpers ---
+  const pushUndo = (entry: { type: string, entries: { id: string, data: any }[], description: string }) => {
+    setUndoStack(prev => [...prev.slice(-19), entry]);
+  };
+
+  const handleUndo = async () => {
+    if (undoStack.length === 0) return;
+    const last = undoStack[undoStack.length - 1];
+    setUndoStack(prev => prev.slice(0, -1));
+
+    try {
+      const batch = writeBatch(db);
+      if (last.type === 'delete') {
+        last.entries.forEach(e => {
+          batch.set(doc(db, 'manualEntries', e.id), e.data);
+        });
+      } else if (last.type === 'update') {
+        last.entries.forEach(e => {
+          batch.update(doc(db, 'manualEntries', e.id), e.data);
+        });
+      } else if (last.type === 'add') {
+        last.entries.forEach(e => {
+          batch.delete(doc(db, 'manualEntries', e.id));
+        });
+      }
+      await batch.commit();
+    } catch (e) {
+      console.error('Undo error:', e);
+      alert('실행취소 중 오류가 발생했습니다.');
+    }
+  };
+
+  // --- Delete empty rows ---
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (adminPassword === '1234') {
@@ -235,6 +325,14 @@ const App: React.FC = () => {
     if (selectedManualIds.size === 0) return;
     if (window.confirm(`${selectedManualIds.size}개의 항목을 삭제하시겠습니까?`)) {
       try {
+        // Save for undo
+        const toDelete = manualEntries.filter(e => selectedManualIds.has(e.id));
+        pushUndo({
+          type: 'delete',
+          entries: toDelete.map(e => ({ id: e.id, data: { ...e } })),
+          description: `${toDelete.length}개 항목 삭제`
+        });
+
         const batch = writeBatch(db);
         selectedManualIds.forEach(id => {
           batch.delete(doc(db, 'manualEntries', id));
@@ -255,6 +353,16 @@ const App: React.FC = () => {
       direction = 'desc';
     }
     setSortConfig({ key, direction });
+
+    // Save sorted order so rows don't jump around during edits
+    const sorted = [...manualEntries].sort((a, b) => {
+      const aValue = a[key] || '';
+      const bValue = b[key] || '';
+      if (aValue < bValue) return direction === 'asc' ? -1 : 1;
+      if (aValue > bValue) return direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+    setSortedIds(sorted.map(e => e.id));
   };
 
   // ✅ Deposit Management Robust Handlers
@@ -371,44 +479,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLotteDownload = async () => {
-    const selectedEntries = manualEntries.filter(entry => selectedManualIds.has(entry.id));
-    if (selectedEntries.length === 0) return alert("선택된 항목이 없습니다.");
-
-    try {
-      const XLSX = await import('xlsx');
-
-      const lotteData = selectedEntries.map(entry => ({
-        '주문번호': entry.orderNumber || '',
-        '보내는사람(지정)': '안군농원',
-        '전화번호1(지정)': '01042626343',
-        '전화번호2(지정)': '',
-        '우편번호(지정)': '',
-        '주소(지정)': '인천시 연수구 송도동 214, D동 2206-1호',
-        '받는사람': entry.name2 || '',
-        '전화번호1': entry.emergencyContact || '',
-        '전화번호2': '',
-        '우편번호': '',
-        '주소': entry.address || '',
-        '상품명1': '완구류',
-        '상품상세1': '',
-        '수량(A타입)': '',
-        '배송메시지': entry.memo || '',
-        '운임구분': '',
-        '운임': '',
-        '운송장번호': ''
-      }));
-
-      const ws = XLSX.utils.json_to_sheet(lotteData);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "롯데택배발송");
-      XLSX.writeFile(wb, `롯데택배_발송목록_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    } catch (e) {
-      console.error("Excel Error:", e);
-      alert("엑셀 처리 중 오류가 발생했습니다.");
-    }
-  };
-
   const saveProduct = async () => {
     if (!newProduct.name) { alert("품목명을 입력해주세요."); return; }
 
@@ -445,11 +515,23 @@ const App: React.FC = () => {
   };
 
   const addMoreRows = async (count: number) => {
+    const dateToUse = manualViewDateStart !== 'all' ? manualViewDateStart : new Date().toISOString().split('T')[0];
+    const newIds: string[] = [];
     const promises = Array.from({ length: count }).map(() => {
-      const newRow = createEmptyRow(manualViewDate);
+      const newRow = createEmptyRow(dateToUse);
+      newIds.push(newRow.id);
       return setDoc(doc(db, 'manualEntries', newRow.id), newRow);
     });
     await Promise.all(promises);
+    // 현재 표시 순서 유지 + 새 행은 맨 아래에 추가
+    const currentOrder = sortedIds || manualEntries.map(e => e.id);
+    setSortedIds([...currentOrder, ...newIds]);
+    // Save for undo
+    pushUndo({
+      type: 'add',
+      entries: newIds.map(id => ({ id, data: {} })),
+      description: `${count}줄 추가`
+    });
   };
 
   const updateManualEntry = async (id: string, field: keyof ManualEntry, value: any) => {
@@ -457,6 +539,13 @@ const App: React.FC = () => {
     if (!entry) return;
 
     const updates: Partial<ManualEntry> = { [field]: value };
+
+    // Undo: Save previous value
+    pushUndo({
+      type: 'update',
+      entries: [{ id: entry.id, data: { [field]: entry[field] } }],
+      description: `${field} 수정`
+    });
 
     // Auto-calculate Payment Amount
     if (field === 'product' || field === 'orderNumber') {
@@ -506,6 +595,87 @@ const App: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
+  const multiImageInputRef = useRef<HTMLInputElement>(null);
+
+  const handleMultiImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    // 현재 보이는 행 중 proofImage 없는 행 찾기 (순서대로)
+    const dateStart = manualViewDateStart;
+    const dateEnd = manualViewDateEnd;
+    let available = manualEntries.filter(entry => {
+      if (!entry) return false;
+      if (!entry.proofImage) {
+        if (dateStart !== 'all') {
+          if (entry.date < dateStart || entry.date > dateEnd) return false;
+        }
+        return true;
+      }
+      return false;
+    });
+
+    // sortedIds 순서 적용
+    if (sortedIds) {
+      const orderMap = new Map<string, number>(sortedIds.map((id, i) => [id, i]));
+      available.sort((a, b) => (orderMap.get(a.id) ?? 999999) - (orderMap.get(b.id) ?? 999999));
+    }
+
+    const fileArr: File[] = Array.from(files);
+
+    // 빈 행이 부족하면 추가 생성
+    if (available.length < fileArr.length) {
+      const needed = fileArr.length - available.length;
+      const dateToUse = dateStart !== 'all' ? dateStart : new Date().toISOString().split('T')[0];
+      const newIds: string[] = [];
+      const promises = Array.from({ length: needed }).map(() => {
+        const newRow = createEmptyRow(dateToUse);
+        newIds.push(newRow.id);
+        return setDoc(doc(db, 'manualEntries', newRow.id), newRow);
+      });
+      await Promise.all(promises);
+      const currentOrder = sortedIds || manualEntries.map(e => e.id);
+      setSortedIds([...currentOrder, ...newIds]);
+      // 새로 만든 행 추가
+      const newEntries = newIds.map(id => createEmptyRow(dateToUse)).map((row, i) => ({ ...row, id: newIds[i] }));
+      available = [...available, ...newEntries];
+    }
+
+    // 각 파일을 빈 행에 할당
+    fileArr.forEach((file, i) => {
+      if (i >= available.length) return;
+      const targetEntry = available[i];
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Image = reader.result as string;
+        await updateDoc(doc(db, 'manualEntries', targetEntry.id), { proofImage: base64Image });
+
+        try {
+          const { extractOrderInfo } = await import('./services/geminiService');
+          const result = await extractOrderInfo(base64Image);
+          console.log(`[Multi OCR ${i + 1}] 결과:`, result);
+
+          const ocrUpdates: Partial<ManualEntry> = {};
+          if (result.orderNumber) ocrUpdates.orderNumber = result.orderNumber;
+          if (result.receiverName) ocrUpdates.name2 = result.receiverName;
+          else if (result.ordererName) ocrUpdates.name2 = result.ordererName;
+          if (result.address) ocrUpdates.address = result.address;
+          if (result.phone) ocrUpdates.emergencyContact = result.phone;
+
+          if (Object.keys(ocrUpdates).length > 0) {
+            await updateDoc(doc(db, 'manualEntries', targetEntry.id), ocrUpdates);
+          }
+        } catch (err) {
+          console.error(`[Multi OCR ${i + 1}] 실패:`, err);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // 파일 input 초기화 (같은 파일 재선택 가능)
+    e.target.value = '';
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent, rowIdx: number, colIdx: number) => {
     if (e.nativeEvent.isComposing) return;
 
@@ -553,6 +723,63 @@ const App: React.FC = () => {
     }
     // 단일 셀이면 기본 붙여넣기 동작 유지
   };
+
+  // Cell drag selection helpers
+  const isCellSelected = (row: number, col: number) => {
+    if (!cellSelection) return false;
+    const minR = Math.min(cellSelection.startRow, cellSelection.endRow);
+    const maxR = Math.max(cellSelection.startRow, cellSelection.endRow);
+    const minC = Math.min(cellSelection.startCol, cellSelection.endCol);
+    const maxC = Math.max(cellSelection.startCol, cellSelection.endCol);
+    return row >= minR && row <= maxR && col >= minC && col <= maxC;
+  };
+
+  const handleCellMouseDown = (row: number, col: number) => {
+    cellDragRef.current = { row, col, active: true };
+    setCellSelection(null);
+  };
+
+  const handleCellMouseEnter = (row: number, col: number) => {
+    if (!cellDragRef.current.active) return;
+    const { row: startRow, col: startCol } = cellDragRef.current;
+    if (startRow === row && startCol === col) return;
+    // 드래그 시작 → 입력 포커스 해제, 선택 범위 표시
+    (document.activeElement as HTMLElement)?.blur();
+    setCellSelection({ startRow, startCol, endRow: row, endCol: col });
+  };
+
+  const handleCellMouseUp = () => {
+    cellDragRef.current.active = false;
+  };
+
+  // Ctrl+C: 선택된 셀 복사
+  useEffect(() => {
+    const handleCopy = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== 'c') return;
+      if (!cellSelection) return;
+      // 입력 중이면 기본 복사 동작 유지
+      if (document.activeElement?.tagName === 'INPUT') return;
+
+      e.preventDefault();
+      const minR = Math.min(cellSelection.startRow, cellSelection.endRow);
+      const maxR = Math.max(cellSelection.startRow, cellSelection.endRow);
+      const minC = Math.min(cellSelection.startCol, cellSelection.endCol);
+      const maxC = Math.max(cellSelection.startCol, cellSelection.endCol);
+
+      const rows: string[] = [];
+      for (let r = minR; r <= maxR; r++) {
+        const cols: string[] = [];
+        for (let c = minC; c <= maxC; c++) {
+          const input = document.querySelector(`input[data-row="${r}"][data-col="${c}"]`) as HTMLInputElement;
+          cols.push(input?.value || '');
+        }
+        rows.push(cols.join('\t'));
+      }
+      navigator.clipboard.writeText(rows.join('\n'));
+    };
+    document.addEventListener('keydown', handleCopy);
+    return () => document.removeEventListener('keydown', handleCopy);
+  }, [cellSelection]);
 
   const downloadBeforeDepositCsv = () => {
     const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
@@ -760,6 +987,9 @@ const App: React.FC = () => {
   };
 
   const manualRangeStepRef = useRef<'start' | 'end'>('start');
+  // Cursor guide state
+  const [cursorPos, setCursorPos] = useState({ x: 0, y: 0 });
+  const [showCursorGuide, setShowCursorGuide] = useState(false);
 
   const renderDateRangePicker = (
     startDate: string, endDate: string,
@@ -778,6 +1008,9 @@ const App: React.FC = () => {
     const todayStr = new Date().toISOString().split('T')[0];
     const isAll = startDate === 'all';
     const displayText = isAll ? '전체' : (startDate === endDate ? startDate : `${startDate} ~ ${endDate}`);
+
+
+
     return (
       <div className="relative inline-block">
         <div className="flex gap-2 items-center">
@@ -792,10 +1025,22 @@ const App: React.FC = () => {
         </div>
         {isOpen && (<>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute top-full left-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 p-4 z-50 w-64">
-            <div className="text-center text-[10px] font-bold text-gray-400 mb-2">
-              {manualRangeStepRef.current === 'start' ? '시작일을 선택하세요' : '종료일을 선택하세요'}
-            </div>
+          <div
+            className="absolute top-full left-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 p-4 z-50 w-64"
+            onMouseMove={(e) => {
+              setCursorPos({ x: e.clientX, y: e.clientY });
+              setShowCursorGuide(true);
+            }}
+            onMouseLeave={() => setShowCursorGuide(false)}
+          >
+            {showCursorGuide && (
+              <div
+                className={`fixed pointer-events-none px-3 py-1.5 rounded-full text-xs font-black text-white shadow-lg border-2 border-white z-[60] transition-transform duration-75 ${manualRangeStepRef.current === 'start' ? 'bg-blue-600' : 'bg-red-500'}`}
+                style={{ left: cursorPos.x + 15, top: cursorPos.y + 15 }}
+              >
+                {manualRangeStepRef.current === 'start' ? '시작일 선택' : '종료일 선택'}
+              </div>
+            )}
             <div className="flex items-center justify-between mb-3">
               <button onClick={() => setViewMonth(new Date(year, month - 1, 1))} className="p-1 hover:bg-gray-100 rounded-lg text-gray-400 font-bold text-xs">◀</button>
               <span className="font-black text-xs">{year}년 {month + 1}월</span>
@@ -828,12 +1073,11 @@ const App: React.FC = () => {
                       setOpen(false);
                     }
                   }}
-                    className={`relative p-1.5 rounded-lg text-[11px] font-bold transition-all ${
-                      isStart || isEnd ? 'bg-blue-600 text-white' :
+                    className={`relative p-1.5 rounded-lg text-[11px] font-bold transition-all ${isStart || isEnd ? 'bg-blue-600 text-white' :
                       inRange ? 'bg-blue-100 text-blue-700' :
-                      isToday ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-300' :
-                      count > 0 ? 'hover:bg-gray-100 text-gray-800' : 'text-gray-300'
-                    }`}>
+                        isToday ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-300' :
+                          count > 0 ? 'hover:bg-gray-100 text-gray-800' : 'text-gray-300'
+                      }`}>
                     {day}
                     {count > 0 && !isStart && !isEnd && !inRange && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 bg-blue-400 rounded-full" />}
                   </button>
@@ -1403,6 +1647,9 @@ const App: React.FC = () => {
                           <th className="p-4 rounded-tl-xl">No.</th>
                           <th className="p-4 text-left">품목명</th>
                           <th className="p-4">가격</th>
+                          <th className="p-4 text-gray-300">공급가</th>
+                          <th className="p-4 text-gray-300">판매가</th>
+                          <th className="p-4 text-gray-300">마진</th>
                           <th className="p-4 rounded-tr-xl w-24">관리</th>
                         </tr>
                       </thead>
@@ -1427,6 +1674,33 @@ const App: React.FC = () => {
                               />
                             </td>
                             <td className="p-4">
+                              <input
+                                type="number"
+                                value={price.supplyPrice || ''}
+                                onChange={(e) => updateDoc(doc(db, 'productPrices', price.id), { supplyPrice: Number(e.target.value) })}
+                                className="w-full bg-transparent outline-none text-gray-400 font-normal text-center border-b border-transparent focus:border-gray-400 transition-colors"
+                                placeholder="-"
+                              />
+                            </td>
+                            <td className="p-4">
+                              <input
+                                type="number"
+                                value={price.sellingPrice || ''}
+                                onChange={(e) => updateDoc(doc(db, 'productPrices', price.id), { sellingPrice: Number(e.target.value) })}
+                                className="w-full bg-transparent outline-none text-gray-400 font-normal text-center border-b border-transparent focus:border-gray-400 transition-colors"
+                                placeholder="-"
+                              />
+                            </td>
+                            <td className="p-4">
+                              <input
+                                type="number"
+                                value={price.margin || ''}
+                                onChange={(e) => updateDoc(doc(db, 'productPrices', price.id), { margin: Number(e.target.value) })}
+                                className="w-full bg-transparent outline-none text-gray-400 font-normal text-center border-b border-transparent focus:border-gray-400 transition-colors"
+                                placeholder="-"
+                              />
+                            </td>
+                            <td className="p-4">
                               <button
                                 onClick={async () => {
                                   if (window.confirm("삭제하시겠습니까?")) {
@@ -1441,7 +1715,7 @@ const App: React.FC = () => {
                           </tr>
                         ))}
                         {productPrices.length === 0 && (
-                          <tr><td colSpan={4} className="p-16 text-gray-300">등록된 품목금액이 없습니다.</td></tr>
+                          <tr><td colSpan={7} className="p-16 text-gray-300">등록된 품목금액이 없습니다.</td></tr>
                         )}
                       </tbody>
                     </table>
@@ -1488,25 +1762,14 @@ const App: React.FC = () => {
                           <button onClick={handleReservationComplete} className="px-5 py-2.5 bg-pink-500 text-white rounded-xl font-black text-xs hover:bg-pink-600 transition-colors">
                             예약완료
                           </button>
-                          <button
-                            onClick={() => {
-                              const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
-                              if (selected.length === 0) return;
-                              const text = selected.map(e => `${e.name2 || ''}\t${e.orderNumber || ''}`).join('\n');
-                              navigator.clipboard.writeText(text).then(() => {
-                                alert(`${selected.length}건 복사완료 (받는사람 / 주문번호)`);
-                              });
-                            }}
-                            className="px-5 py-2.5 bg-orange-500 text-white rounded-xl font-black text-xs hover:bg-orange-600 transition-colors"
-                          >
-                            가예약
-                          </button>
                         </>)}
-                        <button onClick={downloadManualCsv} className="px-5 py-2.5 bg-gray-100 text-gray-600 rounded-xl font-black text-xs">내보내기 📥</button>
-                        <button onClick={handleLotteDownload} className="px-5 py-2.5 bg-red-600 text-white rounded-xl font-black text-xs hover:bg-red-700 transition-colors flex items-center shadow-lg shadow-red-200">
-                          롯데예약 🚚
-                        </button>
+                        <button onClick={downloadManualCsv} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="엑셀 내보내기"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></button>
+                        {undoStack.length > 0 && (
+                          <button onClick={handleUndo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
+                        )}
                         <button onClick={() => addMoreRows(10)} className="px-5 py-2.5 bg-black text-white rounded-xl font-black text-xs">+ 10줄 추가</button>
+                        <button onClick={() => multiImageInputRef.current?.click()} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs hover:bg-blue-700 transition-colors">이미지 일괄등록</button>
+                        <input ref={multiImageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleMultiImageUpload} />
                       </div>
                     </div>
                     <div>
@@ -1522,7 +1785,30 @@ const App: React.FC = () => {
                       )}
                     </div>
                   </div>
-                  <div className="overflow-x-auto relative scrollbar-hide" onMouseUp={() => { isDraggingRef.current = false; }} onMouseLeave={() => { isDraggingRef.current = false; }}>
+                  <div className="overflow-x-auto relative scrollbar-hide"
+                    onMouseUp={() => { isDraggingRef.current = false; handleCellMouseUp(); }}
+                    onMouseLeave={() => { isDraggingRef.current = false; handleCellMouseUp(); }}
+                    onMouseDown={(e) => {
+                      const el = (e.target as HTMLElement).closest('[data-row][data-col]') as HTMLElement;
+                      if (el) handleCellMouseDown(Number(el.dataset.row), Number(el.dataset.col));
+                      else setCellSelection(null);
+                    }}
+                    onMouseOver={(e) => {
+                      const el = (e.target as HTMLElement).closest('[data-row][data-col]') as HTMLElement;
+                      if (el) handleCellMouseEnter(Number(el.dataset.row), Number(el.dataset.col));
+                    }}
+                  >
+                    {cellSelection && (() => {
+                      const minR = Math.min(cellSelection.startRow, cellSelection.endRow);
+                      const maxR = Math.max(cellSelection.startRow, cellSelection.endRow);
+                      const minC = Math.min(cellSelection.startCol, cellSelection.endCol);
+                      const maxC = Math.max(cellSelection.startCol, cellSelection.endCol);
+                      const s: string[] = [];
+                      for (let r = minR; r <= maxR; r++)
+                        for (let c = minC; c <= maxC; c++)
+                          s.push(`[data-row="${r}"][data-col="${c}"]`);
+                      return <style>{s.join(',') + `{background:rgba(0,113,227,0.15)!important;border-color:#0071E3!important}`}</style>;
+                    })()}
                     <table className="w-full border-collapse min-w-[1100px] table-fixed text-center text-[12px]">
                       <thead className="sticky top-0 z-20 bg-gray-50 border-b border-gray-200">
                         <tr className="text-[9px] font-black uppercase text-gray-400">
@@ -1600,17 +1886,12 @@ const App: React.FC = () => {
                             return true;
                           });
 
-                          if (sortConfig !== null) {
+                          if (sortedIds) {
+                            const orderMap = new Map<string, number>(sortedIds.map((id, i) => [id, i]));
                             filtered.sort((a, b) => {
-                              const aValue = a[sortConfig.key] || '';
-                              const bValue = b[sortConfig.key] || '';
-                              if (aValue < bValue) {
-                                return sortConfig.direction === 'asc' ? -1 : 1;
-                              }
-                              if (aValue > bValue) {
-                                return sortConfig.direction === 'asc' ? 1 : -1;
-                              }
-                              return 0;
+                              const aIdx: number = orderMap.get(a.id) ?? 999999;
+                              const bIdx: number = orderMap.get(b.id) ?? 999999;
+                              return aIdx - bIdx;
                             });
                           }
                           const limited = filtered.slice(0, 200);
@@ -1619,19 +1900,12 @@ const App: React.FC = () => {
                               const isBlue = entry.afterDeposit;
                               const rowColor = isBlue ? 'text-blue-600' : '';
                               const isPink = entry.reservationComplete;
-                              const compStart = () => { composingRef.current = true; };
-                              const compEnd = (field: keyof ManualEntry) => (e: React.CompositionEvent<HTMLInputElement>) => {
-                                composingRef.current = false;
-                                updateManualEntry(entry.id, field, e.currentTarget.value);
-                              };
-                              const safeChange = (field: keyof ManualEntry) => (e: React.ChangeEvent<HTMLInputElement>) => {
-                                if (!composingRef.current) updateManualEntry(entry.id, field, e.target.value);
-                              };
                               return (
                                 <tr key={entry.id}
                                   className={`group hover:bg-blue-50/20 transition-colors ${isBlue ? 'bg-blue-50/30' : ''}`}
                                   onMouseDown={(e) => {
-                                    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+                                    const tag = (e.target as HTMLElement).tagName;
+                                    if (tag === 'INPUT' || tag === 'SELECT') return;
                                     isDraggingRef.current = true;
                                     dragStartIndexRef.current = idx;
                                     const next = new Set(selectedManualIds);
@@ -1682,32 +1956,33 @@ const App: React.FC = () => {
                                     </div>
                                   </td>
                                   <td className="p-0.5 border-r text-center text-gray-400 text-[10px]">{idx + 1}</td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={0} onKeyDown={(e) => handleKeyDown(e, idx, 0)} type="number" className={`excel-input ${rowColor}`} value={entry.count > 0 ? entry.count : ''} onChange={e => updateManualEntry(entry.id, 'count', Number(e.target.value))} /></td>
+                                  <td className="p-0 border-r"><input ref={(el) => syncInputValue(el, entry.count > 0 ? entry.count : '')} data-row={idx} data-col={0} defaultValue={entry.count > 0 ? entry.count : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'count', idx, 0)} type="number" className={`excel-input ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'count')} /></td>
                                   <td className="p-0 border-r">
-                                    {entry.date >= '2026-02-09' ? (
-                                        <input data-row={idx} data-col={1} onKeyDown={(e) => handleKeyDown(e, idx, 1)} type="text" list="product-list-manual"
-                                          className={`excel-input ${rowColor}`} value={entry.product}
-                                          onCompositionStart={compStart} onCompositionEnd={compEnd('product')}
-                                          onChange={safeChange('product')} />
-                                    ) : (
-                                      <select data-row={idx} data-col={1} onKeyDown={(e) => handleKeyDown(e, idx, 1)}
-                                        className={`excel-input ${rowColor} cursor-pointer`} value={entry.product}
-                                        onChange={e => updateManualEntry(entry.id, 'product', e.target.value)}>
-                                        <option value="">(선택)</option>
-                                        {productPrices.map(p => (<option key={p.id} value={p.name}>{p.name}</option>))}
-                                      </select>
-                                    )}
+                                    <select data-row={idx} data-col={1}
+                                      className={`excel-input ${rowColor} cursor-pointer`}
+                                      value={entry.product}
+                                      onChange={e => updateManualEntry(entry.id, 'product', e.target.value)}
+                                      onKeyDown={(e) => handleKeyDown(e, idx, 1)}
+                                    >
+                                      <option value="">(선택)</option>
+                                      {entry.product && !productPrices.some(p => p.name === entry.product) && (
+                                        <option value={entry.product}>{entry.product} (미등록)</option>
+                                      )}
+                                      {productPrices.map(p => (
+                                        <option key={p.id} value={p.name}>{p.name}</option>
+                                      ))}
+                                    </select>
                                   </td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={2} onKeyDown={(e) => handleKeyDown(e, idx, 2)} type="date" className={`excel-input px-1 ${rowColor}`} value={entry.date} onChange={e => updateManualEntry(entry.id, 'date', e.target.value)} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={3} onKeyDown={(e) => handleKeyDown(e, idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.name1} onCompositionStart={compStart} onCompositionEnd={compEnd('name1')} onChange={safeChange('name1')} /></td>
-                                  <td className={`p-0 border-r ${isPink ? 'bg-pink-100' : ''}`}><input data-row={idx} data-col={4} onKeyDown={(e) => handleKeyDown(e, idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'text-pink-600 font-black' : rowColor}`} placeholder="받는사람" value={entry.name2} onCompositionStart={compStart} onCompositionEnd={compEnd('name2')} onChange={safeChange('name2')} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={5} onKeyDown={(e) => handleKeyDown(e, idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.orderNumber} onCompositionStart={compStart} onCompositionEnd={compEnd('orderNumber')} onChange={safeChange('orderNumber')} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={6} onKeyDown={(e) => handleKeyDown(e, idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} value={entry.address} onCompositionStart={compStart} onCompositionEnd={compEnd('address')} onChange={safeChange('address')} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={7} onKeyDown={(e) => handleKeyDown(e, idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} value={entry.memo} onCompositionStart={compStart} onCompositionEnd={compEnd('memo')} onChange={safeChange('memo')} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={8} onKeyDown={(e) => handleKeyDown(e, idx, 8)} type="text" className={`excel-input text-center ${rowColor}`} value={entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''} onChange={e => updateManualEntry(entry.id, 'paymentAmount', Number(e.target.value.replace(/,/g, '')))} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={9} onKeyDown={(e) => handleKeyDown(e, idx, 9)} type="text" className={`excel-input ${rowColor}`} value={entry.emergencyContact} onCompositionStart={compStart} onCompositionEnd={compEnd('emergencyContact')} onChange={safeChange('emergencyContact')} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={10} onKeyDown={(e) => handleKeyDown(e, idx, 10)} type="text" className={`excel-input ${rowColor}`} value={entry.accountNumber} onCompositionStart={compStart} onCompositionEnd={compEnd('accountNumber')} onChange={safeChange('accountNumber')} /></td>
-                                  <td className="p-0 border-r"><input data-row={idx} data-col={11} onKeyDown={(e) => handleKeyDown(e, idx, 11)} type="text" className={`excel-input ${rowColor}`} value={entry.trackingNumber || ''} onCompositionStart={compStart} onCompositionEnd={compEnd('trackingNumber')} onChange={safeChange('trackingNumber')} /></td>
+                                  <td className="p-0 border-r"><input data-row={idx} data-col={2} type="date" className={`excel-input px-1 ${rowColor}`} value={entry.date} onChange={e => updateManualEntry(entry.id, 'date', e.target.value)} /></td>
+                                  <td className="p-0 border-r"><input ref={(el) => syncInputValue(el, entry.name1)} data-row={idx} data-col={3} defaultValue={entry.name1} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name1', idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'name1')} /></td>
+                                  <td className={`p-0 border-r ${isPink ? 'bg-pink-100' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'text-pink-600 font-black' : rowColor}`} placeholder="받는사람" onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
+                                  <td className="p-0 border-r"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
+                                  <td className="p-0 border-r"><input ref={(el) => syncInputValue(el, entry.address)} data-row={idx} data-col={6} defaultValue={entry.address} onKeyDown={(e) => handleCellKeyDown(e, entry, 'address', idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'address')} /></td>
+                                  <td className="p-0 border-r"><input ref={(el) => syncInputValue(el, entry.memo)} data-row={idx} data-col={7} defaultValue={entry.memo} onKeyDown={(e) => handleCellKeyDown(e, entry, 'memo', idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'memo')} /></td>
+                                  <td className="p-0 border-r"><input ref={(el) => { if (el && document.activeElement !== el) { el.value = entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''; } }} data-row={idx} data-col={8} defaultValue={entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'paymentAmount', idx, 8)} type="text" className={`excel-input text-center ${rowColor}`} onFocus={(e) => { e.target.value = entry.paymentAmount ? String(entry.paymentAmount) : ''; e.target.select(); }} onBlur={(e) => { const raw = Number(e.target.value.replace(/,/g, '')) || 0; if (raw !== (entry.paymentAmount || 0)) updateManualEntry(entry.id, 'paymentAmount', raw); e.target.value = raw ? raw.toLocaleString() : ''; }} /></td>
+                                  <td className="p-0 border-r"><input ref={(el) => syncInputValue(el, entry.emergencyContact)} data-row={idx} data-col={9} defaultValue={entry.emergencyContact} onKeyDown={(e) => handleCellKeyDown(e, entry, 'emergencyContact', idx, 9)} type="text" className={`excel-input ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'emergencyContact')} /></td>
+                                  <td className="p-0 border-r"><input ref={(el) => syncInputValue(el, entry.accountNumber)} data-row={idx} data-col={10} defaultValue={entry.accountNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'accountNumber', idx, 10)} type="text" className={`excel-input ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'accountNumber')} /></td>
+                                  <td className="p-0 border-r"><input ref={(el) => syncInputValue(el, entry.trackingNumber || '')} data-row={idx} data-col={11} defaultValue={entry.trackingNumber || ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'trackingNumber', idx, 11)} type="text" className={`excel-input ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'trackingNumber')} /></td>
                                   <td className="p-0 border-r text-center align-middle">
                                     <input type="checkbox" className="w-4 h-4 accent-blue-600" checked={entry.beforeDeposit} onChange={() => toggleBeforeDeposit(entry.id, entry.beforeDeposit)} />
                                   </td>
@@ -1735,11 +2010,7 @@ const App: React.FC = () => {
                         })()}
                       </tbody>
                     </table>
-                    <datalist id="product-list-manual">
-                      {productPrices.map(p => (
-                        <option key={p.id} value={p.name} />
-                      ))}
-                    </datalist>
+
                   </div>
                 </section>
               )}
