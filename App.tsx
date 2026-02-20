@@ -240,7 +240,8 @@ const App: React.FC = () => {
     }
     if (!newDate) { alert('해당 월의 모든 날짜가 이미 존재합니다.'); return; }
     const docId = `${newDate}_${product}`;
-    const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: 0, solution: 0 };
+    const autoHP = calcHousePurchase(product, newDate);
+    const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: autoHP, solution: 0 };
     setSalesUndoStack(prev => [...prev, { type: 'add', entries: [{ id: docId, data: {} }] }]);
     setSalesRedoStack([]);
     await setDoc(doc(db, 'salesDaily', docId), newEntry);
@@ -1946,7 +1947,7 @@ const App: React.FC = () => {
                             totalMargin: entries.reduce((s, e) => s + e.totalMargin, 0),
                             quantity: entries.reduce((s, e) => s + e.quantity, 0),
                             adCost: entries.reduce((s, e) => s + e.adCost, 0),
-                            housePurchase: entries.reduce((s, e) => s + (e.housePurchase !== 0 ? e.housePurchase : calcHousePurchase(e.product, e.date)), 0),
+                            housePurchase: entries.reduce((s, e) => s + e.housePurchase, 0),
                             solution: entries.reduce((s, e) => s + e.solution, 0),
                           };
                           const profit = totals.totalMargin + totals.adCost + totals.housePurchase + totals.solution;
@@ -2008,12 +2009,8 @@ const App: React.FC = () => {
                                             defaultValue={entry.adCost || ''} onBlur={e => salesUpdate(entry.id, 'adCost', Number(e.target.value) || 0)} />
                                         </td>
                                         <td className="py-1.5 px-3">
-                                          {(() => {
-                                            // 기존 값이 있으면 그대로 사용, 빈칸(0)일 때만 자동계산
-                                            const val = entry.housePurchase !== 0 ? entry.housePurchase : calcHousePurchase(entry.product, entry.date);
-                                            return <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                              defaultValue={val || ''} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />;
-                                          })()}
+                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                            defaultValue={entry.housePurchase || ''} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
                                         </td>
                                         <td className="py-1.5 px-3">
                                           <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
