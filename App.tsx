@@ -44,7 +44,8 @@ const App: React.FC = () => {
     accountNumber: '',
     trackingNumber: '',
     beforeDeposit: false,
-    afterDeposit: false
+    afterDeposit: false,
+    createdAt: Date.now()
   });
 
   // Firestore Sync: Products
@@ -88,7 +89,11 @@ const App: React.FC = () => {
           trackingNumber: data.trackingNumber ?? '',
         } as ManualEntry;
       });
-      list.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      list.sort((a, b) => {
+        const dateCmp = (b.date || '').localeCompare(a.date || '');
+        if (dateCmp !== 0) return dateCmp;
+        return (a.createdAt || 0) - (b.createdAt || 0);
+      });
       setManualEntries(list);
     });
     return () => unsub();

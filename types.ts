@@ -48,6 +48,7 @@ export interface ManualEntry {
   depositDate?: string;
   isManualCheck?: boolean;
   reservationComplete?: boolean;
+  createdAt?: number;
 }
 
 export type AppMode = 'customer' | 'admin';
