@@ -1905,6 +1905,7 @@ const App: React.FC = () => {
                 </section>
               ) : adminTab === 'sales' ? (
                 <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl p-8 animate-in slide-in-from-right-10 duration-500">
+                  <p className="text-[11px] text-gray-400 mb-4">마진 데이터는 업무일지(발주앱)에서 업로드하며, 가구매는 구매목록 수량 기반으로 자동 계산됩니다.</p>
                   <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-black text-gray-900">매출현황</h2>
                     <div className="flex gap-2 items-center">
