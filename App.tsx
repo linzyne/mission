@@ -11,7 +11,7 @@ const App: React.FC = () => {
 
   const [adminPassword, setAdminPassword] = useState('1234');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
 
   // Firestore Sync: Settings
   const [settings, setSettings] = useState<AppSettings>({ isApplyActive: true });
@@ -1184,14 +1184,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#FBFBFD] font-sans text-[#1D1D1F] antialiased">
-      {/* Lightbox Modal */}
-      {previewImage && (
-        <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
-          <img src={previewImage} className="max-w-full max-h-full rounded-lg shadow-2xl animate-in zoom-in-95 duration-200" alt="Preview" />
-          <button onClick={() => setPreviewImage(null)} className="absolute top-6 right-6 w-10 h-10 bg-white/20 hover:bg-white/40 rounded-full flex items-center justify-center text-white text-2xl font-bold transition-colors">&times;</button>
-        </div>
-      )}
-
       {/* Nav */}
       <nav className="bg-white border-b border-gray-100 sticky top-0 z-50">
         <div className="max-w-[1500px] mx-auto px-6 h-16 flex items-center justify-between">
@@ -1398,7 +1390,7 @@ const App: React.FC = () => {
                                 <img
                                   src={entry.image}
                                   className="w-7 h-7 object-cover rounded-lg border border-gray-100 mx-auto cursor-pointer hover:scale-150 transition-transform origin-center z-10 relative"
-                                  onClick={() => setPreviewImage(entry.image)}
+                                  onClick={() => window.open(entry.image, '_blank')}
                                   alt="후기 인증"
                                 />
                               </td>
@@ -2025,7 +2017,7 @@ const App: React.FC = () => {
                                     <div className="relative h-6 w-6 mx-auto group/img">
                                       {entry.proofImage ? (
                                         <>
-                                          <img src={entry.proofImage} onClick={() => setPreviewImage(entry.proofImage)} className="w-full h-full object-cover rounded-md border cursor-pointer" />
+                                          <img src={entry.proofImage} onClick={() => window.open(entry.proofImage, '_blank')} className="w-full h-full object-cover rounded-md border cursor-pointer" />
                                           <button
                                             onClick={(e) => { e.stopPropagation(); updateManualEntry(entry.id, 'proofImage', ''); }}
                                             className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] leading-none flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity shadow-sm"
