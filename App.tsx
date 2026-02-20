@@ -89,6 +89,27 @@ const App: React.FC = () => {
           trackingNumber: data.trackingNumber ?? '',
         } as ManualEntry;
       });
+      // 마이그레이션: createdAt 없는 행에 자동 부여
+      const missing = list.filter(e => !e.createdAt);
+      if (missing.length > 0) {
+        // 날짜별로 그룹핑 → 같은 날짜 내 문서 ID 순으로 createdAt 부여
+        const byDate: Record<string, typeof missing> = {};
+        missing.forEach(e => {
+          const d = e.date || '0000';
+          if (!byDate[d]) byDate[d] = [];
+          byDate[d].push(e);
+        });
+        const batch = writeBatch(db);
+        let base = 1000000000000; // 2001년 기준 timestamp (기존 행은 앞에 배치)
+        Object.keys(byDate).sort().forEach(date => {
+          byDate[date].forEach((e, i) => {
+            batch.update(doc(db, 'manualEntries', e.id), { createdAt: base + i });
+          });
+          base += byDate[date].length;
+        });
+        batch.commit().catch(err => console.error('[Migration] createdAt 부여 실패:', err));
+      }
+
       list.sort((a, b) => {
         const dateCmp = (b.date || '').localeCompare(a.date || '');
         if (dateCmp !== 0) return dateCmp;
