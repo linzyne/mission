@@ -159,8 +159,92 @@ const App: React.FC = () => {
     });
     return () => unsub();
   }, []);
-  const [salesUploadDate, setSalesUploadDate] = useState(new Date().toISOString().split('T')[0]);
+  const [salesMonth, setSalesMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() + 1 }; });
+  const salesMonthStr = `${salesMonth.year}-${String(salesMonth.month).padStart(2, '0')}`;
   const salesFileRef = useRef<HTMLInputElement>(null);
+
+  // Sales undo/redo
+  const [salesUndoStack, setSalesUndoStack] = useState<{ type: string, entries: { id: string, data: any }[] }[]>([]);
+  const [salesRedoStack, setSalesRedoStack] = useState<{ type: string, entries: { id: string, data: any }[] }[]>([]);
+
+  const salesUpdate = async (entryId: string, field: string, value: any) => {
+    const entry = salesDaily.find(e => e.id === entryId);
+    if (!entry) return;
+    const oldVal = (entry as any)[field];
+    if (oldVal === value) return;
+    setSalesUndoStack(prev => [...prev, { type: 'update', entries: [{ id: entryId, data: { [field]: oldVal } }] }]);
+    setSalesRedoStack([]);
+    await updateDoc(doc(db, 'salesDaily', entryId), { [field]: value });
+  };
+
+  const handleSalesUndo = async () => {
+    if (salesUndoStack.length === 0) return;
+    const last = salesUndoStack[salesUndoStack.length - 1];
+    setSalesUndoStack(prev => prev.slice(0, -1));
+    const batch = writeBatch(db);
+    const redoEntries: { id: string, data: any }[] = [];
+    for (const e of last.entries) {
+      const current = salesDaily.find(s => s.id === e.id);
+      if (last.type === 'update') {
+        const currentData: any = {};
+        Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : 0; });
+        redoEntries.push({ id: e.id, data: currentData });
+        batch.update(doc(db, 'salesDaily', e.id), e.data);
+      } else if (last.type === 'delete') {
+        batch.set(doc(db, 'salesDaily', e.id), e.data);
+        redoEntries.push({ id: e.id, data: {} });
+      } else if (last.type === 'add') {
+        if (current) redoEntries.push({ id: e.id, data: { ...current } });
+        batch.delete(doc(db, 'salesDaily', e.id));
+      }
+    }
+    const redoType = last.type === 'delete' ? 'add' : last.type === 'add' ? 'delete' : 'update';
+    setSalesRedoStack(prev => [...prev, { type: redoType, entries: redoEntries }]);
+    await batch.commit();
+  };
+
+  const handleSalesRedo = async () => {
+    if (salesRedoStack.length === 0) return;
+    const last = salesRedoStack[salesRedoStack.length - 1];
+    setSalesRedoStack(prev => prev.slice(0, -1));
+    const batch = writeBatch(db);
+    const undoEntries: { id: string, data: any }[] = [];
+    for (const e of last.entries) {
+      const current = salesDaily.find(s => s.id === e.id);
+      if (last.type === 'update') {
+        const currentData: any = {};
+        Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : 0; });
+        undoEntries.push({ id: e.id, data: currentData });
+        batch.update(doc(db, 'salesDaily', e.id), e.data);
+      } else if (last.type === 'delete') {
+        batch.set(doc(db, 'salesDaily', e.id), e.data);
+        undoEntries.push({ id: e.id, data: {} });
+      } else if (last.type === 'add') {
+        if (current) undoEntries.push({ id: e.id, data: { ...current } });
+        batch.delete(doc(db, 'salesDaily', e.id));
+      }
+    }
+    const undoType = last.type === 'delete' ? 'add' : last.type === 'add' ? 'delete' : 'update';
+    setSalesUndoStack(prev => [...prev, { type: undoType, entries: undoEntries }]);
+    await batch.commit();
+  };
+
+  const handleSalesAddRow = async (product: string) => {
+    // 해당 월의 다음 빈 날짜 찾기
+    const existing = salesDaily.filter(e => e.product === product && e.date.startsWith(salesMonthStr)).map(e => e.date);
+    const daysInMonth = new Date(salesMonth.year, salesMonth.month, 0).getDate();
+    let newDate = '';
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${salesMonthStr}-${String(d).padStart(2, '0')}`;
+      if (!existing.includes(ds)) { newDate = ds; break; }
+    }
+    if (!newDate) { alert('해당 월의 모든 날짜가 이미 존재합니다.'); return; }
+    const docId = `${newDate}_${product}`;
+    const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: 0, solution: 0 };
+    setSalesUndoStack(prev => [...prev, { type: 'add', entries: [{ id: docId, data: {} }] }]);
+    setSalesRedoStack([]);
+    await setDoc(doc(db, 'salesDaily', docId), newEntry);
+  };
 
   const handleSalesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -176,6 +260,12 @@ const App: React.FC = () => {
 
     if (rows.length === 0) { alert('마진시트에 데이터가 없습니다.'); return; }
 
+    // 업로드 날짜: 선택된 월의 오늘 날짜 or 마지막 날
+    const today = new Date();
+    const uploadDate = (today.getFullYear() === salesMonth.year && today.getMonth() + 1 === salesMonth.month)
+      ? today.toISOString().split('T')[0]
+      : `${salesMonthStr}-01`;
+
     const batch = writeBatch(db);
     let count = 0;
     for (const row of rows) {
@@ -183,9 +273,9 @@ const App: React.FC = () => {
       const productDetail = String(row['품목명'] || '').trim();
       if (!product) continue;
 
-      const docId = `${salesUploadDate}_${product}`;
+      const docId = `${uploadDate}_${product}`;
       batch.set(doc(db, 'salesDaily', docId), {
-        date: salesUploadDate,
+        date: uploadDate,
         product,
         productDetail,
         quantity: Number(row['수량'] || 0),
@@ -200,7 +290,7 @@ const App: React.FC = () => {
       count++;
     }
     await batch.commit();
-    alert(`${salesUploadDate} / ${count}개 품목 등록 완료`);
+    alert(`${uploadDate} / ${count}개 품목 등록 완료`);
     e.target.value = '';
   };
 
@@ -1784,16 +1874,27 @@ const App: React.FC = () => {
                   <div className="flex justify-between items-center mb-6">
                     <h2 className="text-xl font-black text-gray-900">매출현황</h2>
                     <div className="flex gap-2 items-center">
-                      <input type="date" value={salesUploadDate} onChange={e => setSalesUploadDate(e.target.value)} className="px-3 py-2 border rounded-xl text-xs font-bold" />
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setSalesMonth(p => { let m = p.month - 1, y = p.year; if (m < 1) { m = 12; y--; } return { year: y, month: m }; })} className="px-2 py-2 text-gray-500 hover:text-gray-800 font-black text-sm">&larr;</button>
+                        <span className="text-sm font-black text-gray-700 min-w-[100px] text-center">{salesMonth.year}.{salesMonth.month}월</span>
+                        <button onClick={() => setSalesMonth(p => { let m = p.month + 1, y = p.year; if (m > 12) { m = 1; y++; } return { year: y, month: m }; })} className="px-2 py-2 text-gray-500 hover:text-gray-800 font-black text-sm">&rarr;</button>
+                      </div>
+                      {salesUndoStack.length > 0 && (
+                        <button onClick={handleSalesUndo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
+                      )}
+                      {salesRedoStack.length > 0 && (
+                        <button onClick={handleSalesRedo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="다시실행"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg></button>
+                      )}
                       <button onClick={() => salesFileRef.current?.click()} className="px-5 py-2.5 bg-green-600 text-white rounded-xl font-black text-xs hover:bg-green-700 transition-colors">업무일지 업로드</button>
                       <input ref={salesFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleSalesUpload} />
                     </div>
                   </div>
 
                   {(() => {
-                    // 품목별 그룹핑
+                    // 선택된 월 필터링 + 품목별 그룹핑
+                    const filtered = salesDaily.filter(e => e.date.startsWith(salesMonthStr));
                     const byProduct: Record<string, SalesDailyEntry[]> = {};
-                    salesDaily.forEach(e => {
+                    filtered.forEach(e => {
                       if (!byProduct[e.product]) byProduct[e.product] = [];
                       byProduct[e.product].push(e);
                     });
@@ -1813,7 +1914,7 @@ const App: React.FC = () => {
                             housePurchase: entries.reduce((s, e) => s + e.housePurchase, 0),
                             solution: entries.reduce((s, e) => s + e.solution, 0),
                           };
-                          const profit = totals.totalMargin + totals.adCost + totals.housePurchase + totals.solution;
+                          const profit = totals.totalMargin - totals.adCost - totals.housePurchase - totals.solution;
 
                           return (
                             <div key={product} className="border rounded-2xl overflow-hidden">
@@ -1846,26 +1947,41 @@ const App: React.FC = () => {
                                   <tbody>
                                     {entries.map(entry => (
                                       <tr key={entry.id} className="border-t hover:bg-gray-50">
-                                        <td className="py-1.5 px-3 text-gray-600">{entry.date}</td>
-                                        <td className="py-1.5 px-3">{entry.supplyPrice ? entry.supplyPrice.toLocaleString() : ''}</td>
-                                        <td className="py-1.5 px-3">{entry.totalMargin ? entry.totalMargin.toLocaleString() : ''}</td>
-                                        <td className="py-1.5 px-3">{entry.quantity || ''}</td>
                                         <td className="py-1.5 px-3">
-                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                            defaultValue={entry.adCost || ''} onBlur={e => updateDoc(doc(db, 'salesDaily', entry.id), { adCost: Number(e.target.value) || 0 })} />
+                                          <input type="text" className="w-24 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-600"
+                                            defaultValue={entry.date} onBlur={e => { const v = e.target.value; if (v !== entry.date) salesUpdate(entry.id, 'date', v); }} />
                                         </td>
                                         <td className="py-1.5 px-3">
                                           <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                            defaultValue={entry.housePurchase || ''} onBlur={e => updateDoc(doc(db, 'salesDaily', entry.id), { housePurchase: Number(e.target.value) || 0 })} />
+                                            defaultValue={entry.supplyPrice || ''} onBlur={e => salesUpdate(entry.id, 'supplyPrice', Number(e.target.value) || 0)} />
                                         </td>
                                         <td className="py-1.5 px-3">
                                           <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                            defaultValue={entry.solution || ''} onBlur={e => updateDoc(doc(db, 'salesDaily', entry.id), { solution: Number(e.target.value) || 0 })} />
+                                            defaultValue={entry.totalMargin || ''} onBlur={e => salesUpdate(entry.id, 'totalMargin', Number(e.target.value) || 0)} />
+                                        </td>
+                                        <td className="py-1.5 px-3">
+                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                            defaultValue={entry.quantity || ''} onBlur={e => salesUpdate(entry.id, 'quantity', Number(e.target.value) || 0)} />
+                                        </td>
+                                        <td className="py-1.5 px-3">
+                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                            defaultValue={entry.adCost || ''} onBlur={e => salesUpdate(entry.id, 'adCost', Number(e.target.value) || 0)} />
+                                        </td>
+                                        <td className="py-1.5 px-3">
+                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                            defaultValue={entry.housePurchase || ''} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
+                                        </td>
+                                        <td className="py-1.5 px-3">
+                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                            defaultValue={entry.solution || ''} onBlur={e => salesUpdate(entry.id, 'solution', Number(e.target.value) || 0)} />
                                         </td>
                                       </tr>
                                     ))}
                                   </tbody>
                                 </table>
+                              </div>
+                              <div className="p-2 text-center">
+                                <button onClick={() => handleSalesAddRow(product)} className="text-xs text-gray-400 hover:text-gray-600">+ 행 추가</button>
                               </div>
                             </div>
                           );
