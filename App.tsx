@@ -199,8 +199,6 @@ const App: React.FC = () => {
   // Undo stack
   const [undoStack, setUndoStack] = useState<{ type: string, entries: { id: string, data: any }[], description: string }[]>([]);
 
-  // Saved sort order (stable across data changes)
-  const [sortedIds, setSortedIds] = useState<string[] | null>(null);
 
   // ✅ 디바운스 로직 - 입금관리 검색 (변경 사항 3)
   useEffect(() => {
@@ -380,7 +378,7 @@ const App: React.FC = () => {
     }
     setSortConfig({ key, direction });
 
-    // Save sorted order so rows don't jump around during edits
+    // 정렬 결과를 createdAt로 Firestore에 반영
     const sorted = [...manualEntries].sort((a, b) => {
       const aValue = a[key] || '';
       const bValue = b[key] || '';
@@ -388,7 +386,11 @@ const App: React.FC = () => {
       if (aValue > bValue) return direction === 'asc' ? 1 : -1;
       return 0;
     });
-    setSortedIds(sorted.map(e => e.id));
+    const batch = writeBatch(db);
+    sorted.forEach((e, i) => {
+      batch.update(doc(db, 'manualEntries', e.id), { createdAt: i });
+    });
+    batch.commit().catch(err => console.error('[Sort] createdAt 업데이트 실패:', err));
   };
 
   // ✅ Deposit Management Robust Handlers
@@ -549,9 +551,6 @@ const App: React.FC = () => {
       return setDoc(doc(db, 'manualEntries', newRow.id), newRow);
     });
     await Promise.all(promises);
-    // 현재 표시 순서 유지 + 새 행은 맨 아래에 추가
-    const currentOrder = sortedIds || manualEntries.map(e => e.id);
-    setSortedIds([...currentOrder, ...newIds]);
     // Save for undo
     pushUndo({
       type: 'add',
@@ -641,12 +640,6 @@ const App: React.FC = () => {
       return false;
     });
 
-    // sortedIds 순서 적용
-    if (sortedIds) {
-      const orderMap = new Map<string, number>(sortedIds.map((id, i) => [id, i]));
-      available.sort((a, b) => (orderMap.get(a.id) ?? 999999) - (orderMap.get(b.id) ?? 999999));
-    }
-
     const fileArr: File[] = Array.from(files);
 
     // 빈 행이 부족하면 추가 생성
@@ -660,8 +653,6 @@ const App: React.FC = () => {
         return setDoc(doc(db, 'manualEntries', newRow.id), newRow);
       });
       await Promise.all(promises);
-      const currentOrder = sortedIds || manualEntries.map(e => e.id);
-      setSortedIds([...currentOrder, ...newIds]);
       // 새로 만든 행 추가
       const newEntries = newIds.map(id => createEmptyRow(dateToUse)).map((row, i) => ({ ...row, id: newIds[i] }));
       available = [...available, ...newEntries];
@@ -1912,14 +1903,6 @@ const App: React.FC = () => {
                             return true;
                           });
 
-                          if (sortedIds) {
-                            const orderMap = new Map<string, number>(sortedIds.map((id, i) => [id, i]));
-                            filtered.sort((a, b) => {
-                              const aIdx: number = orderMap.get(a.id) ?? 999999;
-                              const bIdx: number = orderMap.get(b.id) ?? 999999;
-                              return aIdx - bIdx;
-                            });
-                          }
                           const limited = filtered.slice(0, 200);
                           return (<>
                             {limited.map((entry, idx) => {
