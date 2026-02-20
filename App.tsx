@@ -1946,7 +1946,7 @@ const App: React.FC = () => {
                             totalMargin: entries.reduce((s, e) => s + e.totalMargin, 0),
                             quantity: entries.reduce((s, e) => s + e.quantity, 0),
                             adCost: entries.reduce((s, e) => s + e.adCost, 0),
-                            housePurchase: entries.reduce((s, e) => { const c = calcHousePurchase(e.product, e.date); return s + (c !== 0 ? c : e.housePurchase); }, 0),
+                            housePurchase: entries.reduce((s, e) => s + (e.housePurchase !== 0 ? e.housePurchase : calcHousePurchase(e.product, e.date)), 0),
                             solution: entries.reduce((s, e) => s + e.solution, 0),
                           };
                           const profit = totals.totalMargin + totals.adCost + totals.housePurchase + totals.solution;
@@ -2009,8 +2009,8 @@ const App: React.FC = () => {
                                         </td>
                                         <td className="py-1.5 px-3">
                                           {(() => {
-                                            const computed = calcHousePurchase(entry.product, entry.date);
-                                            const val = computed !== 0 ? computed : entry.housePurchase;
+                                            // 기존 값이 있으면 그대로 사용, 빈칸(0)일 때만 자동계산
+                                            const val = entry.housePurchase !== 0 ? entry.housePurchase : calcHousePurchase(entry.product, entry.date);
                                             return <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                               defaultValue={val || ''} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />;
                                           })()}
