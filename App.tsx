@@ -1914,7 +1914,7 @@ const App: React.FC = () => {
                             housePurchase: entries.reduce((s, e) => s + e.housePurchase, 0),
                             solution: entries.reduce((s, e) => s + e.solution, 0),
                           };
-                          const profit = totals.totalMargin - totals.adCost - totals.housePurchase - totals.solution;
+                          const profit = totals.totalMargin + totals.adCost + totals.housePurchase + totals.solution;
 
                           return (
                             <div key={product} className="border rounded-2xl overflow-hidden">
