@@ -246,6 +246,17 @@ const App: React.FC = () => {
     await setDoc(doc(db, 'salesDaily', docId), newEntry);
   };
 
+  // 가구매 자동계산: 구매목록 수량 × (판매가*0.88 - 1000 - 2300)
+  const calcHousePurchase = (product: string, date: string) => {
+    const count = manualEntries.filter(e => e.product === product && e.date === date).length;
+    if (count === 0) return 0;
+    const pp = productPrices.find(p => p.name === product);
+    const sellingPrice = pp?.sellingPrice || pp?.price || 0;
+    if (sellingPrice === 0) return 0;
+    const unitCost = Math.round(sellingPrice * 0.88 - 1000 - 2300);
+    return -(count * unitCost);
+  };
+
   const handleSalesDeleteRow = async (entry: SalesDailyEntry) => {
     const { id, ...data } = entry;
     setSalesUndoStack(prev => [...prev, { type: 'delete', entries: [{ id, data }] }]);
@@ -1934,7 +1945,7 @@ const App: React.FC = () => {
                             totalMargin: entries.reduce((s, e) => s + e.totalMargin, 0),
                             quantity: entries.reduce((s, e) => s + e.quantity, 0),
                             adCost: entries.reduce((s, e) => s + e.adCost, 0),
-                            housePurchase: entries.reduce((s, e) => s + e.housePurchase, 0),
+                            housePurchase: entries.reduce((s, e) => { const c = calcHousePurchase(e.product, e.date); return s + (c !== 0 ? c : e.housePurchase); }, 0),
                             solution: entries.reduce((s, e) => s + e.solution, 0),
                           };
                           const profit = totals.totalMargin + totals.adCost + totals.housePurchase + totals.solution;
@@ -1996,8 +2007,12 @@ const App: React.FC = () => {
                                             defaultValue={entry.adCost || ''} onBlur={e => salesUpdate(entry.id, 'adCost', Number(e.target.value) || 0)} />
                                         </td>
                                         <td className="py-1.5 px-3">
-                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                            defaultValue={entry.housePurchase || ''} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
+                                          {(() => {
+                                            const computed = calcHousePurchase(entry.product, entry.date);
+                                            const val = computed !== 0 ? computed : entry.housePurchase;
+                                            return <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                              defaultValue={val || ''} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />;
+                                          })()}
                                         </td>
                                         <td className="py-1.5 px-3">
                                           <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
