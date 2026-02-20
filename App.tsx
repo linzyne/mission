@@ -1186,9 +1186,9 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-[#FBFBFD] font-sans text-[#1D1D1F] antialiased">
       {/* Lightbox Modal */}
       {previewImage && (
-        <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setPreviewImage(null)}>
+        <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
           <img src={previewImage} className="max-w-full max-h-full rounded-lg shadow-2xl animate-in zoom-in-95 duration-200" alt="Preview" />
-          <button className="absolute top-6 right-6 text-white text-4xl font-light">&times;</button>
+          <button onClick={() => setPreviewImage(null)} className="absolute top-6 right-6 w-10 h-10 bg-white/20 hover:bg-white/40 rounded-full flex items-center justify-center text-white text-2xl font-bold transition-colors">&times;</button>
         </div>
       )}
 
