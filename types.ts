@@ -61,7 +61,22 @@ export interface ReviewEntry {
   date: string;
 }
 
-export type AdminTab = 'dashboard' | 'manual' | 'deposit' | 'reviewComplete' | 'productPrices';
+export type AdminTab = 'dashboard' | 'manual' | 'deposit' | 'reviewComplete' | 'productPrices' | 'sales';
+
+export interface SalesDailyEntry {
+  id: string;
+  date: string;
+  product: string;
+  productDetail: string;
+  quantity: number;
+  sellingPrice: number;
+  supplyPrice: number;
+  marginPerUnit: number;
+  totalMargin: number;
+  adCost: number;
+  housePurchase: number;
+  solution: number;
+}
 export type CustomerView = 'landing' | 'apply' | 'review';
 
 export interface AppSettings {
