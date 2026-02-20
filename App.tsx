@@ -246,6 +246,29 @@ const App: React.FC = () => {
     await setDoc(doc(db, 'salesDaily', docId), newEntry);
   };
 
+  const handleSalesDeleteRow = async (entry: SalesDailyEntry) => {
+    const { id, ...data } = entry;
+    setSalesUndoStack(prev => [...prev, { type: 'delete', entries: [{ id, data }] }]);
+    setSalesRedoStack([]);
+    await deleteDoc(doc(db, 'salesDaily', id));
+  };
+
+  const handleSalesDeleteProduct = async (product: string) => {
+    if (!confirm(`"${product}" 품목의 ${salesMonth.year}.${salesMonth.month}월 데이터를 모두 삭제할까요?`)) return;
+    const targets = salesDaily.filter(e => e.product === product && e.date.startsWith(salesMonthStr));
+    if (targets.length === 0) return;
+    const batch = writeBatch(db);
+    const undoEntries: { id: string, data: any }[] = [];
+    for (const e of targets) {
+      const { id, ...data } = e;
+      undoEntries.push({ id, data });
+      batch.delete(doc(db, 'salesDaily', id));
+    }
+    setSalesUndoStack(prev => [...prev, { type: 'delete', entries: undoEntries }]);
+    setSalesRedoStack([]);
+    await batch.commit();
+  };
+
   const handleSalesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1921,6 +1944,7 @@ const App: React.FC = () => {
                               <div className="bg-gray-50 p-4 flex items-center gap-6">
                                 <span className="text-lg font-black">{product}</span>
                                 <span className="text-xs text-gray-400">({entries[0]?.productDetail})</span>
+                                <button onClick={() => handleSalesDeleteProduct(product)} className="text-xs text-red-400 hover:text-red-600 ml-1" title="품목 삭제">&times;</button>
                                 <span className="ml-auto text-lg font-black" style={{color: profit >= 0 ? '#16a34a' : '#dc2626'}}>{profit.toLocaleString()}</span>
                               </div>
                               <div className="text-[11px] bg-gray-50 px-4 pb-2 flex gap-4 text-gray-400 font-bold">
@@ -1935,6 +1959,7 @@ const App: React.FC = () => {
                                 <table className="w-full text-xs text-center">
                                   <thead className="bg-gray-100 text-gray-500 font-bold">
                                     <tr>
+                                      <th className="py-2 w-6"></th>
                                       <th className="py-2 px-3">날짜</th>
                                       <th className="py-2 px-3">공급가</th>
                                       <th className="py-2 px-3">마진</th>
@@ -1947,6 +1972,9 @@ const App: React.FC = () => {
                                   <tbody>
                                     {entries.map(entry => (
                                       <tr key={entry.id} className="border-t hover:bg-gray-50">
+                                        <td className="py-1.5 px-1">
+                                          <button onClick={() => handleSalesDeleteRow(entry)} className="text-red-300 hover:text-red-500 text-xs">&times;</button>
+                                        </td>
                                         <td className="py-1.5 px-3">
                                           <input type="text" className="w-24 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-600"
                                             defaultValue={entry.date} onBlur={e => { const v = e.target.value; if (v !== entry.date) salesUpdate(entry.id, 'date', v); }} />
