@@ -116,6 +116,15 @@ export interface UserSubmission {
   reviewProofImage?: string;
 }
 
+export interface DailyCostItem {
+  id: string;
+  date: string;
+  name: string;
+  amount: number;
+}
+
+export type SalesSubTab = 'profitLoss' | 'salesDetail';
+
 export interface ProductPrice {
   id: string;
   name: string;

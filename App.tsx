@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Product, Submission, AppMode, CustomerView, AppSettings, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry } from './types';
+import { Product, Submission, AppMode, CustomerView, AppSettings, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, DailyCostItem, SalesSubTab } from './types';
 import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch } from 'firebase/firestore';
@@ -162,6 +162,40 @@ const App: React.FC = () => {
   const [salesMonth, setSalesMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() + 1 }; });
   const salesMonthStr = `${salesMonth.year}-${String(salesMonth.month).padStart(2, '0')}`;
   const salesFileRef = useRef<HTMLInputElement>(null);
+  const [salesSubTab, setSalesSubTab] = useState<SalesSubTab>('profitLoss');
+
+  // Firestore Sync: Daily Costs (손익표 비용 항목)
+  const [dailyCosts, setDailyCosts] = useState<DailyCostItem[]>([]);
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'dailyCosts'), (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as DailyCostItem));
+      setDailyCosts(list);
+    });
+    return () => unsub();
+  }, []);
+  const [dailyMemos, setDailyMemos] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'dailyMemos'), (snapshot) => {
+      const m: Record<string, string> = {};
+      snapshot.docs.forEach(d => { m[d.id] = (d.data() as any).memo || ''; });
+      setDailyMemos(m);
+    });
+    return () => unsub();
+  }, []);
+  const [expandedCostDate, setExpandedCostDate] = useState<string | null>(null);
+  const [newCostName, setNewCostName] = useState('');
+  const [newCostAmount, setNewCostAmount] = useState('');
+  const DEFAULT_COST_CATEGORIES = ['임대료', '통신비', '소모품비', '물류비', '마케팅', '식비', '기타'];
+  const [costCategories, setCostCategories] = useState<string[]>(() => {
+    const saved = localStorage.getItem('costCategories');
+    return saved ? JSON.parse(saved) : DEFAULT_COST_CATEGORIES;
+  });
+  const addCostCategory = (name: string) => {
+    if (!name.trim() || costCategories.includes(name.trim())) return;
+    const updated = [...costCategories, name.trim()];
+    setCostCategories(updated);
+    localStorage.setItem('costCategories', JSON.stringify(updated));
+  };
 
   // Sales undo/redo
   const [salesUndoStack, setSalesUndoStack] = useState<{ type: string, entries: { id: string, data: any }[] }[]>([]);
@@ -265,6 +299,23 @@ const App: React.FC = () => {
     await deleteDoc(doc(db, 'salesDaily', id));
   };
 
+  const handleSalesAddProduct = async () => {
+    const name = prompt('품목명을 입력하세요');
+    if (!name || !name.trim()) return;
+    const product = name.trim();
+    // 이미 해당 월에 존재하는지 확인
+    if (salesDaily.some(e => e.product === product && e.date.startsWith(salesMonthStr))) {
+      alert('이미 존재하는 품목입니다.');
+      return;
+    }
+    const newDate = `${salesMonthStr}-01`;
+    const docId = `${newDate}_${product}`;
+    const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: 0, solution: 0 };
+    setSalesUndoStack(prev => [...prev, { type: 'add', entries: [{ id: docId, data: {} }] }]);
+    setSalesRedoStack([]);
+    await setDoc(doc(db, 'salesDaily', docId), newEntry);
+  };
+
   const handleSalesDeleteProduct = async (product: string) => {
     if (!confirm(`"${product}" 품목의 ${salesMonth.year}.${salesMonth.month}월 데이터를 모두 삭제할까요?`)) return;
     const targets = salesDaily.filter(e => e.product === product && e.date.startsWith(salesMonthStr));
@@ -279,6 +330,26 @@ const App: React.FC = () => {
     setSalesUndoStack(prev => [...prev, { type: 'delete', entries: undoEntries }]);
     setSalesRedoStack([]);
     await batch.commit();
+  };
+
+  // 손익표: 비용 항목 추가
+  const handleAddCostItem = async (date: string) => {
+    const name = newCostName.trim();
+    const amount = Number(newCostAmount);
+    if (!name || !amount) return;
+    await addDoc(collection(db, 'dailyCosts'), { date, name, amount });
+    setNewCostName('');
+    setNewCostAmount('');
+  };
+
+  // 손익표: 비용 항목 삭제
+  const handleDeleteCostItem = async (id: string) => {
+    await deleteDoc(doc(db, 'dailyCosts', id));
+  };
+
+  // 손익표: 비고 저장
+  const handleSaveMemo = async (date: string, memo: string) => {
+    await setDoc(doc(db, 'dailyMemos', date), { memo });
   };
 
   const handleSalesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1906,130 +1977,368 @@ const App: React.FC = () => {
                 </section>
               ) : adminTab === 'sales' ? (
                 <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl p-8 animate-in slide-in-from-right-10 duration-500">
-                  <p className="text-[11px] text-gray-400 mb-4">마진 데이터는 업무일지(발주앱)에서 업로드하며, 가구매는 구매목록 수량 기반으로 자동 계산됩니다.</p>
-                  <div className="flex justify-between items-center mb-6">
+                  <div className="flex justify-between items-center mb-4">
                     <h2 className="text-xl font-black text-gray-900">매출현황</h2>
-                    <div className="flex gap-2 items-center">
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => setSalesMonth(p => { let m = p.month - 1, y = p.year; if (m < 1) { m = 12; y--; } return { year: y, month: m }; })} className="px-2 py-2 text-gray-500 hover:text-gray-800 font-black text-sm">&larr;</button>
-                        <span className="text-sm font-black text-gray-700 min-w-[100px] text-center">{salesMonth.year}.{salesMonth.month}월</span>
-                        <button onClick={() => setSalesMonth(p => { let m = p.month + 1, y = p.year; if (m > 12) { m = 1; y++; } return { year: y, month: m }; })} className="px-2 py-2 text-gray-500 hover:text-gray-800 font-black text-sm">&rarr;</button>
-                      </div>
-                      {salesUndoStack.length > 0 && (
-                        <button onClick={handleSalesUndo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
-                      )}
-                      {salesRedoStack.length > 0 && (
-                        <button onClick={handleSalesRedo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="다시실행"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg></button>
-                      )}
-                      <button onClick={() => salesFileRef.current?.click()} className="px-5 py-2.5 bg-green-600 text-white rounded-xl font-black text-xs hover:bg-green-700 transition-colors">업무일지 업로드</button>
-                      <input ref={salesFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleSalesUpload} />
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => setSalesMonth(p => { let m = p.month - 1, y = p.year; if (m < 1) { m = 12; y--; } return { year: y, month: m }; })} className="px-2 py-2 text-gray-500 hover:text-gray-800 font-black text-sm">&larr;</button>
+                      <span className="text-sm font-black text-gray-700 min-w-[100px] text-center">{salesMonth.year}.{salesMonth.month}월</span>
+                      <button onClick={() => setSalesMonth(p => { let m = p.month + 1, y = p.year; if (m > 12) { m = 1; y++; } return { year: y, month: m }; })} className="px-2 py-2 text-gray-500 hover:text-gray-800 font-black text-sm">&rarr;</button>
                     </div>
                   </div>
+                  {/* 서브 탭 */}
+                  <div className="flex gap-2 mb-6">
+                    <button onClick={() => setSalesSubTab('profitLoss')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'profitLoss' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>손익표</button>
+                    <button onClick={() => setSalesSubTab('salesDetail')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'salesDetail' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>품목별판매</button>
+                  </div>
 
-                  {(() => {
-                    // 선택된 월 필터링 + 품목별 그룹핑
-                    const filtered = salesDaily.filter(e => e.date.startsWith(salesMonthStr));
-                    const byProduct: Record<string, SalesDailyEntry[]> = {};
-                    filtered.forEach(e => {
-                      if (!byProduct[e.product]) byProduct[e.product] = [];
-                      byProduct[e.product].push(e);
-                    });
-                    const productNames = Object.keys(byProduct).sort();
+                  {salesSubTab === 'profitLoss' ? (
+                    /* ===== 손익표 ===== */
+                    (() => {
+                      const filtered = salesDaily.filter(e => e.date.startsWith(salesMonthStr));
+                      // 날짜별 전체 품목 합산
+                      const byDate: Record<string, { margin: number }> = {};
+                      filtered.forEach(e => {
+                        if (!byDate[e.date]) byDate[e.date] = { margin: 0 };
+                        byDate[e.date].margin += (e.totalMargin + e.adCost + e.housePurchase + e.solution);
+                      });
+                      const monthlyCosts = dailyCosts.filter(c => c.date.startsWith(salesMonthStr));
+                      // 비용이 있는 날짜도 포함
+                      monthlyCosts.forEach(c => {
+                        if (!byDate[c.date]) byDate[c.date] = { margin: 0 };
+                      });
+                      const dates = Object.keys(byDate).sort();
+                      const grandMargin = dates.reduce((s, d) => s + byDate[d].margin, 0);
+                      const grandCost = monthlyCosts.reduce((s, c) => s + c.amount, 0);
+                      const grandProfit = grandMargin - grandCost;
 
-                    if (productNames.length === 0) return <p className="text-gray-300 text-center py-16">업무일지를 업로드하면 품목별 매출현황이 표시됩니다.</p>;
+                      // 손익계산서: 매출 내역 (품목별 마진)
+                      const revenueByProduct: Record<string, number> = {};
+                      filtered.forEach(e => {
+                        const profit = e.totalMargin + e.adCost + e.housePurchase + e.solution;
+                        revenueByProduct[e.product] = (revenueByProduct[e.product] || 0) + profit;
+                      });
+                      const revenueItems = Object.entries(revenueByProduct).sort((a, b) => b[1] - a[1]);
+                      const totalRevenue = revenueItems.reduce((s, [, v]) => s + v, 0);
 
-                    return (
-                      <div className="space-y-8">
-                        {productNames.map(product => {
-                          const entries = byProduct[product].sort((a, b) => a.date.localeCompare(b.date));
-                          const totals = {
-                            supplyPrice: entries.reduce((s, e) => s + e.supplyPrice, 0),
-                            totalMargin: entries.reduce((s, e) => s + e.totalMargin, 0),
-                            quantity: entries.reduce((s, e) => s + e.quantity, 0),
-                            adCost: entries.reduce((s, e) => s + e.adCost, 0),
-                            housePurchase: entries.reduce((s, e) => s + e.housePurchase, 0),
-                            solution: entries.reduce((s, e) => s + e.solution, 0),
-                          };
-                          const profit = totals.totalMargin + totals.adCost + totals.housePurchase + totals.solution;
+                      // 손익계산서: 지출 내역 (비용 카테고리별)
+                      const expenseByCategory: Record<string, number> = {};
+                      monthlyCosts.forEach(c => {
+                        expenseByCategory[c.name] = (expenseByCategory[c.name] || 0) + c.amount;
+                      });
+                      const expenseItems = Object.entries(expenseByCategory).sort((a, b) => b[1] - a[1]);
+                      const totalExpense = expenseItems.reduce((s, [, v]) => s + v, 0);
 
-                          return (
-                            <div key={product} className="border rounded-2xl overflow-hidden">
-                              <div className="bg-gray-50 p-4 flex items-center gap-6">
-                                <span className="text-lg font-black">{product}</span>
-                                <span className="text-xs text-gray-400">({entries[0]?.productDetail})</span>
-                                <button onClick={() => handleSalesDeleteProduct(product)} className="text-xs text-red-400 hover:text-red-600 ml-1" title="품목 삭제">&times;</button>
-                                <span className="ml-auto text-lg font-black" style={{color: profit >= 0 ? '#16a34a' : '#dc2626'}}>{profit.toLocaleString()}</span>
-                              </div>
-                              <div className="text-[11px] bg-gray-50 px-4 pb-2 flex gap-4 text-gray-400 font-bold">
-                                <span>공급가 {totals.supplyPrice.toLocaleString()}</span>
-                                <span>마진 {totals.totalMargin.toLocaleString()}</span>
-                                <span>수량 {totals.quantity}</span>
-                                <span>광고비 {totals.adCost.toLocaleString()}</span>
-                                <span>가구매 {totals.housePurchase.toLocaleString()}</span>
-                                <span>솔룻 {totals.solution.toLocaleString()}</span>
-                              </div>
-                              <div className="overflow-x-auto">
-                                <table className="w-full text-xs text-center">
-                                  <thead className="bg-gray-100 text-gray-500 font-bold">
-                                    <tr>
-                                      <th className="py-2 w-6"></th>
-                                      <th className="py-2 px-3">날짜</th>
-                                      <th className="py-2 px-3">공급가</th>
-                                      <th className="py-2 px-3">마진</th>
-                                      <th className="py-2 px-3">수량</th>
-                                      <th className="py-2 px-3">광고비</th>
-                                      <th className="py-2 px-3">가구매</th>
-                                      <th className="py-2 px-3">솔룻</th>
+                      return (
+                        <div>
+                          {dates.length === 0 ? (
+                            <p className="text-gray-300 text-center py-16">데이터가 없습니다.</p>
+                          ) : (
+                            <div className="overflow-x-auto mb-8">
+                              <table className="w-full text-xs">
+                                <thead className="bg-gray-100 text-gray-500 font-bold text-center">
+                                  <tr>
+                                    <th className="py-1.5 px-3">날짜</th>
+                                    <th className="py-1.5 px-3">마진</th>
+                                    <th className="py-1.5 px-3">비용</th>
+                                    <th className="py-1.5 px-3">순익</th>
+                                    <th className="py-1.5 px-3">비고</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {dates.map(date => {
+                                    const dayMargin = byDate[date].margin;
+                                    const dayCostItems = monthlyCosts.filter(c => c.date === date);
+                                    const dayCostTotal = dayCostItems.reduce((s, c) => s + c.amount, 0);
+                                    const dayProfit = dayMargin - dayCostTotal;
+                                    const isExpanded = expandedCostDate === date;
+
+                                    return (
+                                      <React.Fragment key={date}>
+                                        <tr className="border-t hover:bg-gray-50 text-center">
+                                          <td className="py-1 px-3 text-gray-600 font-bold">{date.slice(5)}</td>
+                                          <td className="py-1 px-3 font-bold">{dayMargin.toLocaleString()}</td>
+                                          <td className="py-1 px-3">
+                                            <button
+                                              onClick={() => setExpandedCostDate(isExpanded ? null : date)}
+                                              className="font-bold hover:text-blue-600 transition-colors underline decoration-dotted"
+                                            >
+                                              {dayCostTotal.toLocaleString()}
+                                            </button>
+                                          </td>
+                                          <td className="py-1 px-3 font-black" style={{ color: dayProfit >= 0 ? '#16a34a' : '#dc2626' }}>{dayProfit.toLocaleString()}</td>
+                                          <td className="py-1 px-3">
+                                            <input
+                                              type="text"
+                                              className="w-full bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-500 text-center text-xs"
+                                              defaultValue={dailyMemos[date] || ''}
+                                              onBlur={e => { const v = e.target.value; if (v !== (dailyMemos[date] || '')) handleSaveMemo(date, v); }}
+                                              placeholder="메모"
+                                            />
+                                          </td>
+                                        </tr>
+                                        {isExpanded && (
+                                          <tr>
+                                            <td colSpan={5} className="bg-blue-50 px-6 py-2">
+                                              <div className="space-y-1.5">
+                                                {dayCostItems.map(item => (
+                                                  <div key={item.id} className="flex items-center justify-between text-xs">
+                                                    <span className="text-gray-600">{item.name}</span>
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="font-bold text-gray-700">{item.amount.toLocaleString()}원</span>
+                                                      <button onClick={() => handleDeleteCostItem(item.id)} className="text-red-400 hover:text-red-600">&times;</button>
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                                {dayCostItems.length === 0 && <p className="text-gray-400 text-[11px]">등록된 비용 항목이 없습니다.</p>}
+                                                <div className="flex gap-2 items-center pt-1.5 border-t border-blue-100">
+                                                  <select
+                                                    className="flex-1 px-3 py-1.5 bg-white rounded-lg text-xs border border-blue-200 outline-none focus:border-blue-400"
+                                                    value={newCostName}
+                                                    onChange={e => {
+                                                      if (e.target.value === '__add__') {
+                                                        const name = prompt('새 비용 항목명을 입력하세요');
+                                                        if (name && name.trim()) { addCostCategory(name); setNewCostName(name.trim()); }
+                                                        else e.target.value = newCostName;
+                                                      } else setNewCostName(e.target.value);
+                                                    }}
+                                                  >
+                                                    <option value="">항목 선택</option>
+                                                    {costCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                                                    <option value="__add__">+ 항목 추가...</option>
+                                                  </select>
+                                                  <input
+                                                    type="number"
+                                                    className="w-24 px-3 py-1.5 bg-white rounded-lg text-xs border border-blue-200 outline-none focus:border-blue-400"
+                                                    placeholder="금액"
+                                                    value={newCostAmount}
+                                                    onChange={e => setNewCostAmount(e.target.value)}
+                                                  />
+                                                  <button
+                                                    onClick={() => handleAddCostItem(date)}
+                                                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700"
+                                                  >추가</button>
+                                                </div>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        )}
+                                      </React.Fragment>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+
+                          {/* 손익계산서 */}
+                          <div className="border-2 border-gray-300 rounded-xl overflow-hidden">
+                            <div className="bg-white border-b-2 border-gray-300 py-4 text-center">
+                              <h3 className="text-xl font-black text-gray-900">{salesMonth.month}월 손익 계산서</h3>
+                            </div>
+                            <div className="grid grid-cols-2">
+                              {/* 총 매출 내역 */}
+                              <div className="border-r-2 border-gray-300">
+                                <div className="bg-yellow-50 border-b border-gray-300 py-2 text-center font-black text-sm text-gray-800">총 매출 내역</div>
+                                <div className="text-right text-[10px] text-gray-400 px-3 py-1 border-b border-gray-200">(단위 : 원)</div>
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-gray-300 bg-gray-50">
+                                      <th className="py-1.5 px-3 text-left font-bold text-gray-600">항목</th>
+                                      <th className="py-1.5 px-3 text-right font-bold text-gray-600">금액</th>
+                                      <th className="py-1.5 px-3 text-right font-bold text-gray-600 w-16">비율</th>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {entries.map(entry => (
-                                      <tr key={entry.id} className="border-t hover:bg-gray-50">
-                                        <td className="py-1.5 px-1">
-                                          <button onClick={() => handleSalesDeleteRow(entry)} className="text-red-300 hover:text-red-500 text-xs">&times;</button>
-                                        </td>
-                                        <td className="py-1.5 px-3">
-                                          <input type="text" className="w-24 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-600"
-                                            defaultValue={entry.date} onBlur={e => { const v = e.target.value; if (v !== entry.date) salesUpdate(entry.id, 'date', v); }} />
-                                        </td>
-                                        <td className="py-1.5 px-3">
-                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                            defaultValue={entry.supplyPrice || ''} onBlur={e => salesUpdate(entry.id, 'supplyPrice', Number(e.target.value) || 0)} />
-                                        </td>
-                                        <td className="py-1.5 px-3">
-                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                            defaultValue={entry.totalMargin || ''} onBlur={e => salesUpdate(entry.id, 'totalMargin', Number(e.target.value) || 0)} />
-                                        </td>
-                                        <td className="py-1.5 px-3">
-                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                            defaultValue={entry.quantity || ''} onBlur={e => salesUpdate(entry.id, 'quantity', Number(e.target.value) || 0)} />
-                                        </td>
-                                        <td className="py-1.5 px-3">
-                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                            defaultValue={entry.adCost || ''} onBlur={e => salesUpdate(entry.id, 'adCost', Number(e.target.value) || 0)} />
-                                        </td>
-                                        <td className="py-1.5 px-3">
-                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                            defaultValue={entry.housePurchase || ''} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
-                                        </td>
-                                        <td className="py-1.5 px-3">
-                                          <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                            defaultValue={entry.solution || ''} onBlur={e => salesUpdate(entry.id, 'solution', Number(e.target.value) || 0)} />
-                                        </td>
+                                    {revenueItems.map(([name, amount]) => (
+                                      <tr key={name} className="border-b border-gray-100">
+                                        <td className="py-1.5 px-3 text-gray-700">{name}</td>
+                                        <td className="py-1.5 px-3 text-right font-bold">{amount.toLocaleString()}</td>
+                                        <td className="py-1.5 px-3 text-right text-gray-500">{totalRevenue ? Math.round(amount / totalRevenue * 100) : 0}%</td>
+                                      </tr>
+                                    ))}
+                                    {revenueItems.length === 0 && <tr><td colSpan={3} className="py-4 text-center text-gray-300">데이터 없음</td></tr>}
+                                  </tbody>
+                                  <tfoot>
+                                    <tr className="border-t-2 border-gray-300 bg-gray-50">
+                                      <td className="py-2 px-3 font-black text-gray-800">총 매출액</td>
+                                      <td className="py-2 px-3 text-right font-black text-gray-800">{totalRevenue.toLocaleString()}</td>
+                                      <td className="py-2 px-3"></td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                                <div className="border-t-2 border-gray-300 bg-green-50 py-3 px-3 flex justify-between items-center">
+                                  <span className="font-black text-sm text-gray-800">순 수익</span>
+                                  <span className="font-black text-lg" style={{ color: grandProfit >= 0 ? '#16a34a' : '#dc2626' }}>{grandProfit.toLocaleString()}</span>
+                                </div>
+                              </div>
+                              {/* 총 지출 내역 */}
+                              <div>
+                                <div className="bg-yellow-50 border-b border-gray-300 py-2 text-center font-black text-sm text-gray-800">총 지출 내역</div>
+                                <div className="text-right text-[10px] text-gray-400 px-3 py-1 border-b border-gray-200">(단위 : 원)</div>
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="border-b border-gray-300 bg-gray-50">
+                                      <th className="py-1.5 px-3 text-left font-bold text-gray-600">항목</th>
+                                      <th className="py-1.5 px-3 text-right font-bold text-gray-600">금액</th>
+                                      <th className="py-1.5 px-3 text-right font-bold text-gray-600 w-16">비율</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {costCategories.map(cat => {
+                                      const amt = expenseByCategory[cat] || 0;
+                                      return (
+                                        <tr key={cat} className="border-b border-gray-100">
+                                          <td className="py-1.5 px-3 text-gray-700">{cat}</td>
+                                          <td className="py-1.5 px-3 text-right font-bold">{amt ? amt.toLocaleString() : '-'}</td>
+                                          <td className="py-1.5 px-3 text-right text-gray-500">{totalExpense && amt ? Math.round(amt / totalExpense * 100) : 0}%</td>
+                                        </tr>
+                                      );
+                                    })}
+                                    {expenseItems.filter(([name]) => !costCategories.includes(name)).map(([name, amount]) => (
+                                      <tr key={name} className="border-b border-gray-100">
+                                        <td className="py-1.5 px-3 text-gray-700">{name}</td>
+                                        <td className="py-1.5 px-3 text-right font-bold">{amount.toLocaleString()}</td>
+                                        <td className="py-1.5 px-3 text-right text-gray-500">{totalExpense ? Math.round(amount / totalExpense * 100) : 0}%</td>
                                       </tr>
                                     ))}
                                   </tbody>
+                                  <tfoot>
+                                    <tr className="border-t-2 border-gray-300 bg-gray-50">
+                                      <td className="py-2 px-3 font-black text-gray-800">총 지출액</td>
+                                      <td className="py-2 px-3 text-right font-black text-gray-800">{totalExpense.toLocaleString()}</td>
+                                      <td className="py-2 px-3"></td>
+                                    </tr>
+                                  </tfoot>
                                 </table>
                               </div>
-                              <div className="p-2 text-center">
-                                <button onClick={() => handleSalesAddRow(product)} className="text-xs text-gray-400 hover:text-gray-600">+ 행 추가</button>
-                              </div>
                             </div>
-                          );
-                        })}
+                          </div>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    /* ===== 판매현황 ===== */
+                    <div>
+                      <div className="flex justify-between items-center mb-4">
+                        <p className="text-[11px] text-gray-400">마진 데이터는 업무일지(발주앱)에서 업로드하며, 가구매는 구매목록 수량 기반으로 자동 계산됩니다.</p>
+                        <div className="flex gap-2 items-center">
+                          {salesUndoStack.length > 0 && (
+                            <button onClick={handleSalesUndo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
+                          )}
+                          {salesRedoStack.length > 0 && (
+                            <button onClick={handleSalesRedo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="다시실행"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg></button>
+                          )}
+                          <button onClick={() => salesFileRef.current?.click()} className="px-5 py-2.5 bg-green-600 text-white rounded-xl font-black text-xs hover:bg-green-700 transition-colors">업무일지 업로드</button>
+                          <input ref={salesFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleSalesUpload} />
+                          <button onClick={handleSalesAddProduct} className="px-4 py-2.5 bg-gray-200 text-gray-600 rounded-xl font-black text-xs hover:bg-gray-300 transition-colors">+ 품목추가</button>
+                        </div>
                       </div>
-                    );
-                  })()}
+
+                      {(() => {
+                        const filtered = salesDaily.filter(e => e.date.startsWith(salesMonthStr));
+                        const byProduct: Record<string, SalesDailyEntry[]> = {};
+                        filtered.forEach(e => {
+                          if (!byProduct[e.product]) byProduct[e.product] = [];
+                          byProduct[e.product].push(e);
+                        });
+                        const productNames = Object.keys(byProduct).sort();
+
+                        if (productNames.length === 0) return <p className="text-gray-300 text-center py-16">품목추가 버튼으로 품목을 생성하거나, 업무일지를 업로드하세요.</p>;
+
+                        return (
+                          <div className="space-y-8">
+                            {productNames.map(product => {
+                              const entries = byProduct[product].sort((a, b) => a.date.localeCompare(b.date));
+                              const totals = {
+                                supplyPrice: entries.reduce((s, e) => s + e.supplyPrice, 0),
+                                totalMargin: entries.reduce((s, e) => s + e.totalMargin, 0),
+                                quantity: entries.reduce((s, e) => s + e.quantity, 0),
+                                adCost: entries.reduce((s, e) => s + e.adCost, 0),
+                                housePurchase: entries.reduce((s, e) => s + e.housePurchase, 0),
+                                solution: entries.reduce((s, e) => s + e.solution, 0),
+                              };
+                              const profit = totals.totalMargin + totals.adCost + totals.housePurchase + totals.solution;
+
+                              return (
+                                <div key={product} className="border rounded-2xl overflow-hidden">
+                                  <div className="bg-gray-50 p-4 flex items-center gap-6">
+                                    <span className="text-lg font-black">{product}</span>
+                                    <span className="text-xs text-gray-400">({entries[0]?.productDetail})</span>
+                                    <button onClick={() => handleSalesDeleteProduct(product)} className="text-xs text-red-400 hover:text-red-600 ml-1" title="품목 삭제">&times;</button>
+                                    <span className="ml-auto text-lg font-black" style={{color: profit >= 0 ? '#16a34a' : '#dc2626'}}>{profit.toLocaleString()}</span>
+                                  </div>
+                                  <div className="text-[11px] bg-gray-50 px-4 pb-2 flex gap-4 text-gray-400 font-bold">
+                                    <span>공급가 {totals.supplyPrice.toLocaleString()}</span>
+                                    <span>마진 {totals.totalMargin.toLocaleString()}</span>
+                                    <span>수량 {totals.quantity}</span>
+                                    <span>광고비 {totals.adCost.toLocaleString()}</span>
+                                    <span>가구매 {totals.housePurchase.toLocaleString()}</span>
+                                    <span>솔룻 {totals.solution.toLocaleString()}</span>
+                                  </div>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-xs text-center">
+                                      <thead className="bg-gray-100 text-gray-500 font-bold">
+                                        <tr>
+                                          <th className="py-2 w-6"></th>
+                                          <th className="py-2 px-3">날짜</th>
+                                          <th className="py-2 px-3">공급가</th>
+                                          <th className="py-2 px-3">마진</th>
+                                          <th className="py-2 px-3">수량</th>
+                                          <th className="py-2 px-3">광고비</th>
+                                          <th className="py-2 px-3">가구매</th>
+                                          <th className="py-2 px-3">솔룻</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {entries.map(entry => (
+                                          <tr key={entry.id} className="border-t hover:bg-gray-50">
+                                            <td className="py-1.5 px-1">
+                                              <button onClick={() => handleSalesDeleteRow(entry)} className="text-red-300 hover:text-red-500 text-xs">&times;</button>
+                                            </td>
+                                            <td className="py-1.5 px-3">
+                                              <input type="text" className="w-24 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-600"
+                                                defaultValue={entry.date} onBlur={e => { const v = e.target.value; if (v !== entry.date) salesUpdate(entry.id, 'date', v); }} />
+                                            </td>
+                                            <td className="py-1.5 px-3">
+                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                                defaultValue={entry.supplyPrice || ''} onBlur={e => salesUpdate(entry.id, 'supplyPrice', Number(e.target.value) || 0)} />
+                                            </td>
+                                            <td className="py-1.5 px-3">
+                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                                defaultValue={entry.totalMargin || ''} onBlur={e => salesUpdate(entry.id, 'totalMargin', Number(e.target.value) || 0)} />
+                                            </td>
+                                            <td className="py-1.5 px-3">
+                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                                defaultValue={entry.quantity || ''} onBlur={e => salesUpdate(entry.id, 'quantity', Number(e.target.value) || 0)} />
+                                            </td>
+                                            <td className="py-1.5 px-3">
+                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                                defaultValue={entry.adCost || ''} onBlur={e => salesUpdate(entry.id, 'adCost', Number(e.target.value) || 0)} />
+                                            </td>
+                                            <td className="py-1.5 px-3">
+                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                                defaultValue={entry.housePurchase || ''} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
+                                            </td>
+                                            <td className="py-1.5 px-3">
+                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                                defaultValue={entry.solution || ''} onBlur={e => salesUpdate(entry.id, 'solution', Number(e.target.value) || 0)} />
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div className="p-2 text-center">
+                                    <button onClick={() => handleSalesAddRow(product)} className="text-xs text-gray-400 hover:text-gray-600">+ 행 추가</button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
                 </section>
               ) : adminTab === 'productPrices' ? (
                 <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl p-8 animate-in slide-in-from-right-10 duration-500">
