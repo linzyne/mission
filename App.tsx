@@ -9,7 +9,7 @@ const App: React.FC = () => {
   const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
   const [customerView, setCustomerView] = useState<CustomerView>('landing');
 
-  const [adminPassword, setAdminPassword] = useState('');
+  const [adminPassword, setAdminPassword] = useState('1234');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
@@ -198,6 +198,7 @@ const App: React.FC = () => {
 
   // Undo stack
   const [undoStack, setUndoStack] = useState<{ type: string, entries: { id: string, data: any }[], description: string }[]>([]);
+  const [redoStack, setRedoStack] = useState<{ type: string, entries: { id: string, data: any }[], description: string }[]>([]);
 
 
   // ✅ 디바운스 로직 - 입금관리 검색 (변경 사항 3)
@@ -266,6 +267,7 @@ const App: React.FC = () => {
   // --- Undo helpers ---
   const pushUndo = (entry: { type: string, entries: { id: string, data: any }[], description: string }) => {
     setUndoStack(prev => [...prev.slice(-19), entry]);
+    setRedoStack([]);
   };
 
   const handleUndo = async () => {
@@ -275,23 +277,73 @@ const App: React.FC = () => {
 
     try {
       const batch = writeBatch(db);
+      // redo용 현재 상태 저장
+      const redoEntries: { id: string, data: any }[] = [];
       if (last.type === 'delete') {
         last.entries.forEach(e => {
           batch.set(doc(db, 'manualEntries', e.id), e.data);
+          redoEntries.push({ id: e.id, data: {} });
         });
+        setRedoStack(prev => [...prev, { type: 'add', entries: redoEntries, description: last.description }]);
       } else if (last.type === 'update') {
         last.entries.forEach(e => {
+          const current = manualEntries.find(m => m.id === e.id);
+          const currentData: any = {};
+          Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : ''; });
+          redoEntries.push({ id: e.id, data: currentData });
           batch.update(doc(db, 'manualEntries', e.id), e.data);
         });
+        setRedoStack(prev => [...prev, { type: 'update', entries: redoEntries, description: last.description }]);
       } else if (last.type === 'add') {
         last.entries.forEach(e => {
+          const current = manualEntries.find(m => m.id === e.id);
+          redoEntries.push({ id: e.id, data: current ? { ...current } : {} });
           batch.delete(doc(db, 'manualEntries', e.id));
         });
+        setRedoStack(prev => [...prev, { type: 'delete', entries: redoEntries, description: last.description }]);
       }
       await batch.commit();
     } catch (e) {
       console.error('Undo error:', e);
       alert('실행취소 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleRedo = async () => {
+    if (redoStack.length === 0) return;
+    const last = redoStack[redoStack.length - 1];
+    setRedoStack(prev => prev.slice(0, -1));
+
+    try {
+      const batch = writeBatch(db);
+      const undoEntries: { id: string, data: any }[] = [];
+      if (last.type === 'add') {
+        last.entries.forEach(e => {
+          const current = manualEntries.find(m => m.id === e.id);
+          undoEntries.push({ id: e.id, data: current ? { ...current } : {} });
+          batch.delete(doc(db, 'manualEntries', e.id));
+        });
+        setUndoStack(prev => [...prev, { type: 'delete', entries: undoEntries, description: last.description }]);
+      } else if (last.type === 'update') {
+        last.entries.forEach(e => {
+          const current = manualEntries.find(m => m.id === e.id);
+          const currentData: any = {};
+          Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : ''; });
+          undoEntries.push({ id: e.id, data: currentData });
+          batch.update(doc(db, 'manualEntries', e.id), e.data);
+        });
+        setUndoStack(prev => [...prev, { type: 'update', entries: undoEntries, description: last.description }]);
+      } else if (last.type === 'delete') {
+        last.entries.forEach(e => {
+          batch.set(doc(db, 'manualEntries', e.id), e.data);
+          undoEntries.push({ id: e.id, data: {} });
+        });
+        setUndoStack(prev => [...prev, { type: 'add', entries: undoEntries, description: last.description }]);
+      }
+      await batch.commit();
+    } catch (e) {
+      console.error('Redo error:', e);
+      alert('다시실행 중 오류가 발생했습니다.');
     }
   };
 
@@ -441,6 +493,23 @@ const App: React.FC = () => {
       await batch.commit();
       setSelectedManualIds(new Set());
       alert("예약완료 처리되었습니다.");
+    } catch (e) {
+      console.error(e);
+      alert("오류가 발생했습니다: " + e);
+    }
+  };
+
+  const handleReservationCancel = async () => {
+    if (selectedManualIds.size === 0) return;
+    if (!window.confirm(`${selectedManualIds.size}건의 예약완료를 취소하시겠습니까?`)) return;
+    try {
+      const batch = writeBatch(db);
+      selectedManualIds.forEach(id => {
+        batch.update(doc(db, 'manualEntries', id), { reservationComplete: false });
+      });
+      await batch.commit();
+      setSelectedManualIds(new Set());
+      alert("예약완료가 취소되었습니다.");
     } catch (e) {
       console.error(e);
       alert("오류가 발생했습니다: " + e);
@@ -1779,10 +1848,16 @@ const App: React.FC = () => {
                           <button onClick={handleReservationComplete} className="px-5 py-2.5 bg-pink-500 text-white rounded-xl font-black text-xs hover:bg-pink-600 transition-colors">
                             예약완료
                           </button>
+                          <button onClick={handleReservationCancel} className="px-5 py-2.5 bg-pink-100 text-pink-600 rounded-xl font-black text-xs hover:bg-pink-200 transition-colors">
+                            예약취소
+                          </button>
                         </>)}
                         <button onClick={downloadManualCsv} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="엑셀 내보내기"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></button>
                         {undoStack.length > 0 && (
                           <button onClick={handleUndo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
+                        )}
+                        {redoStack.length > 0 && (
+                          <button onClick={handleRedo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="다시실행"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg></button>
                         )}
                         <button onClick={() => addMoreRows(10)} className="px-5 py-2.5 bg-black text-white rounded-xl font-black text-xs">+ 10줄 추가</button>
                         <button onClick={() => multiImageInputRef.current?.click()} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs hover:bg-blue-700 transition-colors">이미지 일괄등록</button>
