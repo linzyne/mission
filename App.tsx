@@ -264,16 +264,19 @@ const App: React.FC = () => {
   };
 
   const handleSalesAddRow = async (product: string) => {
-    // 해당 월의 다음 빈 날짜 찾기
-    const existing = salesDaily.filter(e => e.product === product && e.date.startsWith(salesMonthStr)).map(e => e.date);
+    // 해당 월의 마지막 날짜 다음 날 찾기
+    const existingDates = salesDaily.filter(e => e.product === product && e.date.startsWith(salesMonthStr)).map(e => e.date).sort();
     const daysInMonth = new Date(salesMonth.year, salesMonth.month, 0).getDate();
     let newDate = '';
-    for (let d = 1; d <= daysInMonth; d++) {
-      const ds = `${salesMonthStr}-${String(d).padStart(2, '0')}`;
-      if (!existing.includes(ds)) { newDate = ds; break; }
+    if (existingDates.length === 0) {
+      newDate = `${salesMonthStr}-01`;
+    } else {
+      const lastDay = parseInt(existingDates[existingDates.length - 1].split('-')[2]);
+      const nextDay = lastDay + 1;
+      if (nextDay > daysInMonth) { alert('해당 월의 마지막 날짜입니다.'); return; }
+      newDate = `${salesMonthStr}-${String(nextDay).padStart(2, '0')}`;
     }
-    if (!newDate) { alert('해당 월의 모든 날짜가 이미 존재합니다.'); return; }
-    const docId = `${newDate}_${product}`;
+    const docId = `${newDate}_${product}_${Date.now()}`;
     const autoHP = calcHousePurchase(product, newDate);
     const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: autoHP, solution: 0 };
     setSalesUndoStack(prev => [...prev, { type: 'add', entries: [{ id: docId, data: {} }] }]);
@@ -2297,31 +2300,31 @@ const App: React.FC = () => {
                                             </td>
                                             <td className="py-1.5 px-3">
                                               <input type="text" className="w-24 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-600"
-                                                defaultValue={entry.date} onBlur={e => { const v = e.target.value; if (v !== entry.date) salesUpdate(entry.id, 'date', v); }} />
+                                                defaultValue={entry.date} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => { const v = e.target.value; if (v !== entry.date) salesUpdate(entry.id, 'date', v); }} />
                                             </td>
                                             <td className="py-1.5 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                                defaultValue={entry.supplyPrice || ''} onBlur={e => salesUpdate(entry.id, 'supplyPrice', Number(e.target.value) || 0)} />
+                                                defaultValue={entry.supplyPrice || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'supplyPrice', Number(e.target.value) || 0)} />
                                             </td>
                                             <td className="py-1.5 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                                defaultValue={entry.totalMargin || ''} onBlur={e => salesUpdate(entry.id, 'totalMargin', Number(e.target.value) || 0)} />
+                                                defaultValue={entry.totalMargin || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'totalMargin', Number(e.target.value) || 0)} />
                                             </td>
                                             <td className="py-1.5 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                                defaultValue={entry.quantity || ''} onBlur={e => salesUpdate(entry.id, 'quantity', Number(e.target.value) || 0)} />
+                                                defaultValue={entry.quantity || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'quantity', Number(e.target.value) || 0)} />
                                             </td>
                                             <td className="py-1.5 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                                defaultValue={entry.adCost || ''} onBlur={e => salesUpdate(entry.id, 'adCost', Number(e.target.value) || 0)} />
+                                                defaultValue={entry.adCost || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'adCost', Number(e.target.value) || 0)} />
                                             </td>
                                             <td className="py-1.5 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                                defaultValue={entry.housePurchase || ''} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
+                                                defaultValue={entry.housePurchase || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
                                             </td>
                                             <td className="py-1.5 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                                defaultValue={entry.solution || ''} onBlur={e => salesUpdate(entry.id, 'solution', Number(e.target.value) || 0)} />
+                                                defaultValue={entry.solution || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'solution', Number(e.target.value) || 0)} />
                                             </td>
                                           </tr>
                                         ))}
