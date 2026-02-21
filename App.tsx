@@ -12,8 +12,6 @@ const App: React.FC = () => {
   const [adminPassword, setAdminPassword] = useState('1234');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [previewOcrText, setPreviewOcrText] = useState<string>('');
-  const [previewOcrLoading, setPreviewOcrLoading] = useState(false);
 
 
   // Firestore Sync: Settings
@@ -522,19 +520,8 @@ const App: React.FC = () => {
     }
   };
 
-  // --- 이미지 미리보기 + OCR 텍스트 ---
-  const openPreview = async (imageSrc: string) => {
+  const openPreview = (imageSrc: string) => {
     setPreviewImage(imageSrc);
-    setPreviewOcrText('');
-    setPreviewOcrLoading(true);
-    try {
-      const Tesseract = await import('tesseract.js');
-      const { data } = await Tesseract.recognize(imageSrc, 'kor+eng');
-      setPreviewOcrText(data.text);
-    } catch (err) {
-      setPreviewOcrText('OCR 실패');
-    }
-    setPreviewOcrLoading(false);
   };
 
   // --- Undo helpers ---
@@ -1000,39 +987,40 @@ const App: React.FC = () => {
       available = [...available, ...newEntries];
     }
 
-    // 각 파일을 빈 행에 할당
-    fileArr.forEach((file, i) => {
-      if (i >= available.length) return;
-      const targetEntry = available[i];
+    // 각 파일을 빈 행에 순차 할당 (동시 OCR 방지)
+    const readFileAsDataURL = (file: File): Promise<string> => new Promise((resolve) => {
       const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64Image = reader.result as string;
-        await updateDoc(doc(db, 'manualEntries', targetEntry.id), { proofImage: base64Image });
-
-        try {
-          const { extractOrderInfo } = await import('./services/geminiService');
-          const result = await extractOrderInfo(base64Image);
-          console.log(`[Multi OCR ${i + 1}] 결과:`, result);
-
-          const ocrUpdates: Partial<ManualEntry> = {};
-          if (result.orderNumber) ocrUpdates.orderNumber = result.orderNumber;
-          if (result.receiverName) ocrUpdates.name2 = result.receiverName;
-          else if (result.ordererName) ocrUpdates.name2 = result.ordererName;
-          if (result.address) ocrUpdates.address = result.address;
-          if (result.phone) ocrUpdates.emergencyContact = result.phone;
-
-          if (Object.keys(ocrUpdates).length > 0) {
-            await updateDoc(doc(db, 'manualEntries', targetEntry.id), ocrUpdates);
-          }
-        } catch (err) {
-          console.error(`[Multi OCR ${i + 1}] 실패:`, err);
-        }
-      };
+      reader.onloadend = () => resolve(reader.result as string);
       reader.readAsDataURL(file);
     });
 
     // 파일 input 초기화 (같은 파일 재선택 가능)
     e.target.value = '';
+
+    const { extractOrderInfo } = await import('./services/geminiService');
+    for (let i = 0; i < fileArr.length && i < available.length; i++) {
+      const targetEntry = available[i];
+      const base64Image = await readFileAsDataURL(fileArr[i]);
+      await updateDoc(doc(db, 'manualEntries', targetEntry.id), { proofImage: base64Image });
+
+      try {
+        const result = await extractOrderInfo(base64Image);
+        console.log(`[Multi OCR ${i + 1}/${fileArr.length}] 결과:`, result);
+
+        const ocrUpdates: Partial<ManualEntry> = {};
+        if (result.orderNumber) ocrUpdates.orderNumber = result.orderNumber;
+        if (result.receiverName) ocrUpdates.name2 = result.receiverName;
+        else if (result.ordererName) ocrUpdates.name2 = result.ordererName;
+        if (result.address) ocrUpdates.address = result.address;
+        if (result.phone) ocrUpdates.emergencyContact = result.phone;
+
+        if (Object.keys(ocrUpdates).length > 0) {
+          await updateDoc(doc(db, 'manualEntries', targetEntry.id), ocrUpdates);
+        }
+      } catch (err) {
+        console.error(`[Multi OCR ${i + 1}] 실패:`, err);
+      }
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent, rowIdx: number, colIdx: number) => {
@@ -1464,18 +1452,8 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-[#FBFBFD] font-sans text-[#1D1D1F] antialiased">
       {/* Lightbox Modal */}
       {previewImage && (
-        <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="flex gap-4 max-w-[90vw] max-h-[90vh]">
-            <img src={previewImage} className="max-h-[85vh] max-w-[50vw] object-contain rounded-lg shadow-2xl" alt="Preview" />
-            <div className="w-80 bg-white/10 rounded-lg p-4 overflow-y-auto">
-              <div className="text-white/60 text-xs font-bold mb-2">OCR 텍스트 (드래그하여 복사)</div>
-              {previewOcrLoading ? (
-                <div className="text-white/40 text-sm">인식 중...</div>
-              ) : (
-                <pre className="text-white text-xs whitespace-pre-wrap select-text cursor-text leading-relaxed">{previewOcrText || '텍스트 없음'}</pre>
-              )}
-            </div>
-          </div>
+        <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setPreviewImage(null)}>
+          <img src={previewImage} className="max-h-[85vh] max-w-[85vw] object-contain rounded-lg shadow-2xl" alt="Preview" />
           <button onClick={() => setPreviewImage(null)} className="absolute top-6 right-6 w-10 h-10 bg-white/20 hover:bg-white/40 rounded-full flex items-center justify-center text-white text-2xl font-bold transition-colors">&times;</button>
         </div>
       )}
