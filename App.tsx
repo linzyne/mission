@@ -2456,13 +2456,22 @@ const App: React.FC = () => {
                       <div className="flex gap-2">
                         {/* ✅ 구매목록 검색 (변경 사항 7) */}
                         <div className="relative">
+                          <style>{`@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-2px)}75%{transform:translateX(2px)}}`}</style>
                           <input
                             type="text"
                             placeholder="검색 (이름, 주문번호...)"
-                            className="px-3 py-2 bg-gray-50 rounded-xl text-xs font-bold outline-none border border-gray-200 focus:border-blue-500 w-48"
+                            className={`pl-3 pr-8 py-2 bg-gray-50 rounded-xl text-xs font-bold outline-none border border-gray-200 focus:border-blue-500 w-48 transition-all duration-200 ${manualSearch ? 'bg-yellow-50 border-yellow-400 scale-[1.02] shadow-md shadow-yellow-200/50' : ''}`}
+                            style={manualSearch ? { animation: 'shake 0.15s ease-in-out' } : {}}
+                            key={manualSearch.length}
                             value={manualSearch}
                             onChange={e => setManualSearch(e.target.value)}
                           />
+                          {manualSearch && (
+                            <button
+                              onClick={() => { setManualSearch(''); setDebouncedManualSearch(''); }}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-gray-300 hover:bg-red-400 text-white text-[10px] font-black transition-colors"
+                            >✕</button>
+                          )}
                         </div>
                         {selectedManualIds.size > 0 && (<>
                           <button onClick={deleteSelectedManualEntries} className="px-5 py-2.5 bg-red-100 text-red-600 rounded-xl font-black text-xs hover:bg-red-200 transition-colors">삭제 ({selectedManualIds.size})</button>
