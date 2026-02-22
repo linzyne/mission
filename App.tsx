@@ -1155,7 +1155,7 @@ const App: React.FC = () => {
       if (account) remaining = remaining.replace(account, '');
       remaining = remaining.replace(/[\d\-\s]/g, '');
       // 잔여 은행 관련 키워드 제거
-      const BANK_WORDS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일은행','새마을금고','우체국','은행','뱅크','금고','NH','IBK','KB','SC'];
+      const BANK_WORDS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일은행','새마을금고','우체국','카카오','토스','은행','뱅크','금고','NH','IBK','KB','SC'];
       for (const w of BANK_WORDS) {
         remaining = remaining.split(w).join('');
       }
