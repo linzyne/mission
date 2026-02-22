@@ -1152,19 +1152,26 @@ const App: React.FC = () => {
       return [bank, account];
     };
 
-    for (let i = 0; i < beforeItems.length; i += chunkSize) {
-      const chunk = beforeItems.slice(i, i + chunkSize);
-      const rows = chunk.map(e => {
-        const [bank, account] = parseAccount(e.accountNumber);
-        return [bank, account, e.paymentAmount || '', e.name1 || e.name2, '안군농원환불'];
-      });
+    const allRows = beforeItems.map(e => {
+      const [bank, account] = parseAccount(e.accountNumber);
+      return [bank, account, e.paymentAmount || '', e.name1 || e.name2, '안군농원환불'];
+    });
 
-      const ws = XLSX.utils.aoa_to_sheet(rows);
+    // 15개씩 분할 다운로드
+    for (let i = 0; i < allRows.length; i += chunkSize) {
+      const chunk = allRows.slice(i, i + chunkSize);
+      const ws = XLSX.utils.aoa_to_sheet(chunk);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '환불입금');
       const fileIndex = (i / chunkSize) + 1;
       XLSX.writeFile(wb, `${today} 환불입금내역_${fileIndex}.xlsx`);
     }
+
+    // 통합본 다운로드
+    const wsAll = XLSX.utils.aoa_to_sheet(allRows);
+    const wbAll = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbAll, wsAll, '환불입금');
+    XLSX.writeFile(wbAll, `${today} 환불입금내역_통합.xlsx`);
   };
 
   const downloadManualCsv = () => {
