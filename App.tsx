@@ -1138,23 +1138,28 @@ const App: React.FC = () => {
 
     // 은행명 (긴 이름 우선 매칭)
     const BANKS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일','새마을','우체국','농협','국민','신한','하나','우리','기업','수협','신협','대구','부산','경남','광주','전북','제주','IBK','KB','NH'];
-    const parseAccount = (raw: string): [string, string] => {
-      if (!raw || !raw.trim()) return ['', ''];
+    const parseAccount = (raw: string): [string, string, string] => {
+      if (!raw || !raw.trim()) return ['', '', ''];
       const str = raw.trim();
       // 은행명 찾기
       let bank = '';
       for (const b of BANKS) {
         if (str.includes(b)) { bank = b; break; }
       }
-      // 계좌번호: 숫자+하이픈+공백 연속 구간만 추출 (한글 제거)
+      // 계좌번호: 숫자+하이픈+공백 연속 구간만 추출
       const m = str.match(/\d[\d\-\s]*\d|\d+/);
       const account = m ? m[0].trim() : '';
-      return [bank, account];
+      // 이름: 은행명과 계좌번호를 제거한 나머지 한글
+      let remaining = str;
+      if (bank) remaining = remaining.replace(bank, '');
+      if (account) remaining = remaining.replace(account, '');
+      const name = remaining.replace(/[\d\-\s]/g, '').trim();
+      return [bank, account, name];
     };
 
     const allRows = beforeItems.map(e => {
-      const [bank, account] = parseAccount(e.accountNumber);
-      return [bank, account, e.paymentAmount || '', e.name1 || e.name2, '안군농원환불'];
+      const [bank, account, accountName] = parseAccount(e.accountNumber);
+      return [bank, account, e.paymentAmount || '', accountName || e.name1 || e.name2, '안군농원환불'];
     });
 
     // 15개씩 분할 다운로드
