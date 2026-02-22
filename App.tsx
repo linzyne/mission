@@ -1149,11 +1149,17 @@ const App: React.FC = () => {
       // 계좌번호: 숫자+하이픈+공백 연속 구간만 추출
       const m = str.match(/\d[\d\-\s]*\d|\d+/);
       const account = m ? m[0].trim() : '';
-      // 이름: 은행명과 계좌번호를 제거한 나머지 한글
+      // 이름: 은행명, 계좌번호, 은행관련 키워드 모두 제거한 나머지 한글
       let remaining = str;
       if (bank) remaining = remaining.replace(bank, '');
       if (account) remaining = remaining.replace(account, '');
-      const name = remaining.replace(/[\d\-\s]/g, '').trim();
+      remaining = remaining.replace(/[\d\-\s]/g, '');
+      // 잔여 은행 관련 키워드 제거
+      const BANK_WORDS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일은행','새마을금고','우체국','은행','뱅크','금고','NH','IBK','KB','SC'];
+      for (const w of BANK_WORDS) {
+        remaining = remaining.split(w).join('');
+      }
+      const name = remaining.trim();
       return [bank, account, name];
     };
 
