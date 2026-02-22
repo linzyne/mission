@@ -293,51 +293,6 @@ const App: React.FC = () => {
     return -(count * unitCost);
   };
 
-  // 구매목록 → 품목별판매 가구매 자동 동기화
-  const salesDailyRef = useRef(salesDaily);
-  salesDailyRef.current = salesDaily;
-  useEffect(() => {
-    if (manualEntries.length === 0 || productPrices.length === 0) return;
-    // 구매목록에서 품목+날짜별 건수 집계
-    const purchaseMap: Record<string, number> = {};
-    manualEntries.forEach(e => {
-      if (e.product && e.date) {
-        const key = `${e.date}_${e.product}`;
-        purchaseMap[key] = (purchaseMap[key] || 0) + 1;
-      }
-    });
-    if (Object.keys(purchaseMap).length === 0) return;
-
-    const current = salesDailyRef.current;
-    const batch = writeBatch(db);
-    let hasChanges = false;
-
-    for (const [key, count] of Object.entries(purchaseMap)) {
-      const [date, ...productParts] = key.split('_');
-      const product = productParts.join('_');
-      const pp = productPrices.find(p => p.name === product);
-      const sellingPrice = pp?.sellingPrice || pp?.price || 0;
-      const hp = sellingPrice === 0 ? 0 : -(count * Math.round(sellingPrice * 0.88 - 1000 - 2300));
-
-      const existing = current.find(s => s.product === product && s.date === date);
-      if (existing) {
-        if (existing.housePurchase !== hp) {
-          batch.update(doc(db, 'salesDaily', existing.id), { housePurchase: hp });
-          hasChanges = true;
-        }
-      } else {
-        const docId = `${date}_${product}_auto`;
-        batch.set(doc(db, 'salesDaily', docId), {
-          date, product, productDetail: '', quantity: 0, sellingPrice: 0,
-          supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0,
-          housePurchase: hp, solution: 0,
-        });
-        hasChanges = true;
-      }
-    }
-    if (hasChanges) batch.commit().catch(err => console.error('[가구매 자동동기화] 실패:', err));
-  }, [manualEntries, productPrices]);
-
   const handleSalesDeleteRow = async (entry: SalesDailyEntry) => {
     const { id, ...data } = entry;
     setSalesUndoStack(prev => [...prev, { type: 'delete', entries: [{ id, data }] }]);
