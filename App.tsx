@@ -293,6 +293,17 @@ const App: React.FC = () => {
     return -(count * unitCost);
   };
 
+  // 임시 복구: _auto 행 삭제
+  const cleanupAutoRows = async () => {
+    const autoRows = salesDaily.filter(s => s.id.endsWith('_auto'));
+    if (autoRows.length === 0) { alert('삭제할 _auto 행이 없습니다.'); return; }
+    if (!window.confirm(`_auto 행 ${autoRows.length}개를 삭제하시겠습니까?\n\n${autoRows.map(r => `${r.date} ${r.product} (가구매: ${r.housePurchase})`).join('\n')}`)) return;
+    const batch = writeBatch(db);
+    autoRows.forEach(s => batch.delete(doc(db, 'salesDaily', s.id)));
+    await batch.commit();
+    alert(`${autoRows.length}개 _auto 행 삭제 완료`);
+  };
+
   const handleSalesDeleteRow = async (entry: SalesDailyEntry) => {
     const { id, ...data } = entry;
     setSalesUndoStack(prev => [...prev, { type: 'delete', entries: [{ id, data }] }]);
@@ -2221,6 +2232,7 @@ const App: React.FC = () => {
                           <button onClick={() => salesFileRef.current?.click()} className="px-5 py-2.5 bg-green-600 text-white rounded-xl font-black text-xs hover:bg-green-700 transition-colors">업무일지 업로드</button>
                           <input ref={salesFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleSalesUpload} />
                           <button onClick={handleSalesAddProduct} className="px-4 py-2.5 bg-gray-200 text-gray-600 rounded-xl font-black text-xs hover:bg-gray-300 transition-colors">+ 품목추가</button>
+                          <button onClick={cleanupAutoRows} className="px-4 py-2.5 bg-red-500 text-white rounded-xl font-black text-xs hover:bg-red-600 transition-colors">_auto 행 삭제</button>
                         </div>
                       </div>
 
