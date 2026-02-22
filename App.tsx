@@ -1136,25 +1136,30 @@ const App: React.FC = () => {
     const chunkSize = 15;
     const today = new Date().toISOString().split('T')[0];
 
+    // 은행명 (긴 이름 우선 매칭)
+    const BANKS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일','새마을','우체국','농협','국민','신한','하나','우리','기업','수협','신협','대구','부산','경남','광주','전북','제주','IBK','KB','NH'];
+    const parseAccount = (raw: string): [string, string] => {
+      if (!raw || !raw.trim()) return ['', ''];
+      const str = raw.trim();
+      // 은행명 찾기
+      let bank = '';
+      for (const b of BANKS) {
+        if (str.includes(b)) { bank = b; break; }
+      }
+      // 계좌번호: 숫자+하이픈+공백 연속 구간만 추출 (한글 제거)
+      const m = str.match(/\d[\d\-\s]*\d|\d+/);
+      const account = m ? m[0].trim() : '';
+      return [bank, account];
+    };
+
     for (let i = 0; i < beforeItems.length; i += chunkSize) {
       const chunk = beforeItems.slice(i, i + chunkSize);
-      const data = chunk.map(e => {
-        const parts = e.accountNumber.split(/[\s\/\|]+/).filter(Boolean);
-        const bankName = parts.length >= 2 ? parts[0] : '';
-        // 계좌번호: 숫자와 하이픈만 추출 (이름 제외)
-        const accountNum = parts.length >= 2
-          ? parts.slice(1).filter(p => /^\d[\d\-]*$/.test(p)).join(' ')
-          : e.accountNumber;
-        return {
-          '은행': bankName,
-          '계좌번호': accountNum,
-          '금액': e.paymentAmount || '',
-          '이름': e.name1 || e.name2,
-          '비고': '안군농원환불'
-        };
+      const rows = chunk.map(e => {
+        const [bank, account] = parseAccount(e.accountNumber);
+        return [bank, account, e.paymentAmount || '', e.name1 || e.name2, '안군농원환불'];
       });
 
-      const ws = XLSX.utils.json_to_sheet(data);
+      const ws = XLSX.utils.aoa_to_sheet(rows);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, '환불입금');
       const fileIndex = (i / chunkSize) + 1;
@@ -1782,8 +1787,8 @@ const App: React.FC = () => {
                         <table className="w-full text-center">
                           <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase">
                             <tr>
-                              <th className="p-2 w-10">
-                                <input type="checkbox" className="w-4 h-4 accent-blue-600" checked={allSelected} onChange={() => {
+                              <th className="py-1 px-1 w-8">
+                                <input type="checkbox" className="w-3 h-3 accent-blue-600" checked={allSelected} onChange={() => {
                                   if (allSelected) {
                                     setSelectedDepositIds(new Set());
                                   } else {
@@ -1791,16 +1796,16 @@ const App: React.FC = () => {
                                   }
                                 }} />
                               </th>
-                              <th className="p-2">날짜</th>
-                              <th className="p-2">이름1</th>
-                              <th className="p-2">이름2</th>
-                              <th className="p-2">주문번호</th>
-                              <th className="p-2">결제금액</th>
-                              <th className="p-2">계좌번호</th>
-                              <th className="p-2 w-16">해제</th>
+                              <th className="py-1 px-1">날짜</th>
+                              <th className="py-1 px-1">이름1</th>
+                              <th className="py-1 px-1">이름2</th>
+                              <th className="py-1 px-1">주문번호</th>
+                              <th className="py-1 px-1">결제금액</th>
+                              <th className="py-1 px-1">계좌번호</th>
+                              <th className="py-1 px-1 w-14">해제</th>
                             </tr>
                           </thead>
-                          <tbody className="text-[11px] font-bold divide-y divide-gray-100">
+                          <tbody className="text-[10px] font-bold divide-y divide-gray-100">
                             {beforeItems.map((entry, idx) => (
                               <tr key={entry.id}
                                 className={`transition-colors cursor-default ${selectedDepositIds.has(entry.id) ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
@@ -1824,25 +1829,25 @@ const App: React.FC = () => {
                                   setSelectedDepositIds(next);
                                 }}
                               >
-                                <td className="p-1">
+                                <td className="py-0.5 px-1">
                                   <input type="checkbox" className="w-3 h-3 accent-blue-600" checked={selectedDepositIds.has(entry.id)} onChange={() => {
                                     const next = new Set(selectedDepositIds);
                                     next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
                                     setSelectedDepositIds(next);
                                   }} />
                                 </td>
-                                <td className="p-1">
-                                  {entry.isManualCheck && <span className="inline-block px-1 py-0.5 rounded bg-orange-100 text-orange-600 text-[9px] font-black mr-0.5">수동</span>}
+                                <td className="py-0.5 px-1">
+                                  {entry.isManualCheck && <span className="inline-block px-1 rounded bg-orange-100 text-orange-600 text-[8px] font-black mr-0.5">수동</span>}
                                   {entry.date}
                                 </td>
-                                <td className="p-1">{entry.name1}</td>
-                                <td className="p-1">{entry.name2}</td>
-                                <td className="p-1 text-blue-600 font-black">{entry.orderNumber}</td>
-                                <td className="p-1">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
-                                <td className="p-1 text-blue-600">{entry.accountNumber}</td>
-                                <td className="p-1">
-                                  <button onClick={() => handleDepositRelease(entry.id, 'before')} className="px-1.5 py-0.5 bg-red-50 text-red-500 rounded-lg text-[9px] font-black hover:bg-red-100 transition-all mr-0.5">해제</button>
-                                  <button onClick={() => handleDepositDelete(entry.id)} className="px-1.5 py-0.5 bg-gray-100 text-gray-400 rounded-lg text-[9px] font-black hover:bg-gray-200 transition-all">삭제</button>
+                                <td className="py-0.5 px-1">{entry.name1}</td>
+                                <td className="py-0.5 px-1">{entry.name2}</td>
+                                <td className="py-0.5 px-1 text-blue-600 font-black">{entry.orderNumber}</td>
+                                <td className="py-0.5 px-1">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
+                                <td className="py-0.5 px-1 text-blue-600">{entry.accountNumber}</td>
+                                <td className="py-0.5 px-1">
+                                  <button onClick={() => handleDepositRelease(entry.id, 'before')} className="px-1 py-0 bg-red-50 text-red-500 rounded text-[8px] font-black hover:bg-red-100 transition-all mr-0.5">해제</button>
+                                  <button onClick={() => handleDepositDelete(entry.id)} className="px-1 py-0 bg-gray-100 text-gray-400 rounded text-[8px] font-black hover:bg-gray-200 transition-all">삭제</button>
                                 </td>
                               </tr>
                             ))}
