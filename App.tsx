@@ -689,20 +689,6 @@ const App: React.FC = () => {
       direction = 'desc';
     }
     setSortConfig({ key, direction });
-
-    // 정렬 결과를 createdAt로 Firestore에 반영
-    const sorted = [...manualEntries].sort((a, b) => {
-      const aValue = a[key] || '';
-      const bValue = b[key] || '';
-      if (aValue < bValue) return direction === 'asc' ? -1 : 1;
-      if (aValue > bValue) return direction === 'asc' ? 1 : -1;
-      return 0;
-    });
-    const batch = writeBatch(db);
-    sorted.forEach((e, i) => {
-      batch.update(doc(db, 'manualEntries', e.id), { createdAt: i });
-    });
-    batch.commit().catch(err => console.error('[Sort] createdAt 업데이트 실패:', err));
   };
 
   // ✅ Deposit Management Robust Handlers
@@ -2632,6 +2618,22 @@ const App: React.FC = () => {
 
                             return true;
                           });
+
+                          // 정렬 적용
+                          if (sortConfig) {
+                            filtered.sort((a, b) => {
+                              const aVal = a[sortConfig.key] ?? '';
+                              const bVal = b[sortConfig.key] ?? '';
+                              if (typeof aVal === 'number' && typeof bVal === 'number') {
+                                return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+                              }
+                              const aStr = String(aVal).toLowerCase();
+                              const bStr = String(bVal).toLowerCase();
+                              if (aStr < bStr) return sortConfig.direction === 'asc' ? -1 : 1;
+                              if (aStr > bStr) return sortConfig.direction === 'asc' ? 1 : -1;
+                              return 0;
+                            });
+                          }
 
                           const limited = filtered.slice(0, 200);
                           return (<>
