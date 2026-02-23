@@ -43,7 +43,7 @@ export const verifyImage = async (base64Image: string, type: 'purchase' | 'revie
       }
     });
 
-    const text = response.text() || "{}";
+    const text = response.text || "{}";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]);
@@ -174,30 +174,73 @@ function matchFirst(text: string, patterns: RegExp[]): string {
 }
 
 export const extractOrderInfo = async (base64Image: string): Promise<OcrResult> => {
+  // Gemini Vision으로 직접 이미지 분석 (Tesseract보다 정확)
+  const gemini = getAI();
+  if (gemini) {
+    try {
+      console.log('[OCR] Gemini Vision으로 이미지 분석 시작...');
+      const response = await gemini.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: {
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: base64Image.split(',')[1] || base64Image } },
+            { text: `이 쇼핑몰 주문 캡처 이미지에서 다음 정보를 정확히 추출해줘.
+숫자는 한 자리도 빠뜨리지 말고 정확히 읽어야 해. 특히 주문번호는 절대 틀리면 안 돼.
+
+추출할 항목:
+- orderNumber: 주문번호 (숫자만, 하이픈 제거)
+- ordererName: 주문자/보내는사람 이름
+- receiverName: 받는사람 이름
+- address: 받는 주소 (우편번호 제외)
+- phone: 받는사람 연락처 (010-0000-0000 형식)
+
+이미지에 해당 정보가 없으면 빈 문자열로 반환해.` }
+          ]
+        },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              orderNumber: { type: Type.STRING },
+              ordererName: { type: Type.STRING },
+              receiverName: { type: Type.STRING },
+              address: { type: Type.STRING },
+              phone: { type: Type.STRING },
+            },
+            required: ["orderNumber", "receiverName"]
+          }
+        }
+      });
+
+      const text = response.text || "{}";
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      const result = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text);
+      console.log('[OCR] Gemini 추출 결과:', result);
+      return {
+        orderNumber: (result.orderNumber || '').replace(/\-/g, ''),
+        ordererName: result.ordererName || result.receiverName || '',
+        receiverName: result.receiverName || '',
+        address: result.address || '',
+        phone: result.phone || '',
+      };
+    } catch (e) {
+      console.error('[OCR] Gemini 실패, Tesseract로 fallback:', e);
+    }
+  }
+
+  // Fallback: Tesseract
   try {
     const Tesseract = await import('tesseract.js');
-
-    console.log('[OCR] Tesseract 로드 완료, 이미지 분석 시작...');
+    console.log('[OCR] Tesseract fallback 시작...');
     const { data } = await Tesseract.recognize(base64Image, 'kor+eng');
-
     const text = data.text;
-    console.log('[OCR] 인식된 텍스트:', text);
-
     const lines = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
-
     const orderNumber = matchFirst(text, ORDER_NUM_PATTERNS).replace(/\-/g, '');
-
-    // 배송정보 블록에서 연락처/주소/받는사람 추출 (패턴 기반, 헤더 매칭 없음)
     const block = extractDeliveryBlock(lines);
-    const receiverName = block.receiverName;
-    const address = block.address;
-    const phone = block.phone;
-
-    const ordererName = matchFirst(text, ORDERER_PATTERNS) || receiverName;
-
-    console.log(`[OCR] 추출 결과 → 주문번호: ${orderNumber}, 받는사람: ${receiverName}, 주소: ${address}, 연락처: ${phone}`);
-
-    return { orderNumber, ordererName, receiverName, address, phone };
+    const ordererName = matchFirst(text, ORDERER_PATTERNS) || block.receiverName;
+    console.log(`[OCR] Tesseract 결과 → 주문번호: ${orderNumber}, 받는사람: ${block.receiverName}`);
+    return { orderNumber, ordererName, receiverName: block.receiverName, address: block.address, phone: block.phone };
   } catch (e) {
     console.error('[OCR] 이미지 분석 실패:', e);
     return { orderNumber: '', ordererName: '', receiverName: '', address: '', phone: '' };
