@@ -1100,8 +1100,9 @@ const App: React.FC = () => {
     const handleCopy = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key !== 'c') return;
       if (!cellSelection) return;
-      // 입력 중이면 기본 복사 동작 유지
-      if (document.activeElement?.tagName === 'INPUT') return;
+      const isMultiCell = cellSelection.startRow !== cellSelection.endRow || cellSelection.startCol !== cellSelection.endCol;
+      // 단일 셀이고 입력 중이면 기본 복사 동작 유지
+      if (!isMultiCell && document.activeElement?.tagName === 'INPUT') return;
 
       e.preventDefault();
       const minR = Math.min(cellSelection.startRow, cellSelection.endRow);
