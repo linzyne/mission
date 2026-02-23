@@ -1095,20 +1095,21 @@ const App: React.FC = () => {
     cellDragRef.current.active = false;
   };
 
-  // Ctrl+C: 선택된 셀 복사
+  // Ctrl+C / Cmd+C: 선택된 셀 복사
+  const cellSelectionRef = useRef(cellSelection);
+  cellSelectionRef.current = cellSelection;
   useEffect(() => {
-    const handleCopy = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.key !== 'c') return;
-      if (!cellSelection) return;
-      const isMultiCell = cellSelection.startRow !== cellSelection.endRow || cellSelection.startCol !== cellSelection.endCol;
-      // 단일 셀이고 입력 중이면 기본 복사 동작 유지
-      if (!isMultiCell && document.activeElement?.tagName === 'INPUT') return;
+    const handleCopy = (e: ClipboardEvent) => {
+      const sel = cellSelectionRef.current;
+      if (!sel) return;
+      const isMultiCell = sel.startRow !== sel.endRow || sel.startCol !== sel.endCol;
+      if (!isMultiCell) return; // 단일 셀은 기본 복사
 
       e.preventDefault();
-      const minR = Math.min(cellSelection.startRow, cellSelection.endRow);
-      const maxR = Math.max(cellSelection.startRow, cellSelection.endRow);
-      const minC = Math.min(cellSelection.startCol, cellSelection.endCol);
-      const maxC = Math.max(cellSelection.startCol, cellSelection.endCol);
+      const minR = Math.min(sel.startRow, sel.endRow);
+      const maxR = Math.max(sel.startRow, sel.endRow);
+      const minC = Math.min(sel.startCol, sel.endCol);
+      const maxC = Math.max(sel.startCol, sel.endCol);
 
       const rows: string[] = [];
       for (let r = minR; r <= maxR; r++) {
@@ -1119,11 +1120,11 @@ const App: React.FC = () => {
         }
         rows.push(cols.join('\t'));
       }
-      navigator.clipboard.writeText(rows.join('\n'));
+      e.clipboardData?.setData('text/plain', rows.join('\n'));
     };
-    document.addEventListener('keydown', handleCopy);
-    return () => document.removeEventListener('keydown', handleCopy);
-  }, [cellSelection]);
+    document.addEventListener('copy', handleCopy);
+    return () => document.removeEventListener('copy', handleCopy);
+  }, []);
 
   const downloadBeforeDepositCsv = async () => {
     const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
