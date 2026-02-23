@@ -2484,6 +2484,11 @@ const App: React.FC = () => {
                           )}
                         </div>
                         {selectedManualIds.size > 0 && (<>
+                          <button onClick={() => {
+                            const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                            const text = selected.map(e => `${e.name2 || ''}\t${e.orderNumber || ''}`).join('\n');
+                            navigator.clipboard.writeText(text).then(() => alert(`${selected.length}건 복사 완료`));
+                          }} className="px-5 py-2.5 bg-blue-100 text-blue-600 rounded-xl font-black text-xs hover:bg-blue-200 transition-colors">받는사람+주문번호 복사</button>
                           <button onClick={deleteSelectedManualEntries} className="px-5 py-2.5 bg-red-100 text-red-600 rounded-xl font-black text-xs hover:bg-red-200 transition-colors">삭제 ({selectedManualIds.size})</button>
                           <button
                             onClick={async () => {
