@@ -2465,9 +2465,36 @@ const App: React.FC = () => {
                 <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl animate-in slide-in-from-right-10 duration-500">
                   <div className="p-6 bg-white border-b sticky left-0 z-30 space-y-3">
                     <div className="flex justify-between items-center">
-                      <h2 className="text-xl font-black text-gray-900">구매목록</h2>
-                      <div className="flex gap-2">
-                        {/* ✅ 구매목록 검색 (변경 사항 7) */}
+                      <div className="flex gap-2 items-center">
+                        <h2 className="text-xl font-black text-gray-900">구매목록</h2>
+                        {selectedManualIds.size > 0 && (<>
+                          <button onClick={() => {
+                            const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                            const text = selected.map(e => `${e.name2 || ''}\t${e.orderNumber || ''}`).join('\n');
+                            navigator.clipboard.writeText(text).then(() => alert(`${selected.length}건 복사 완료`));
+                          }} className="px-4 py-2 bg-blue-100 text-blue-600 rounded-xl font-black text-xs hover:bg-blue-200 transition-colors">복사</button>
+                          <button onClick={handleReservationComplete} className="px-4 py-2 bg-pink-500 text-white rounded-xl font-black text-xs hover:bg-pink-600 transition-colors">
+                            예약완료
+                          </button>
+                          <button onClick={handleReservationCancel} className="px-4 py-2 bg-pink-100 text-pink-600 rounded-xl font-black text-xs hover:bg-pink-200 transition-colors">
+                            예약취소
+                          </button>
+                          <button onClick={downloadManualCsv} className="p-2 bg-green-100 rounded-xl hover:bg-green-200 transition-colors" title="엑셀 내보내기">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none">
+                              <rect x="3" y="2" width="18" height="20" rx="2" fill="#217346"/>
+                              <text x="12" y="15" textAnchor="middle" fill="white" fontSize="9" fontWeight="bold" fontFamily="Arial">X</text>
+                            </svg>
+                          </button>
+                          <button onClick={deleteSelectedManualEntries} className="px-4 py-2 bg-red-100 text-red-600 rounded-xl font-black text-xs hover:bg-red-200 transition-colors">삭제 ({selectedManualIds.size})</button>
+                        </>)}
+                        {undoStack.length > 0 && (
+                          <button onClick={handleUndo} className="p-2 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
+                        )}
+                        {redoStack.length > 0 && (
+                          <button onClick={handleRedo} className="p-2 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="다시실행"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg></button>
+                        )}
+                      </div>
+                      <div className="flex gap-2 items-center">
                         <div className="relative">
                           <input
                             type="text"
@@ -2483,49 +2510,32 @@ const App: React.FC = () => {
                             >✕</button>
                           )}
                         </div>
-                        {selectedManualIds.size > 0 && (<>
-                          <button onClick={() => {
-                            const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
-                            const text = selected.map(e => `${e.name2 || ''}\t${e.orderNumber || ''}`).join('\n');
-                            navigator.clipboard.writeText(text).then(() => alert(`${selected.length}건 복사 완료`));
-                          }} className="px-5 py-2.5 bg-blue-100 text-blue-600 rounded-xl font-black text-xs hover:bg-blue-200 transition-colors">받는사람+주문번호 복사</button>
-                          <button onClick={deleteSelectedManualEntries} className="px-5 py-2.5 bg-red-100 text-red-600 rounded-xl font-black text-xs hover:bg-red-200 transition-colors">삭제 ({selectedManualIds.size})</button>
-                          <button
-                            onClick={async () => {
-                              if (selectedManualIds.size === 0) return;
-                              if (!window.confirm(`${selectedManualIds.size}건의 계좌번호를 김성아 계좌로 변경하시겠습니까?`)) return;
-                              try {
-                                const batch = writeBatch(db);
-                                selectedManualIds.forEach(id => {
-                                  batch.update(doc(db, 'manualEntries', id), { accountNumber: '국민 228 002 04 129095 김성아' });
-                                });
-                                await batch.commit();
-                                alert('변경되었습니다.');
-                              } catch (e) {
-                                console.error(e);
-                                alert('오류가 발생했습니다: ' + e);
-                              }
-                            }}
-                            className="px-5 py-2.5 bg-purple-600 text-white rounded-xl font-black text-xs hover:bg-purple-700 transition-colors"
-                          >
-                            성아
-                          </button>
-                          <button onClick={handleReservationComplete} className="px-5 py-2.5 bg-pink-500 text-white rounded-xl font-black text-xs hover:bg-pink-600 transition-colors">
-                            예약완료
-                          </button>
-                          <button onClick={handleReservationCancel} className="px-5 py-2.5 bg-pink-100 text-pink-600 rounded-xl font-black text-xs hover:bg-pink-200 transition-colors">
-                            예약취소
-                          </button>
-                        </>)}
-                        <button onClick={downloadManualCsv} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="엑셀 내보내기"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></button>
-                        {undoStack.length > 0 && (
-                          <button onClick={handleUndo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
-                        )}
-                        {redoStack.length > 0 && (
-                          <button onClick={handleRedo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="다시실행"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg></button>
-                        )}
                         <button onClick={() => addMoreRows(10)} className="px-5 py-2.5 bg-black text-white rounded-xl font-black text-xs">+ 10줄 추가</button>
                         <button onClick={() => multiImageInputRef.current?.click()} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs hover:bg-blue-700 transition-colors">이미지 일괄등록</button>
+                        <button
+                          onClick={async () => {
+                            if (selectedManualIds.size === 0) {
+                              // 선택 없으면 전체에 대해 적용
+                              if (!window.confirm('선택된 항목이 없습니다. 계좌를 변경할 항목을 먼저 선택해주세요.')) return;
+                              return;
+                            }
+                            if (!window.confirm(`${selectedManualIds.size}건의 계좌번호를 김성아 계좌로 변경하시겠습니까?`)) return;
+                            try {
+                              const batch = writeBatch(db);
+                              selectedManualIds.forEach(id => {
+                                batch.update(doc(db, 'manualEntries', id), { accountNumber: '국민 228 002 04 129095 김성아' });
+                              });
+                              await batch.commit();
+                              alert('변경되었습니다.');
+                            } catch (e) {
+                              console.error(e);
+                              alert('오류가 발생했습니다: ' + e);
+                            }
+                          }}
+                          className="px-5 py-2.5 bg-purple-600 text-white rounded-xl font-black text-xs hover:bg-purple-700 transition-colors"
+                        >
+                          성아계좌
+                        </button>
                         <input ref={multiImageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleMultiImageUpload} />
                       </div>
                     </div>
