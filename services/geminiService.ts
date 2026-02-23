@@ -23,7 +23,7 @@ export const verifyImage = async (base64Image: string, type: 'purchase' | 'revie
 
   try {
     const response = await getAI()!.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-2.5-flash-lite',
       contents: {
         parts: [
           { inlineData: { mimeType: 'image/jpeg', data: base64Image.split(',')[1] || base64Image } },
@@ -180,7 +180,7 @@ export const extractOrderInfo = async (base64Image: string): Promise<OcrResult> 
     try {
       console.log('[OCR] Gemini Vision으로 이미지 분석 시작...');
       const response = await gemini.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-2.5-flash-lite',
         contents: {
           parts: [
             { inlineData: { mimeType: 'image/jpeg', data: base64Image.split(',')[1] || base64Image } },
