@@ -2512,6 +2512,43 @@ const App: React.FC = () => {
                         </div>
                         <button onClick={() => addMoreRows(10)} className="px-5 py-2.5 bg-black text-white rounded-xl font-black text-xs">+ 10줄 추가</button>
                         <button onClick={() => multiImageInputRef.current?.click()} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs hover:bg-blue-700 transition-colors">이미지 일괄등록</button>
+                        {selectedManualIds.size > 0 && (
+                          <button
+                            onClick={async () => {
+                              const XLSX = await import('xlsx');
+                              const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                              const headers = ['주문번호','보내는사람(지정)','전화번호1(지정)','전화번호2(지정)','우편번호(지정)','주소(지정)','받는사람','전화번호1','전화번호2','우편번호','주소','상품명1','상품상세1','수량(A타입)','배송메시지','운임구분','운임','운송장번호'];
+                              const rows = selected.map(e => [
+                                e.orderNumber || '',
+                                '안군농원',
+                                '01050447749',
+                                '',
+                                '',
+                                '인천시 연수구 송도동 214, D동 2206-1호',
+                                e.name2 || '',
+                                (e.emergencyContact || '').replace(/-/g, ''),
+                                '',
+                                '',
+                                e.address || '',
+                                '완구류',
+                                '',
+                                '',
+                                '',
+                                '',
+                                '',
+                                '',
+                              ]);
+                              const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+                              const wb = XLSX.utils.book_new();
+                              XLSX.utils.book_append_sheet(wb, ws, '롯데예약');
+                              const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+                              XLSX.writeFile(wb, `롯데예약_${today}.xlsx`);
+                            }}
+                            className="px-5 py-2.5 bg-red-600 text-white rounded-xl font-black text-xs hover:bg-red-700 transition-colors"
+                          >
+                            롯데예약
+                          </button>
+                        )}
                         <button
                           onClick={async () => {
                             if (selectedManualIds.size === 0) {
