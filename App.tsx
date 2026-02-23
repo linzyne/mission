@@ -1080,13 +1080,12 @@ const App: React.FC = () => {
 
   const handleCellMouseDown = (row: number, col: number) => {
     cellDragRef.current = { row, col, active: true };
-    setCellSelection(null);
+    setCellSelection({ startRow: row, startCol: col, endRow: row, endCol: col });
   };
 
   const handleCellMouseEnter = (row: number, col: number) => {
     if (!cellDragRef.current.active) return;
     const { row: startRow, col: startCol } = cellDragRef.current;
-    if (startRow === row && startCol === col) return;
     // 드래그 시작 → 입력 포커스 해제, 선택 범위 표시
     (document.activeElement as HTMLElement)?.blur();
     setCellSelection({ startRow, startCol, endRow: row, endCol: col });
