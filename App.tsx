@@ -439,13 +439,15 @@ const App: React.FC = () => {
 
   const [depositSearch, setDepositSearch] = useState('');
   const [debouncedDepositSearch, setDebouncedDepositSearch] = useState('');
-  const [sortConfig, setSortConfig] = useState<{ key: keyof ManualEntry; direction: 'asc' | 'desc' } | null>(null);
+  const [sortConfig, setSortConfig] = useState<{ key: keyof ManualEntry; direction: 'asc' | 'desc' } | null>({ key: 'date', direction: 'asc' });
 
   const composingRef = useRef(false);
   const [debouncedManualSearch, setDebouncedManualSearch] = useState('');
 
   // Date range for purchase list
-  const [manualViewDateStart, setManualViewDateStart] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [manualViewDateStart, setManualViewDateStart] = useState<string>(() => {
+    const d = new Date(); d.setDate(d.getDate() - 2); return d.toISOString().split('T')[0];
+  });
   const [manualViewDateEnd, setManualViewDateEnd] = useState<string>(new Date().toISOString().split('T')[0]);
 
   // Row drag selection
@@ -504,6 +506,11 @@ const App: React.FC = () => {
     const oldVal = entry[field];
     if (String(newVal) !== String(oldVal != null ? oldVal : '')) {
       updateManualEntry(entry.id, field, newVal);
+      // 값 변경 시 팝 효과
+      if (rawVal) {
+        e.target.classList.add('cell-pop');
+        setTimeout(() => e.target.classList.remove('cell-pop'), 300);
+      }
     }
   };
 
@@ -2990,19 +2997,33 @@ const App: React.FC = () => {
         .excel-input {
           width: 100%;
           height: 100%;
-          min-height: 20px;
-          padding: 1px 3px;
+          min-height: 22px;
+          padding: 2px 4px;
           border: 1px solid transparent;
           background: transparent;
           font-family: inherit;
-          font-size: 11px;
+          font-size: 12px;
           font-weight: 700;
           outline: none;
+          transition: all 0.2s ease;
         }
         .excel-input:focus {
-          background: white;
+          background: #fefff5;
           border-color: #0071E3;
-          box-shadow: 0 0 10px rgba(0,113,227,0.1);
+          box-shadow: 0 0 0 2px rgba(0,113,227,0.12), 0 1px 3px rgba(0,0,0,0.04);
+          transform: scaleY(1.03);
+        }
+        .excel-input:not(:placeholder-shown):not(:focus) {
+          background: rgba(0,113,227,0.015);
+        }
+        @keyframes cellPop {
+          0% { transform: scale(1); }
+          40% { transform: scale(1.08); }
+          70% { transform: scale(0.97); }
+          100% { transform: scale(1); }
+        }
+        .cell-pop {
+          animation: cellPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
