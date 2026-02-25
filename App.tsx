@@ -160,7 +160,7 @@ const App: React.FC = () => {
   const [salesMonth, setSalesMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() + 1 }; });
   const salesMonthStr = `${salesMonth.year}-${String(salesMonth.month).padStart(2, '0')}`;
   const salesFileRef = useRef<HTMLInputElement>(null);
-  const [salesSubTab, setSalesSubTab] = useState<SalesSubTab>('profitLoss');
+  const [salesSubTab, setSalesSubTab] = useState<SalesSubTab>('summary');
 
   // Firestore Sync: Daily Costs (손익표 비용 항목)
   const [dailyCosts, setDailyCosts] = useState<DailyCostItem[]>([]);
@@ -1797,10 +1797,10 @@ const App: React.FC = () => {
                       });
                       const allSelected = beforeItems.length > 0 && beforeItems.every(e => selectedDepositIds.has(e.id));
                       return (
-                        <table className="w-full text-center">
-                          <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase">
+                        <table className="w-full text-xs text-center">
+                          <thead className="bg-gray-100 text-gray-500 font-bold">
                             <tr>
-                              <th className="py-0.5 px-0.5 w-8">
+                              <th className="py-1.5 w-8">
                                 <input type="checkbox" className="w-3 h-3 accent-blue-600" checked={allSelected} onChange={() => {
                                   if (allSelected) {
                                     setSelectedDepositIds(new Set());
@@ -1809,56 +1809,37 @@ const App: React.FC = () => {
                                   }
                                 }} />
                               </th>
-                              <th className="py-1 px-1">날짜</th>
-                              <th className="py-1 px-1">이름1</th>
-                              <th className="py-1 px-1">이름2</th>
-                              <th className="py-1 px-1">주문번호</th>
-                              <th className="py-1 px-1">결제금액</th>
-                              <th className="py-1 px-1">계좌번호</th>
-                              <th className="py-0.5 px-0.5 w-14">해제</th>
+                              <th className="py-1.5 px-3">날짜</th>
+                              <th className="py-1.5 px-3">이름1</th>
+                              <th className="py-1.5 px-3">이름2</th>
+                              <th className="py-1.5 px-3">주문번호</th>
+                              <th className="py-1.5 px-3">결제금액</th>
+                              <th className="py-1.5 px-3">계좌번호</th>
+                              <th className="py-1.5 px-3 w-14">해제</th>
                             </tr>
                           </thead>
-                          <tbody className="text-[10px] font-bold divide-y divide-gray-100">
-                            {beforeItems.map((entry, idx) => (
+                          <tbody>
+                            {beforeItems.map((entry) => (
                               <tr key={entry.id}
-                                className={`transition-colors cursor-default ${selectedDepositIds.has(entry.id) ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
-                                onMouseDown={(e) => {
-                                  if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'BUTTON') return;
-                                  isDraggingRef.current = true;
-                                  dragStartIndexRef.current = idx;
-                                  const next = new Set(selectedDepositIds);
-                                  if (!e.shiftKey) next.clear();
-                                  next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
-                                  setSelectedDepositIds(next);
-                                }}
-                                onMouseEnter={() => {
-                                  if (!isDraggingRef.current) return;
-                                  const start = Math.min(dragStartIndexRef.current, idx);
-                                  const end = Math.max(dragStartIndexRef.current, idx);
-                                  const next = new Set<string>();
-                                  for (let i = start; i <= end; i++) {
-                                    if (beforeItems[i]) next.add(beforeItems[i].id);
-                                  }
-                                  setSelectedDepositIds(next);
-                                }}
+                                className={`border-t ${selectedDepositIds.has(entry.id) ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                               >
-                                <td className="py-0.5 px-1">
+                                <td className="py-1 px-3">
                                   <input type="checkbox" className="w-3 h-3 accent-blue-600" checked={selectedDepositIds.has(entry.id)} onChange={() => {
                                     const next = new Set(selectedDepositIds);
                                     next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
                                     setSelectedDepositIds(next);
                                   }} />
                                 </td>
-                                <td className="py-0.5 px-1">
+                                <td className="py-1 px-3">
                                   {entry.isManualCheck && <span className="inline-block px-1 rounded bg-orange-100 text-orange-600 text-[8px] font-black mr-0.5">수동</span>}
                                   {entry.date}
                                 </td>
-                                <td className="py-0.5 px-1">{entry.name1}</td>
-                                <td className="py-0.5 px-1">{entry.name2}</td>
-                                <td className="py-0.5 px-1 text-blue-600 font-black">{entry.orderNumber}</td>
-                                <td className="py-0.5 px-1">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
-                                <td className="py-0.5 px-1 text-blue-600">{entry.accountNumber}</td>
-                                <td className="py-0.5 px-1">
+                                <td className="py-1 px-3">{entry.name1}</td>
+                                <td className="py-1 px-3">{entry.name2}</td>
+                                <td className="py-1 px-3 text-blue-600 font-black">{entry.orderNumber}</td>
+                                <td className="py-1 px-3">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
+                                <td className="py-1 px-3 text-blue-600">{entry.accountNumber}</td>
+                                <td className="py-1 px-3">
                                   <button onClick={() => handleDepositRelease(entry.id, 'before')} className="px-1 py-0 bg-red-50 text-red-500 rounded text-[8px] font-black hover:bg-red-100 transition-all mr-0.5">해제</button>
                                   <button onClick={() => handleDepositDelete(entry.id)} className="px-1 py-0 bg-gray-100 text-gray-400 rounded text-[8px] font-black hover:bg-gray-200 transition-all">삭제</button>
                                 </td>
@@ -1897,11 +1878,11 @@ const App: React.FC = () => {
                       });
                       const allAfterSelected = afterItems.length > 0 && afterItems.every(e => selectedDepositIds.has(e.id));
                       return (
-                        <table className="w-full text-center">
-                          <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase">
+                        <table className="w-full text-xs text-center">
+                          <thead className="bg-gray-100 text-gray-500 font-bold">
                             <tr>
-                              <th className="p-2 w-10">
-                                <input type="checkbox" className="w-4 h-4 accent-green-600" checked={allAfterSelected} onChange={() => {
+                              <th className="py-1.5 w-10">
+                                <input type="checkbox" className="w-3 h-3 accent-green-600" checked={allAfterSelected} onChange={() => {
                                   if (allAfterSelected) {
                                     setSelectedDepositIds(new Set());
                                   } else {
@@ -1909,55 +1890,36 @@ const App: React.FC = () => {
                                   }
                                 }} />
                               </th>
-                              <th className="p-2">날짜</th>
-                              <th className="p-2 text-blue-600">입금날짜</th>
-                              <th className="p-2">이름1</th>
-                              <th className="p-2">이름2</th>
-                              <th className="p-2">주문번호</th>
-                              <th className="p-2">결제금액</th>
-                              <th className="p-2">계좌번호</th>
-                              <th className="p-2 w-16">해제</th>
+                              <th className="py-1.5 px-3">날짜</th>
+                              <th className="py-1.5 px-3 text-blue-600">입금날짜</th>
+                              <th className="py-1.5 px-3">이름1</th>
+                              <th className="py-1.5 px-3">이름2</th>
+                              <th className="py-1.5 px-3">주문번호</th>
+                              <th className="py-1.5 px-3">결제금액</th>
+                              <th className="py-1.5 px-3">계좌번호</th>
+                              <th className="py-1.5 px-3 w-16">해제</th>
                             </tr>
                           </thead>
-                          <tbody className="text-[11px] font-bold divide-y divide-gray-100">
-                            {afterItems.map((entry, idx) => (
+                          <tbody>
+                            {afterItems.map((entry) => (
                               <tr key={entry.id}
-                                className={`transition-colors cursor-default ${selectedDepositIds.has(entry.id) ? 'bg-red-50' : 'bg-green-50/30'}`}
-                                onMouseDown={(e) => {
-                                  if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'BUTTON') return;
-                                  isDraggingRef.current = true;
-                                  dragStartIndexRef.current = idx;
-                                  const next = new Set(selectedDepositIds);
-                                  if (!e.shiftKey) next.clear();
-                                  next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
-                                  setSelectedDepositIds(next);
-                                }}
-                                onMouseEnter={() => {
-                                  if (!isDraggingRef.current) return;
-                                  const start = Math.min(dragStartIndexRef.current, idx);
-                                  const end = Math.max(dragStartIndexRef.current, idx);
-                                  const next = new Set<string>();
-                                  for (let i = start; i <= end; i++) {
-                                    if (afterItems[i]) next.add(afterItems[i].id);
-                                  }
-                                  setSelectedDepositIds(next);
-                                }}
+                                className={`border-t ${selectedDepositIds.has(entry.id) ? 'bg-red-50' : 'bg-green-50/30'}`}
                               >
-                                <td className="p-1">
+                                <td className="py-1 px-3">
                                   <input type="checkbox" className="w-3 h-3 accent-green-600" checked={selectedDepositIds.has(entry.id)} onChange={() => {
                                     const next = new Set(selectedDepositIds);
                                     next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
                                     setSelectedDepositIds(next);
                                   }} />
                                 </td>
-                                <td className="p-1">{entry.date}</td>
-                                <td className="p-1 text-blue-600">{entry.depositDate || '-'}</td>
-                                <td className="p-1">{entry.name1}</td>
-                                <td className="p-1">{entry.name2}</td>
-                                <td className="p-1 text-blue-600 font-black">{entry.orderNumber}</td>
-                                <td className="p-1">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
-                                <td className="p-1 text-blue-600">{entry.accountNumber}</td>
-                                <td className="p-1">
+                                <td className="py-1 px-3">{entry.date}</td>
+                                <td className="py-1 px-3 text-blue-600">{entry.depositDate || '-'}</td>
+                                <td className="py-1 px-3">{entry.name1}</td>
+                                <td className="py-1 px-3">{entry.name2}</td>
+                                <td className="py-1 px-3 text-blue-600 font-black">{entry.orderNumber}</td>
+                                <td className="py-1 px-3">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
+                                <td className="py-1 px-3 text-blue-600">{entry.accountNumber}</td>
+                                <td className="py-1 px-3">
                                   <button onClick={() => handleDepositRelease(entry.id, 'after')} className="px-1.5 py-0.5 bg-red-50 text-red-500 rounded-lg text-[9px] font-black hover:bg-red-100 transition-all mr-0.5">해제</button>
                                   <button onClick={() => handleDepositDelete(entry.id)} className="px-1.5 py-0.5 bg-gray-100 text-gray-400 rounded-lg text-[9px] font-black hover:bg-gray-200 transition-all">삭제</button>
                                 </td>
@@ -1986,11 +1948,193 @@ const App: React.FC = () => {
                   </div>
                   {/* 서브 탭 */}
                   <div className="flex gap-2 mb-6">
+                    <button onClick={() => setSalesSubTab('summary')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'summary' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>요약</button>
                     <button onClick={() => setSalesSubTab('profitLoss')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'profitLoss' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>손익표</button>
                     <button onClick={() => setSalesSubTab('salesDetail')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'salesDetail' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>품목별판매</button>
                   </div>
 
-                  {salesSubTab === 'profitLoss' ? (
+                  {salesSubTab === 'summary' ? (() => {
+                    // 품목명 정규화: "은갈치 (1월)", "순살 갈치 (1월 합계)" → "은갈치", "순살 갈치"
+                    const normProduct = (name: string) => name.replace(/\s*\(.*?\)\s*$/, '').trim();
+
+                    // 모든 월 데이터 수집
+                    const monthSet = new Set<string>();
+                    salesDaily.forEach(e => {
+                      if (e.date) monthSet.add(e.date.substring(0, 7));
+                    });
+                    const months = Array.from(monthSet).sort();
+
+                    // 품목 목록 수집 (정규화된 이름)
+                    const productSet = new Set<string>();
+                    salesDaily.forEach(e => { if (e.product) productSet.add(normProduct(e.product)); });
+                    const products = Array.from(productSet).sort();
+
+                    // 월별 품목별 집계
+                    type MonthProduct = { supply: number; margin: number; qty: number; ad: number; hp: number; sol: number; net: number };
+                    const data: Record<string, Record<string, MonthProduct>> = {};
+                    const monthTotals: Record<string, MonthProduct> = {};
+
+                    months.forEach(m => {
+                      data[m] = {};
+                      monthTotals[m] = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, net: 0 };
+                    });
+
+                    salesDaily.forEach(e => {
+                      const m = e.date?.substring(0, 7);
+                      if (!m || !data[m]) return;
+                      const pName = normProduct(e.product);
+                      if (!data[m][pName]) data[m][pName] = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, net: 0 };
+                      const d = data[m][pName];
+                      d.supply += e.supplyPrice || 0;
+                      d.margin += e.totalMargin || 0;
+                      d.qty += e.quantity || 0;
+                      d.ad += e.adCost || 0;
+                      d.hp += e.housePurchase || 0;
+                      d.sol += e.solution || 0;
+                      d.net = d.margin + d.ad + d.hp + d.sol;
+
+                      const mt = monthTotals[m];
+                      mt.supply += e.supplyPrice || 0;
+                      mt.margin += e.totalMargin || 0;
+                      mt.qty += e.quantity || 0;
+                      mt.ad += e.adCost || 0;
+                      mt.hp += e.housePurchase || 0;
+                      mt.sol += e.solution || 0;
+                      mt.net = mt.margin + mt.ad + mt.hp + mt.sol;
+                    });
+
+                    const fmt = (n: number) => n ? n.toLocaleString() : '-';
+                    const fmtColor = (n: number) => n > 0 ? 'text-blue-600' : n < 0 ? 'text-red-500' : 'text-gray-300';
+
+                    // 월별 비용 집계
+                    const monthCosts: Record<string, number> = {};
+                    dailyCosts.forEach((c: DailyCostItem) => {
+                      const m = c.date?.substring(0, 7);
+                      if (m) monthCosts[m] = (monthCosts[m] || 0) + c.amount;
+                    });
+
+                    // 전체 합계
+                    const grandTotal = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, net: 0, cost: 0, profit: 0 };
+                    months.forEach(m => {
+                      grandTotal.supply += monthTotals[m].supply;
+                      grandTotal.margin += monthTotals[m].margin;
+                      grandTotal.qty += monthTotals[m].qty;
+                      grandTotal.ad += monthTotals[m].ad;
+                      grandTotal.hp += monthTotals[m].hp;
+                      grandTotal.sol += monthTotals[m].sol;
+                      grandTotal.cost += monthCosts[m] || 0;
+                    });
+                    grandTotal.net = grandTotal.margin + grandTotal.ad + grandTotal.hp + grandTotal.sol;
+                    grandTotal.profit = grandTotal.net - grandTotal.cost;
+
+                    return (
+                      <div className="space-y-6">
+                        {/* 월별 총 요약 카드 - 상반기/하반기 */}
+                        {(() => {
+                          const firstHalf = months.filter(m => parseInt(m.split('-')[1]) <= 6);
+                          const secondHalf = months.filter(m => parseInt(m.split('-')[1]) > 6);
+                          const renderCard = (m: string) => {
+                            const t = monthTotals[m];
+                            const cost = monthCosts[m] || 0;
+                            const profit = t.net - cost;
+                            return (
+                              <div key={m} className="border rounded-xl p-4 space-y-2">
+                                <div className="text-sm font-black text-gray-700">{parseInt(m.split('-')[1])}월</div>
+                                <div className={`text-xl font-black ${fmtColor(profit)}`}>{fmt(profit)}</div>
+                                <div className="text-[10px] text-gray-400 space-y-0.5">
+                                  <div className="flex justify-between"><span>순이익</span><span className={fmtColor(t.net)}>{fmt(t.net)}</span></div>
+                                  <div className="flex justify-between"><span>비용</span><span className={fmtColor(-cost)}>{cost ? `-${cost.toLocaleString()}` : '-'}</span></div>
+                                  <div className="flex justify-between border-t pt-0.5 mt-0.5"><span>마진</span><span className="text-gray-600">{fmt(t.margin)}</span></div>
+                                  <div className="flex justify-between"><span>광고비</span><span className={fmtColor(t.ad)}>{fmt(t.ad)}</span></div>
+                                  <div className="flex justify-between"><span>가구매</span><span className={fmtColor(t.hp)}>{fmt(t.hp)}</span></div>
+                                  <div className="flex justify-between"><span>슬롯</span><span className={fmtColor(t.sol)}>{fmt(t.sol)}</span></div>
+                                  <div className="flex justify-between border-t pt-0.5 mt-0.5"><span>수량</span><span className="text-gray-600">{t.qty.toLocaleString()}</span></div>
+                                </div>
+                              </div>
+                            );
+                          };
+                          return (
+                            <div className="space-y-2">
+                              {firstHalf.length > 0 && (
+                                <div>
+                                  <div className="text-[10px] text-gray-400 font-bold mb-1">상반기</div>
+                                  <div className="grid grid-cols-6 gap-2">{firstHalf.map(renderCard)}</div>
+                                </div>
+                              )}
+                              {secondHalf.length > 0 && (
+                                <div>
+                                  <div className="text-[10px] text-gray-400 font-bold mb-1">하반기</div>
+                                  <div className="grid grid-cols-6 gap-2">{secondHalf.map(renderCard)}</div>
+                                </div>
+                              )}
+                              {months.length > 1 && (
+                                <div className="border-2 border-gray-900 rounded-xl p-4 space-y-2">
+                                  <div className="text-sm font-black text-gray-900">전체 합계</div>
+                                  <div className={`text-xl font-black ${fmtColor(grandTotal.profit)}`}>{fmt(grandTotal.profit)}</div>
+                                  <div className="text-[10px] text-gray-400 space-y-0.5">
+                                    <div className="flex justify-between"><span>순이익</span><span className={fmtColor(grandTotal.net)}>{fmt(grandTotal.net)}</span></div>
+                                    <div className="flex justify-between"><span>비용</span><span className={fmtColor(-grandTotal.cost)}>{grandTotal.cost ? `-${grandTotal.cost.toLocaleString()}` : '-'}</span></div>
+                                    <div className="flex justify-between border-t pt-0.5 mt-0.5"><span>마진</span><span className="text-gray-600">{fmt(grandTotal.margin)}</span></div>
+                                    <div className="flex justify-between"><span>광고비</span><span className={fmtColor(grandTotal.ad)}>{fmt(grandTotal.ad)}</span></div>
+                                    <div className="flex justify-between"><span>가구매</span><span className={fmtColor(grandTotal.hp)}>{fmt(grandTotal.hp)}</span></div>
+                                    <div className="flex justify-between"><span>슬롯</span><span className={fmtColor(grandTotal.sol)}>{fmt(grandTotal.sol)}</span></div>
+                                    <div className="flex justify-between border-t pt-0.5 mt-0.5"><span>수량</span><span className="text-gray-600">{grandTotal.qty.toLocaleString()}</span></div>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        {/* 품목별 × 월별 매트릭스 (순이익만) */}
+                        <div>
+                          <table className="w-full border-collapse text-xs text-center">
+                            <thead className="bg-gray-100 text-gray-500 font-bold">
+                              <tr>
+                                <th className="py-1.5 px-3 text-left">품목</th>
+                                {months.map(m => (
+                                  <th key={m} className="py-1.5 px-3">{parseInt(m.split('-')[1])}월</th>
+                                ))}
+                                {months.length > 1 && <th className="py-1.5 px-3 bg-gray-200/50">합계</th>}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {products.map(product => {
+                                let totalNet = 0;
+                                months.forEach(m => {
+                                  const d = data[m][product];
+                                  if (d) { totalNet += d.net; }
+                                });
+                                if (totalNet === 0 && !months.some(m => data[m][product])) return null;
+                                return (
+                                  <tr key={product} className="border-t hover:bg-gray-50">
+                                    <td className="py-1 px-3 text-left font-bold whitespace-nowrap">{product}</td>
+                                    {months.map(m => {
+                                      const d = data[m][product];
+                                      return <td key={m} className={`py-1 px-3 font-bold ${fmtColor(d?.net || 0)}`}>{d ? fmt(d.net) : '-'}</td>;
+                                    })}
+                                    {months.length > 1 && (
+                                      <td className={`py-1 px-3 bg-gray-50 font-bold ${fmtColor(totalNet)}`}>{fmt(totalNet)}</td>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+                              {/* 합계 행 */}
+                              <tr className="font-black border-t-2 border-gray-900 bg-gray-50">
+                                <td className="py-1 px-3 text-left">합계</td>
+                                {months.map(m => (
+                                  <td key={m} className={`py-1 px-3 ${fmtColor(monthTotals[m].net)}`}>{fmt(monthTotals[m].net)}</td>
+                                ))}
+                                {months.length > 1 && (
+                                  <td className={`py-1 px-3 ${fmtColor(grandTotal.net)}`}>{fmt(grandTotal.net)}</td>
+                                )}
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })() : salesSubTab === 'profitLoss' ? (
                     /* ===== 손익표 ===== */
                     (() => {
                       const filtered = salesDaily.filter(e => e.date.startsWith(salesMonthStr));
@@ -2279,47 +2423,47 @@ const App: React.FC = () => {
                                     <table className="w-full text-xs text-center">
                                       <thead className="bg-gray-100 text-gray-500 font-bold">
                                         <tr>
-                                          <th className="py-2 w-6"></th>
-                                          <th className="py-2 px-3">날짜</th>
-                                          <th className="py-2 px-3">공급가</th>
-                                          <th className="py-2 px-3">마진</th>
-                                          <th className="py-2 px-3">수량</th>
-                                          <th className="py-2 px-3">광고비</th>
-                                          <th className="py-2 px-3">가구매</th>
-                                          <th className="py-2 px-3">솔룻</th>
+                                          <th className="py-1.5 w-6"></th>
+                                          <th className="py-1.5 px-3">날짜</th>
+                                          <th className="py-1.5 px-3">공급가</th>
+                                          <th className="py-1.5 px-3">마진</th>
+                                          <th className="py-1.5 px-3">수량</th>
+                                          <th className="py-1.5 px-3">광고비</th>
+                                          <th className="py-1.5 px-3">가구매</th>
+                                          <th className="py-1.5 px-3">솔룻</th>
                                         </tr>
                                       </thead>
                                       <tbody>
                                         {entries.map(entry => (
                                           <tr key={entry.id} className="border-t hover:bg-gray-50">
-                                            <td className="py-1.5 px-1">
+                                            <td className="py-1 px-1">
                                               <button onClick={() => handleSalesDeleteRow(entry)} className="text-red-300 hover:text-red-500 text-xs">&times;</button>
                                             </td>
-                                            <td className="py-1.5 px-3">
+                                            <td className="py-1 px-3">
                                               <input type="text" className="w-24 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-600"
                                                 defaultValue={entry.date} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => { const v = e.target.value; if (v !== entry.date) salesUpdate(entry.id, 'date', v); }} />
                                             </td>
-                                            <td className="py-1.5 px-3">
+                                            <td className="py-1 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.supplyPrice || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'supplyPrice', Number(e.target.value) || 0)} />
                                             </td>
-                                            <td className="py-1.5 px-3">
+                                            <td className="py-1 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.totalMargin || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'totalMargin', Number(e.target.value) || 0)} />
                                             </td>
-                                            <td className="py-1.5 px-3">
+                                            <td className="py-1 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.quantity || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'quantity', Number(e.target.value) || 0)} />
                                             </td>
-                                            <td className="py-1.5 px-3">
+                                            <td className="py-1 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.adCost || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'adCost', Number(e.target.value) || 0)} />
                                             </td>
-                                            <td className="py-1.5 px-3">
+                                            <td className="py-1 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.housePurchase || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
                                             </td>
-                                            <td className="py-1.5 px-3">
+                                            <td className="py-1 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.solution || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'solution', Number(e.target.value) || 0)} />
                                             </td>
@@ -2378,23 +2522,23 @@ const App: React.FC = () => {
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="w-full text-center">
-                      <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase">
+                    <table className="w-full text-xs text-center">
+                      <thead className="bg-gray-100 text-gray-500 font-bold">
                         <tr>
-                          <th className="p-4 rounded-tl-xl">No.</th>
-                          <th className="p-4 text-left">품목명</th>
-                          <th className="p-4">가격</th>
-                          <th className="p-4 text-gray-300">공급가</th>
-                          <th className="p-4 text-gray-300">판매가</th>
-                          <th className="p-4 text-gray-300">마진</th>
-                          <th className="p-4 rounded-tr-xl w-24">관리</th>
+                          <th className="py-1.5 px-3 rounded-tl-xl">No.</th>
+                          <th className="py-1.5 px-3 text-left">품목명</th>
+                          <th className="py-1.5 px-3">가격</th>
+                          <th className="py-1.5 px-3 text-gray-400">공급가</th>
+                          <th className="py-1.5 px-3 text-gray-400">판매가</th>
+                          <th className="py-1.5 px-3 text-gray-400">마진</th>
+                          <th className="py-1.5 px-3 rounded-tr-xl w-24">관리</th>
                         </tr>
                       </thead>
-                      <tbody className="text-sm font-bold divide-y divide-gray-100">
+                      <tbody className="font-bold divide-y divide-gray-100">
                         {productPrices.map((price, idx) => (
                           <tr key={price.id} className="hover:bg-gray-50 transition-colors">
-                            <td className="p-4 text-gray-300">{idx + 1}</td>
-                            <td className="p-4 text-left">
+                            <td className="py-1 px-3 text-gray-300">{idx + 1}</td>
+                            <td className="py-1 px-3 text-left">
                               <input
                                 type="text"
                                 value={price.name}
@@ -2402,7 +2546,7 @@ const App: React.FC = () => {
                                 className="w-full bg-transparent outline-none font-bold text-gray-900 border-b border-transparent focus:border-blue-500 transition-colors"
                               />
                             </td>
-                            <td className="p-4">
+                            <td className="py-1 px-3">
                               <input
                                 type="number"
                                 value={price.price}
@@ -2410,7 +2554,7 @@ const App: React.FC = () => {
                                 className="w-full bg-transparent outline-none text-blue-600 font-bold text-center border-b border-transparent focus:border-blue-500 transition-colors"
                               />
                             </td>
-                            <td className="p-4">
+                            <td className="py-1 px-3">
                               <input
                                 type="number"
                                 value={price.supplyPrice || ''}
@@ -2419,7 +2563,7 @@ const App: React.FC = () => {
                                 placeholder="-"
                               />
                             </td>
-                            <td className="p-4">
+                            <td className="py-1 px-3">
                               <input
                                 type="number"
                                 value={price.sellingPrice || ''}
@@ -2428,7 +2572,7 @@ const App: React.FC = () => {
                                 placeholder="-"
                               />
                             </td>
-                            <td className="p-4">
+                            <td className="py-1 px-3">
                               <input
                                 type="number"
                                 value={price.margin || ''}
@@ -2437,7 +2581,7 @@ const App: React.FC = () => {
                                 placeholder="-"
                               />
                             </td>
-                            <td className="p-4">
+                            <td className="py-1 px-3">
                               <button
                                 onClick={async () => {
                                   if (window.confirm("삭제하시겠습니까?")) {
@@ -2634,7 +2778,7 @@ const App: React.FC = () => {
                     <table className="excel-table w-full border-collapse min-w-[1100px] table-fixed text-center text-[12px]">
                       <thead className="sticky top-0 z-20">
                         <tr className="text-[10px] font-semibold text-black bg-white">
-                          <th className="py-0.5 px-0.5 w-8 sticky left-0 bg-white z-30 overflow-hidden">
+                          <th className="py-0 px-0.5 w-8 sticky left-0 bg-white z-30 overflow-hidden">
                             <input type="checkbox" className="w-3 h-3 accent-blue-600"
                               onChange={(e) => {
                                 if (e.target.checked) {
@@ -2644,12 +2788,9 @@ const App: React.FC = () => {
                                       if (entry.date < manualViewDateStart || entry.date > manualViewDateEnd) return false;
                                     }
                                     if (debouncedManualSearch) {
-                                      const q = debouncedManualSearch.toLowerCase();
-                                      return (entry.name1 || '').toLowerCase().includes(q)
-                                        || (entry.name2 || '').toLowerCase().includes(q)
-                                        || (entry.orderNumber || '').toLowerCase().includes(q)
-                                        || (entry.product || '').toLowerCase().includes(q)
-                                        || (entry.accountNumber || '').toLowerCase().includes(q);
+                                      const queries = debouncedManualSearch.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                                      const fields = [(entry.name1 || ''), (entry.name2 || ''), (entry.orderNumber || ''), (entry.product || ''), (entry.accountNumber || '')].map(f => f.toLowerCase());
+                                      return queries.some(q => fields.some(f => f.includes(q)));
                                     }
                                     return true;
                                   }).slice(0, 200).map(e => e.id);
@@ -2660,22 +2801,22 @@ const App: React.FC = () => {
                               }}
                             />
                           </th>
-                          <th className="py-0.5 px-0.5 w-8 overflow-hidden" style={{ border: '1px solid #000' }}>사진</th>
-                          <th className="py-0.5 px-0.5 w-7 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('id')}>순번 {sortConfig?.key === 'id' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-8 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('count')}>갯수 {sortConfig?.key === 'count' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-16 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('product')}>품목 {sortConfig?.key === 'product' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-20 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('date')}>날짜 {sortConfig?.key === 'date' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-14 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('name1')}>이름1 {sortConfig?.key === 'name1' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-14 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('name2')}>받는사람 {sortConfig?.key === 'name2' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-20 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('orderNumber')}>주문번호 {sortConfig?.key === 'orderNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-16 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('address')}>받는주소 {sortConfig?.key === 'address' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-14 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('memo')}>비고 {sortConfig?.key === 'memo' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-14 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('paymentAmount')}>결제금액 {sortConfig?.key === 'paymentAmount' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-16 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('emergencyContact')}>연락처 {sortConfig?.key === 'emergencyContact' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-28 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('accountNumber')}>계좌번호 {sortConfig?.key === 'accountNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-20 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('trackingNumber')}>송장번호 {sortConfig?.key === 'trackingNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
-                          <th className="py-0.5 px-0.5 w-8 overflow-hidden text-blue-600">입금전</th>
-                          <th className="py-0.5 px-0.5 w-8 overflow-hidden text-green-600">입금후</th>
+                          <th className="py-0 px-0.5 w-8 overflow-hidden" style={{ border: '1px solid #000' }}>사진</th>
+                          <th className="py-0 px-0.5 w-7 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('id')}>순번 {sortConfig?.key === 'id' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-8 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('count')}>갯수 {sortConfig?.key === 'count' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-16 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('product')}>품목 {sortConfig?.key === 'product' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-20 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('date')}>날짜 {sortConfig?.key === 'date' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-14 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('name1')}>이름1 {sortConfig?.key === 'name1' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-14 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('name2')}>받는사람 {sortConfig?.key === 'name2' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-20 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('orderNumber')}>주문번호 {sortConfig?.key === 'orderNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-16 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('address')}>받는주소 {sortConfig?.key === 'address' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-14 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('memo')}>비고 {sortConfig?.key === 'memo' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-14 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('paymentAmount')}>결제금액 {sortConfig?.key === 'paymentAmount' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-16 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('emergencyContact')}>연락처 {sortConfig?.key === 'emergencyContact' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-28 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('accountNumber')}>계좌번호 {sortConfig?.key === 'accountNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-20 overflow-hidden cursor-pointer hover:bg-gray-200" onClick={() => handleSort('trackingNumber')}>송장번호 {sortConfig?.key === 'trackingNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</th>
+                          <th className="py-0 px-0.5 w-8 overflow-hidden text-blue-600">입금전</th>
+                          <th className="py-0 px-0.5 w-8 overflow-hidden text-green-600">입금후</th>
                         </tr>
                       </thead>
                       <tbody className="text-[12px]">
@@ -2692,12 +2833,9 @@ const App: React.FC = () => {
                             if (debouncedManualSearch) {
                               if (entry.date < limitDateStr) return false;
 
-                              const q = debouncedManualSearch.toLowerCase();
-                              return String(entry.name1 || '').toLowerCase().includes(q)
-                                || String(entry.name2 || '').toLowerCase().includes(q)
-                                || String(entry.orderNumber || '').toLowerCase().includes(q)
-                                || String(entry.product || '').toLowerCase().includes(q)
-                                || String(entry.accountNumber || '').toLowerCase().includes(q);
+                              const queries = debouncedManualSearch.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
+                              const fields = [String(entry.name1 || ''), String(entry.name2 || ''), String(entry.orderNumber || ''), String(entry.product || ''), String(entry.accountNumber || '')].map(f => f.toLowerCase());
+                              return queries.some(q => fields.some(f => f.includes(q)));
                             }
 
                             // 일반 조회 시: 날짜 범위로 필터링
@@ -2736,14 +2874,29 @@ const App: React.FC = () => {
                                   style={textStyle}
                                   className={`group hover:bg-blue-50/20 transition-colors ${isBlue ? 'bg-blue-50/30' : ''}`}
                                 >
-                                  <td className="p-0 border border-gray-200 text-center sticky left-0 bg-white z-20">
-                                    <input type="checkbox" className="w-3 h-3 accent-blue-600"
+                                  <td className="p-0 border border-gray-200 text-center sticky left-0 bg-white z-20 select-none cursor-pointer"
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      isDraggingRef.current = true;
+                                      dragStartIndexRef.current = idx;
+                                      const next = new Set(selectedManualIds);
+                                      next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
+                                      setSelectedManualIds(next);
+                                    }}
+                                    onMouseEnter={() => {
+                                      if (!isDraggingRef.current) return;
+                                      const start = Math.min(dragStartIndexRef.current, idx);
+                                      const end = Math.max(dragStartIndexRef.current, idx);
+                                      const next = new Set(selectedManualIds);
+                                      for (let i = start; i <= end; i++) {
+                                        if (limited[i]) next.add(limited[i].id);
+                                      }
+                                      setSelectedManualIds(next);
+                                    }}
+                                  >
+                                    <input type="checkbox" className="w-3 h-3 accent-blue-600 pointer-events-none"
                                       checked={selectedManualIds.has(entry.id)}
-                                      onChange={() => {
-                                        const next = new Set(selectedManualIds);
-                                        next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
-                                        setSelectedManualIds(next);
-                                      }}
+                                      readOnly
                                     />
                                   </td>
                                   <td className="p-0.5 border border-gray-200"
@@ -2787,7 +2940,7 @@ const App: React.FC = () => {
                                   </td>
                                   <td className="p-0 border border-gray-200"><input data-row={idx} data-col={2} type="date" className={`excel-input px-1 ${rowColor}`} value={entry.date} onChange={e => updateManualEntry(entry.id, 'date', e.target.value)} /></td>
                                   <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.name1)} data-row={idx} data-col={3} defaultValue={entry.name1} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name1', idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'name1')} /></td>
-                                  <td className={`p-0 border border-gray-200 ${isPink ? 'bg-pink-100' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'text-pink-600 font-black' : rowColor}`} placeholder="받는사람" onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
+                                  <td className={`p-0 border border-gray-200 ${isPink ? 'bg-white' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'font-black' : rowColor}`} style={isPink ? { color: '#ff4da6' } : undefined} placeholder="받는사람" onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
                                   <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
                                   <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.address)} data-row={idx} data-col={6} defaultValue={entry.address} onKeyDown={(e) => handleCellKeyDown(e, entry, 'address', idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'address')} /></td>
                                   <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.memo)} data-row={idx} data-col={7} defaultValue={entry.memo} onKeyDown={(e) => handleCellKeyDown(e, entry, 'memo', idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'memo')} /></td>
@@ -2993,8 +3146,9 @@ const App: React.FC = () => {
         .excel-input {
           width: 100%;
           height: 100%;
-          min-height: 18px;
-          padding: 1px 3px;
+          min-height: 14px;
+          padding: 0px 2px;
+          line-height: 1.2;
           border: 1px solid transparent;
           background: transparent;
           font-family: inherit;

@@ -124,7 +124,7 @@ export interface DailyCostItem {
   amount: number;
 }
 
-export type SalesSubTab = 'profitLoss' | 'salesDetail';
+export type SalesSubTab = 'summary' | 'profitLoss' | 'salesDetail';
 
 export interface ProductPrice {
   id: string;

@@ -30,7 +30,7 @@ function excelDateToJSDate(serial) {
 }
 
 async function importExcel() {
-    let filePath = join(process.cwd(), '통합 문서1.xlsx');
+    let filePath = join(process.cwd(), '통합 문서2.xlsx');
 
     // Fallback search
     if (!existsSync(filePath)) {
@@ -66,11 +66,11 @@ async function importExcel() {
                 date: typeof row['날짜'] === 'number' ? excelDateToJSDate(row['날짜']) : (row['날짜'] || ''),
                 name1: row['이름1'] || '',
                 name2: row['이름2 주문자명'] || '',
-                orderNumber: row['주문번호'] || '',
+                orderNumber: String(row['주문번호'] || ''),
                 address: row['주소'] || '',
                 memo: row['비고'] || '',
                 paymentAmount: row['결제금액'] || 0,
-                emergencyContact: row['비상연락망'] || '',
+                emergencyContact: String(row['비상연락망'] || ''),
                 accountNumber: row['계좌번호'] || '',
                 beforeDeposit: !!row['입금전'],
                 afterDeposit: row['입금완료'] === '완료',
