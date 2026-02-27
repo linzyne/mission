@@ -2881,7 +2881,7 @@ const App: React.FC = () => {
                               return (
                                 <tr key={entry.id}
                                   style={textStyle}
-                                  className={`group hover:bg-blue-50/20 transition-colors ${isBlue ? 'bg-blue-50/30' : ''}`}
+                                  className={`group hover:bg-blue-100 transition-colors ${isBlue ? 'bg-blue-50/30' : ''}`}
                                 >
                                   <td className="p-0 border border-gray-200 text-center sticky left-0 bg-white z-20 select-none cursor-pointer"
                                     onMouseDown={(e) => {
