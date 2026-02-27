@@ -2877,11 +2877,11 @@ const App: React.FC = () => {
                               const isBlue = entry.afterDeposit;
                               const rowColor = isBlue ? 'text-blue-600' : '';
                               const isPink = entry.reservationComplete;
-                              const textStyle = entry.textColor ? { color: entry.textColor } : {};
+                              const textStyle = isBlue ? { color: '#2563eb' } : entry.textColor ? { color: entry.textColor } : {};
                               return (
                                 <tr key={entry.id}
                                   style={textStyle}
-                                  className={`group hover:bg-blue-100 transition-colors ${isBlue ? 'bg-blue-50/30' : ''}`}
+                                  className={`group hover:bg-blue-100 transition-colors ${isBlue ? 'bg-blue-50/40' : ''}`}
                                 >
                                   <td className="p-0 border border-gray-200 text-center sticky left-0 bg-white z-20 select-none cursor-pointer"
                                     onMouseDown={(e) => {
