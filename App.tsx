@@ -451,7 +451,7 @@ const App: React.FC = () => {
   const [cellSelection, setCellSelection] = useState<{startRow: number, startCol: number, endRow: number, endCol: number} | null>(null);
 
   // Resizable column widths for purchase list
-  const DEFAULT_COL_WIDTHS: Record<string, number> = { photo: 32, id: 28, count: 32, product: 64, date: 120, name1: 56, name2: 56, orderNumber: 80, address: 64, memo: 56, paymentAmount: 56, emergencyContact: 64, accountNumber: 112, trackingNumber: 80, beforeDeposit: 32, afterDeposit: 32 };
+  const DEFAULT_COL_WIDTHS: Record<string, number> = { photo: 32, id: 28, count: 32, product: 64, date: 64, name1: 56, name2: 56, orderNumber: 80, address: 64, memo: 56, paymentAmount: 56, emergencyContact: 64, accountNumber: 112, trackingNumber: 80, beforeDeposit: 32, afterDeposit: 32 };
   const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
     try { const s = localStorage.getItem('manualColWidths'); return s ? { ...DEFAULT_COL_WIDTHS, ...JSON.parse(s) } : { ...DEFAULT_COL_WIDTHS }; } catch { return { ...DEFAULT_COL_WIDTHS }; }
   });
@@ -2950,7 +2950,7 @@ const App: React.FC = () => {
                                       ))}
                                     </select>
                                   </td>
-                                  <td className="p-0 border border-gray-200"><input data-row={idx} data-col={2} type="date" className={`excel-input px-1 ${rowColor}`} value={entry.date} onChange={e => updateManualEntry(entry.id, 'date', e.target.value)} /></td>
+                                  <td className="p-0 border border-gray-200"><input ref={(el) => { if (el && document.activeElement !== el) { el.type = 'text'; el.value = entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''; }}} data-row={idx} data-col={2} className={`excel-input px-1 text-center ${rowColor}`} onFocus={(e) => { e.target.type = 'date'; e.target.value = entry.date || ''; }} onBlur={(e) => { if (e.target.value && e.target.value !== entry.date) updateManualEntry(entry.id, 'date', e.target.value); e.target.type = 'text'; e.target.value = entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''; }} onChange={(e) => { if (e.target.type === 'date' && e.target.value) updateManualEntry(entry.id, 'date', e.target.value); }} /></td>
                                   <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.name1)} data-row={idx} data-col={3} defaultValue={entry.name1} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name1', idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'name1')} /></td>
                                   <td className={`p-0 border border-gray-200 ${isPink ? 'bg-white' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'font-black' : rowColor}`} style={isPink ? { color: '#ff4da6' } : undefined} placeholder="받는사람" onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
                                   <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
