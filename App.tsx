@@ -2787,7 +2787,7 @@ const App: React.FC = () => {
                     <table className="excel-table w-full border-collapse md:min-w-[1100px] table-fixed text-center text-[12px]">
                       <thead className="sticky top-0 z-20">
                         <tr className="text-[10px] font-semibold text-black bg-white">
-                          <th className="py-0 px-0.5 w-8 sticky left-0 bg-white z-30 overflow-hidden hidden md:table-cell">
+                          <th className="py-0 px-0.5 w-8 sticky left-0 bg-white z-30 overflow-hidden">
                             <input type="checkbox" className="w-3 h-3 accent-blue-600"
                               onChange={(e) => {
                                 if (e.target.checked) {
@@ -2883,7 +2883,7 @@ const App: React.FC = () => {
                                   style={textStyle}
                                   className={`group hover:bg-blue-50/20 transition-colors ${isBlue ? 'bg-blue-50/30' : ''}`}
                                 >
-                                  <td className="p-0 border border-gray-200 text-center sticky left-0 bg-white z-20 select-none cursor-pointer hidden md:table-cell"
+                                  <td className="p-0 border border-gray-200 text-center sticky left-0 bg-white z-20 select-none cursor-pointer"
                                     onMouseDown={(e) => {
                                       e.preventDefault();
                                       isDraggingRef.current = true;
