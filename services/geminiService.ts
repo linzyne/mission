@@ -247,6 +247,59 @@ export const extractOrderInfo = async (base64Image: string): Promise<OcrResult> 
   }
 };
 
+export interface ExpenseResult {
+  date: string;
+  amount: number;
+  description: string;
+}
+
+export const extractExpenseInfo = async (base64Image: string): Promise<ExpenseResult[]> => {
+  const gemini = getAI();
+  if (!gemini) return [];
+
+  try {
+    const response = await gemini.models.generateContent({
+      model: 'gemini-2.5-flash-lite',
+      contents: {
+        parts: [
+          { inlineData: { mimeType: 'image/jpeg', data: base64Image.split(',')[1] || base64Image } },
+          { text: `이 은행 이체/송금 내역 스크린샷에서 다음 정보를 추출해줘.
+여러 건이 있으면 모두 추출해.
+
+추출할 항목:
+- date: 이체 날짜 (YYYY-MM-DD 형식)
+- amount: 이체 금액 (숫자만, 원 단위)
+- description: 적요/메모/받는분에게 표시 내용 (이체 시 입력한 내용)
+
+JSON 배열로 반환해.` }
+        ]
+      },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              date: { type: Type.STRING },
+              amount: { type: Type.NUMBER },
+              description: { type: Type.STRING },
+            },
+            required: ["date", "amount", "description"]
+          }
+        }
+      }
+    });
+
+    const text = response.text || "[]";
+    const result = JSON.parse(text);
+    return Array.isArray(result) ? result : [result];
+  } catch (e) {
+    console.error('[비용 인식] Gemini 실패:', e);
+    return [];
+  }
+};
+
 export const extractOrderNumber = async (base64Image: string): Promise<string> => {
   const result = await extractOrderInfo(base64Image);
   return result.orderNumber || '';

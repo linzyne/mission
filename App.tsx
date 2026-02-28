@@ -354,6 +354,47 @@ const App: React.FC = () => {
     await setDoc(doc(db, 'dailyMemos', date), { memo });
   };
 
+  const expenseCostInputRef = useRef<HTMLInputElement>(null);
+  const [expenseUploading, setExpenseUploading] = useState(false);
+  const [pendingExpenses, setPendingExpenses] = useState<{date: string; name: string; amount: number; originalDesc: string}[] | null>(null);
+
+  const handleExpenseScreenshot = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setExpenseUploading(true);
+    try {
+      const base64 = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(file);
+      });
+      const { extractExpenseInfo } = await import('./services/geminiService');
+      const results = await extractExpenseInfo(base64);
+      if (!results || results.length === 0) { alert('이체 내역을 인식하지 못했습니다.'); return; }
+      const pending = results.map(item => {
+        const matchedCategory = costCategories.find(cat => item.description.includes(cat));
+        return { date: item.date, name: matchedCategory || item.description, amount: item.amount, originalDesc: item.description };
+      });
+      setPendingExpenses(pending);
+    } catch (err) {
+      console.error(err);
+      alert('비용 인식 중 오류가 발생했습니다.');
+    } finally {
+      setExpenseUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleConfirmExpenses = async () => {
+    if (!pendingExpenses) return;
+    for (const item of pendingExpenses) {
+      if (!costCategories.includes(item.name)) addCostCategory(item.name);
+      await addDoc(collection(db, 'dailyCosts'), { date: item.date, name: item.name, amount: item.amount });
+    }
+    alert(`${pendingExpenses.length}건의 비용이 등록되었습니다.`);
+    setPendingExpenses(null);
+  };
+
   const handleSalesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -451,7 +492,7 @@ const App: React.FC = () => {
   const [cellSelection, setCellSelection] = useState<{startRow: number, startCol: number, endRow: number, endCol: number} | null>(null);
 
   // Resizable column widths for purchase list
-  const DEFAULT_COL_WIDTHS: Record<string, number> = { photo: 32, id: 28, count: 32, product: 64, date: 64, name1: 56, name2: 56, orderNumber: 80, address: 64, memo: 56, paymentAmount: 56, emergencyContact: 64, accountNumber: 112, trackingNumber: 80, beforeDeposit: 32, afterDeposit: 32 };
+  const DEFAULT_COL_WIDTHS: Record<string, number> = { photo: 32, id: 28, count: 32, product: 64, date: 52, name1: 56, name2: 56, orderNumber: 80, address: 64, memo: 56, paymentAmount: 56, emergencyContact: 64, accountNumber: 112, trackingNumber: 80, beforeDeposit: 32, afterDeposit: 32 };
   const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
     try { const s = localStorage.getItem('manualColWidths'); return s ? { ...DEFAULT_COL_WIDTHS, ...JSON.parse(s) } : { ...DEFAULT_COL_WIDTHS }; } catch { return { ...DEFAULT_COL_WIDTHS }; }
   });
@@ -1529,13 +1570,30 @@ const App: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-10">
-              <div className="flex gap-4 border-b border-gray-100 pb-2">
-                <button onClick={() => setAdminTab('dashboard')} className={`pb-2 px-6 text-sm font-black transition-all ${adminTab === 'dashboard' ? 'border-b-4 border-blue-600 text-blue-600' : 'text-gray-400'}`}>미션 설정</button>
-                <button onClick={() => setAdminTab('manual')} className={`pb-2 px-6 text-sm font-black transition-all ${adminTab === 'manual' ? 'border-b-4 border-blue-600 text-blue-600' : 'text-gray-400'}`}>구매목록</button>
-                <button onClick={() => setAdminTab('reviewComplete')} className={`pb-2 px-6 text-sm font-black transition-all ${adminTab === 'reviewComplete' ? 'border-b-4 border-orange-500 text-orange-500' : 'text-gray-400'}`}>후기목록</button>
-                <button onClick={() => setAdminTab('productPrices')} className={`pb-2 px-6 text-sm font-black transition-all ${adminTab === 'productPrices' ? 'border-b-4 border-blue-600 text-blue-600' : 'text-gray-400'}`}>품목금액</button>
-                <button onClick={() => setAdminTab('deposit')} className={`pb-2 px-6 text-sm font-black transition-all ${adminTab === 'deposit' ? 'border-b-4 border-blue-600 text-blue-600' : 'text-gray-400'}`}>입금 관리</button>
-                <button onClick={() => setAdminTab('sales')} className={`pb-2 px-6 text-sm font-black transition-all ${adminTab === 'sales' ? 'border-b-4 border-green-600 text-green-600' : 'text-gray-400'}`}>매출현황</button>
+              <div className="flex gap-1.5 overflow-x-auto scrollbar-hide pb-3 px-1">
+                {([
+                  { key: 'dashboard', label: '설정', icon: '~', color: 'blue' },
+                  { key: 'manual', label: '구매', icon: '~', color: 'blue' },
+                  { key: 'reviewComplete', label: '후기', icon: '~', color: 'orange' },
+                  { key: 'productPrices', label: '품목', icon: '~', color: 'blue' },
+                  { key: 'deposit', label: '입금', icon: '~', color: 'blue' },
+                  { key: 'sales', label: '매출', icon: '~', color: 'green' },
+                ] as { key: typeof adminTab; label: string; icon: string; color: string }[]).map(tab => (
+                  <button key={tab.key} onClick={() => setAdminTab(tab.key)}
+                    className={`flex-shrink-0 px-4 py-2 rounded-2xl text-xs font-black transition-all ${
+                      adminTab === tab.key
+                        ? tab.color === 'orange' ? 'bg-orange-500 text-white shadow-md shadow-orange-200'
+                        : tab.color === 'green' ? 'bg-green-600 text-white shadow-md shadow-green-200'
+                        : 'bg-blue-600 text-white shadow-md shadow-blue-200'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`}
+                  >{tab.label}</button>
+                ))}
+                <button onClick={() => expenseCostInputRef.current?.click()} disabled={expenseUploading}
+                  className="flex-shrink-0 px-4 py-2 rounded-2xl text-xs font-black bg-orange-100 text-orange-600 hover:bg-orange-200 transition-all disabled:opacity-50">
+                  {expenseUploading ? '...' : '비용'}
+                </button>
+                <input ref={expenseCostInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleExpenseScreenshot} />
               </div>
 
               {adminTab === 'dashboard' ? (
@@ -3215,6 +3273,77 @@ const App: React.FC = () => {
         table tbody tr { user-select: none; -webkit-user-select: none; }
         table tbody tr input, table tbody tr button { user-select: auto; -webkit-user-select: auto; }
       `}</style>
+
+      {/* 비용 확인 모달 */}
+      {pendingExpenses && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setPendingExpenses(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100">
+              <h3 className="text-lg font-bold text-gray-800">비용 확인</h3>
+              <p className="text-xs text-gray-500 mt-1">인식된 {pendingExpenses.length}건을 확인 후 저장하세요</p>
+            </div>
+            <div className="p-4 space-y-3">
+              {pendingExpenses.map((item, idx) => (
+                <div key={idx} className="bg-gray-50 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-400">#{idx + 1}</span>
+                    <button onClick={() => setPendingExpenses(prev => prev!.filter((_, i) => i !== idx))}
+                      className="text-red-400 hover:text-red-600 text-sm font-bold">삭제</button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500 w-10 flex-shrink-0">날짜</label>
+                    <input type="date" value={item.date}
+                      onChange={e => setPendingExpenses(prev => prev!.map((p, i) => i === idx ? { ...p, date: e.target.value } : p))}
+                      className="flex-1 text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:border-blue-400 outline-none" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500 w-10 flex-shrink-0">항목</label>
+                    <select value={costCategories.includes(item.name) ? item.name : '__custom__'}
+                      onChange={e => {
+                        if (e.target.value === '__add__') {
+                          const name = prompt('새 카테고리 이름:');
+                          if (name && name.trim()) {
+                            addCostCategory(name.trim());
+                            setPendingExpenses(prev => prev!.map((p, i) => i === idx ? { ...p, name: name.trim() } : p));
+                          }
+                        } else if (e.target.value !== '__custom__') {
+                          setPendingExpenses(prev => prev!.map((p, i) => i === idx ? { ...p, name: e.target.value } : p));
+                        }
+                      }}
+                      className="flex-1 text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:border-blue-400 outline-none">
+                      {costCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                      {!costCategories.includes(item.name) && <option value="__custom__">{item.name}</option>}
+                      <option value="__add__">+ 새 항목 추가...</option>
+                    </select>
+                  </div>
+                  {item.originalDesc !== item.name && (
+                    <p className="text-[10px] text-gray-400 pl-12">원본: {item.originalDesc}</p>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-500 w-10 flex-shrink-0">금액</label>
+                    <input type="number" value={item.amount}
+                      onChange={e => setPendingExpenses(prev => prev!.map((p, i) => i === idx ? { ...p, amount: Number(e.target.value) } : p))}
+                      className="flex-1 text-sm border border-gray-200 rounded-lg px-2 py-1.5 text-right font-bold focus:border-blue-400 outline-none" />
+                    <span className="text-xs text-gray-400">원</span>
+                  </div>
+                </div>
+              ))}
+              {pendingExpenses.length === 0 && (
+                <p className="text-center text-gray-400 text-sm py-4">모든 항목이 삭제되었습니다</p>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-100 flex gap-2">
+              <button onClick={() => setPendingExpenses(null)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 transition-colors">취소</button>
+              <button onClick={handleConfirmExpenses} disabled={pendingExpenses.length === 0}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 disabled:opacity-40 transition-colors">
+                {pendingExpenses.length}건 저장
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
