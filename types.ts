@@ -49,6 +49,7 @@ export interface ManualEntry {
   isManualCheck?: boolean;
   reservationComplete?: boolean;
   textColor?: string;
+  rowBgColor?: string;
   createdAt?: number;
 }
 

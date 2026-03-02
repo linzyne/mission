@@ -485,10 +485,35 @@ const App: React.FC = () => {
     const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0];
   });
 
+  // Color picker state (폰트색 / 행색상)
+  const [colorPicker, setColorPicker] = useState<{ type: 'text' | 'bg'; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!colorPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('.color-picker-popup')) setColorPicker(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [colorPicker]);
+
+  const handleColorSelect = async (color: string) => {
+    if (!colorPicker || selectedManualIds.size === 0) return;
+    const field = colorPicker.type === 'text' ? 'textColor' : 'rowBgColor';
+    const batch = writeBatch(db);
+    selectedManualIds.forEach(id => {
+      batch.update(doc(db, 'manualEntries', id), { [field]: color });
+    });
+    await batch.commit();
+    setColorPicker(null);
+  };
+
   // Row drag selection
   const isDraggingRef = useRef(false);
   const dragStartIndexRef = useRef<number>(-1);
   const dragModeRef = useRef<'add' | 'remove'>('add');
+  const dragStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const dragActivatedRef = useRef(false);
 
   // Cell drag selection (Excel-like)
   const [cellSelection, setCellSelection] = useState<{startRow: number, startCol: number, endRow: number, endCol: number} | null>(null);
@@ -755,6 +780,54 @@ const App: React.FC = () => {
         console.error("Delete Error:", e);
         alert("삭제 중 오류가 발생했습니다: " + e);
       }
+    }
+  };
+
+  const deleteEmptyRows = async () => {
+    // 현재 화면에 보이는 행 중 빈행만 찾기
+    const visible = manualEntries.filter(entry => {
+      if (!entry) return false;
+      if (manualViewDateStart !== 'all') {
+        if (entry.date < manualViewDateStart || entry.date > manualViewDateEnd) return false;
+      }
+      if (debouncedManualSearch) {
+        const queries = debouncedManualSearch.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+        const fields = [(entry.name1 || ''), (entry.name2 || ''), (entry.orderNumber || ''), (entry.product || ''), (entry.accountNumber || '')].map(f => f.toLowerCase());
+        if (!queries.some(q => fields.some(f => f.includes(q)))) return false;
+      }
+      return true;
+    });
+
+    const emptyRows = visible.filter(e =>
+      !e.product && !e.name1 && !e.name2 && !e.orderNumber && !e.address &&
+      !e.memo && !e.accountNumber && !e.trackingNumber && !e.emergencyContact &&
+      !e.proofImage && (e.paymentAmount || 0) === 0
+    );
+
+    if (emptyRows.length === 0) {
+      alert('빈 행이 없습니다.');
+      return;
+    }
+    if (!window.confirm(`현재 화면의 빈 행 ${emptyRows.length}개를 삭제하시겠습니까?`)) return;
+
+    try {
+      pushUndo({
+        type: 'delete',
+        entries: emptyRows.map(e => ({ id: e.id, data: { ...e } })),
+        description: `빈 행 ${emptyRows.length}개 삭제`
+      });
+
+      const batch = writeBatch(db);
+      emptyRows.forEach(e => batch.delete(doc(db, 'manualEntries', e.id)));
+      await batch.commit();
+      setSelectedManualIds(prev => {
+        const next = new Set(prev);
+        emptyRows.forEach(e => next.delete(e.id));
+        return next;
+      });
+    } catch (err) {
+      console.error('빈행 삭제 오류:', err);
+      alert('삭제 중 오류: ' + err);
     }
   };
 
@@ -2699,99 +2772,74 @@ const App: React.FC = () => {
                 </section>
               ) : (
                 <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl animate-in slide-in-from-right-10 duration-500">
-                  <div className="p-6 bg-white border-b sticky left-0 z-30 space-y-3">
-                    <div className="flex justify-between items-center">
-                      <div className="hidden md:flex gap-2 items-center">
-                        <h2 className="text-xl font-black text-gray-900">구매목록</h2>
-                        {selectedManualIds.size > 0 && (<>
-                          <button onClick={() => {
-                            const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
-                            const text = selected.map(e => `${e.name2 || ''}\t${e.orderNumber || ''}`).join('\n');
-                            navigator.clipboard.writeText(text).then(() => alert(`${selected.length}건 복사 완료`));
-                          }} className="px-4 py-2 bg-blue-100 text-blue-600 rounded-xl font-black text-xs hover:bg-blue-200 transition-colors">복사</button>
-                          <button onClick={handleReservationComplete} className="px-4 py-2 bg-pink-500 text-white rounded-xl font-black text-xs hover:bg-pink-600 transition-colors">
-                            예약완료
-                          </button>
-                          <button onClick={handleReservationCancel} className="px-4 py-2 bg-pink-100 text-pink-600 rounded-xl font-black text-xs hover:bg-pink-200 transition-colors">
-                            예약취소
-                          </button>
-                          <button onClick={downloadManualCsv} className="p-2 bg-green-100 rounded-xl hover:bg-green-200 transition-colors" title="엑셀 내보내기">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none">
-                              <rect x="3" y="2" width="18" height="20" rx="2" fill="#217346"/>
-                              <text x="12" y="15" textAnchor="middle" fill="white" fontSize="9" fontWeight="bold" fontFamily="Arial">X</text>
-                            </svg>
-                          </button>
-                          <button onClick={deleteSelectedManualEntries} className="px-4 py-2 bg-red-100 text-red-600 rounded-xl font-black text-xs hover:bg-red-200 transition-colors">삭제 ({selectedManualIds.size})</button>
-                        </>)}
-                        {undoStack.length > 0 && (
-                          <button onClick={handleUndo} className="p-2 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
-                        )}
-                        {redoStack.length > 0 && (
-                          <button onClick={handleRedo} className="p-2 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="다시실행"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg></button>
+                  <div className="p-4 md:px-6 bg-white border-b sticky left-0 z-30 space-y-2">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <h2 className="hidden md:block text-xl font-black text-gray-900">구매목록</h2>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="검색 (이름, 주문번호...)"
+                          className={`pl-3 pr-8 py-2 rounded-xl text-sm font-black outline-none border-2 w-48 transition-all duration-200 ${manualSearch ? 'bg-yellow-50 border-yellow-400' : 'bg-white border-gray-300'}`}
+                          value={manualSearch}
+                          onChange={e => setManualSearch(e.target.value)}
+                        />
+                        {manualSearch && (
+                          <button
+                            onClick={() => { setManualSearch(''); setDebouncedManualSearch(''); }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-gray-300 hover:bg-red-400 text-white text-[10px] font-black transition-colors"
+                          >✕</button>
                         )}
                       </div>
-                      <div className="flex gap-2 items-center flex-wrap">
-                        <div className="relative">
-                          <input
-                            type="text"
-                            placeholder="검색 (이름, 주문번호...)"
-                            className={`pl-3 pr-8 py-2.5 rounded-xl text-sm font-black outline-none border-2 w-56 transition-all duration-200 ${manualSearch ? 'bg-yellow-50 border-yellow-400 scale-[1.02] shadow-lg shadow-yellow-200/50' : 'bg-white border-blue-400 shadow-md shadow-blue-100/50'}`}
-                            value={manualSearch}
-                            onChange={e => setManualSearch(e.target.value)}
-                          />
-                          {manualSearch && (
-                            <button
-                              onClick={() => { setManualSearch(''); setDebouncedManualSearch(''); }}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-gray-300 hover:bg-red-400 text-white text-[10px] font-black transition-colors"
-                            >✕</button>
-                          )}
-                        </div>
-                        <button onClick={() => addMoreRows(10)} className="hidden md:block px-5 py-2.5 bg-black text-white rounded-xl font-black text-xs">+ 10줄 추가</button>
-                        <button onClick={() => multiImageInputRef.current?.click()} className="hidden md:block px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black text-xs hover:bg-blue-700 transition-colors">이미지 일괄등록</button>
-                        {selectedManualIds.size > 0 && (
-                          <button
-                            onClick={async () => {
-                              const XLSX = await import('xlsx');
-                              const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
-                              const headers = ['주문번호','보내는사람(지정)','전화번호1(지정)','전화번호2(지정)','우편번호(지정)','주소(지정)','받는사람','전화번호1','전화번호2','우편번호','주소','상품명1','상품상세1','수량(A타입)','배송메시지','운임구분','운임','운송장번호'];
-                              const rows = selected.map(e => [
-                                e.orderNumber || '',
-                                '안군농원',
-                                '01050447749',
-                                '',
-                                '',
-                                '인천시 연수구 송도동 214, D동 2206-1호',
-                                e.name2 || '',
-                                (e.emergencyContact || '').replace(/-/g, ''),
-                                '',
-                                '',
-                                e.address || '',
-                                '완구류',
-                                '',
-                                '',
-                                '',
-                                '',
-                                '',
-                                '',
-                              ]);
-                              const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-                              const wb = XLSX.utils.book_new();
-                              XLSX.utils.book_append_sheet(wb, ws, '롯데예약');
-                              const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-                              XLSX.writeFile(wb, `롯데예약_${today}.xlsx`);
-                            }}
-                            className="hidden md:block px-5 py-2.5 bg-red-600 text-white rounded-xl font-black text-xs hover:bg-red-700 transition-colors"
-                          >
-                            롯데예약
-                          </button>
+                      <div className="hidden md:flex gap-1.5 items-center">
+                        <button onClick={() => addMoreRows(10)} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg font-bold text-[11px]">+10줄</button>
+                        <button onClick={deleteEmptyRows} className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg font-bold text-[11px] hover:bg-gray-200">빈행삭제</button>
+                        <button onClick={() => multiImageInputRef.current?.click()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-bold text-[11px] hover:bg-blue-700">이미지등록</button>
+                        <input ref={multiImageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleMultiImageUpload} />
+                      </div>
+                      <div className="hidden md:flex gap-1 items-center ml-auto">
+                        {undoStack.length > 0 && (
+                          <button onClick={handleUndo} className="p-1.5 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
                         )}
+                        {redoStack.length > 0 && (
+                          <button onClick={handleRedo} className="p-1.5 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200" title="다시실행"><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg></button>
+                        )}
+                      </div>
+                    </div>
+                    <div className={`hidden md:flex gap-1.5 items-center rounded-xl px-3 py-1.5 border ${selectedManualIds.size > 0 ? 'bg-blue-50 border-blue-200' : 'bg-transparent border-transparent pointer-events-none invisible'}`}>
+                        <span className="text-[11px] font-black text-blue-600 mr-1">{selectedManualIds.size > 0 ? `${selectedManualIds.size}개 선택` : '\u00A0'}</span>
+                        <button onClick={() => {
+                          const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                          const text = selected.map(e => `${e.name2 || ''}\t${e.orderNumber || ''}`).join('\n');
+                          navigator.clipboard.writeText(text).then(() => alert(`${selected.length}건 복사 완료`));
+                        }} className="px-2.5 py-1 bg-white text-blue-600 rounded-lg font-bold text-[11px] hover:bg-blue-100 border border-blue-200">복사</button>
+                        <button onClick={handleReservationComplete} className="px-2.5 py-1 bg-pink-500 text-white rounded-lg font-bold text-[11px] hover:bg-pink-600">예약완료</button>
+                        <button onClick={handleReservationCancel} className="px-2.5 py-1 bg-white text-pink-500 rounded-lg font-bold text-[11px] hover:bg-pink-50 border border-pink-200">예약취소</button>
+                        <button onClick={downloadManualCsv} className="px-2.5 py-1 bg-white text-green-600 rounded-lg font-bold text-[11px] hover:bg-green-50 border border-green-200">엑셀</button>
+                        <button onClick={deleteSelectedManualEntries} className="px-2.5 py-1 bg-white text-red-500 rounded-lg font-bold text-[11px] hover:bg-red-50 border border-red-200">삭제</button>
+                        <span className="w-px h-4 bg-blue-200 mx-0.5"></span>
+                        <button onClick={(e) => { e.stopPropagation(); setColorPicker({ type: 'text', x: e.clientX, y: e.clientY }); }} className="px-2.5 py-1 bg-white text-purple-600 rounded-lg font-bold text-[11px] hover:bg-purple-50 border border-purple-200">폰트색</button>
+                        <button onClick={(e) => { e.stopPropagation(); setColorPicker({ type: 'bg', x: e.clientX, y: e.clientY }); }} className="px-2.5 py-1 bg-white text-yellow-700 rounded-lg font-bold text-[11px] hover:bg-yellow-50 border border-yellow-200">행색상</button>
+                        <span className="w-px h-4 bg-blue-200 mx-0.5"></span>
                         <button
                           onClick={async () => {
-                            if (selectedManualIds.size === 0) {
-                              // 선택 없으면 전체에 대해 적용
-                              if (!window.confirm('선택된 항목이 없습니다. 계좌를 변경할 항목을 먼저 선택해주세요.')) return;
-                              return;
-                            }
+                            const XLSX = await import('xlsx');
+                            const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                            const headers = ['주문번호','보내는사람(지정)','전화번호1(지정)','전화번호2(지정)','우편번호(지정)','주소(지정)','받는사람','전화번호1','전화번호2','우편번호','주소','상품명1','상품상세1','수량(A타입)','배송메시지','운임구분','운임','운송장번호'];
+                            const rows = selected.map(e => [
+                              e.orderNumber || '', '안군농원', '01050447749', '', '',
+                              '인천시 연수구 송도동 214, D동 2206-1호',
+                              e.name2 || '', (e.emergencyContact || '').replace(/-/g, ''),
+                              '', '', e.address || '', '완구류', '', '', '', '', '', '',
+                            ]);
+                            const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+                            const wb = XLSX.utils.book_new();
+                            XLSX.utils.book_append_sheet(wb, ws, '롯데예약');
+                            XLSX.writeFile(wb, `롯데예약_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.xlsx`);
+                          }}
+                          className="px-2.5 py-1 bg-red-500 text-white rounded-lg font-bold text-[11px] hover:bg-red-600"
+                        >롯데예약</button>
+                        <button
+                          onClick={async () => {
                             if (!window.confirm(`${selectedManualIds.size}건의 계좌번호를 김성아 계좌로 변경하시겠습니까?`)) return;
                             try {
                               const batch = writeBatch(db);
@@ -2800,18 +2848,12 @@ const App: React.FC = () => {
                               });
                               await batch.commit();
                               alert('변경되었습니다.');
-                            } catch (e) {
-                              console.error(e);
-                              alert('오류가 발생했습니다: ' + e);
-                            }
+                            } catch (e) { console.error(e); alert('오류: ' + e); }
                           }}
-                          className="px-5 py-2.5 bg-purple-600 text-white rounded-xl font-black text-xs hover:bg-purple-700 transition-colors"
-                        >
-                          성아계좌
-                        </button>
-                        <input ref={multiImageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleMultiImageUpload} />
+                          className="px-2.5 py-1 bg-purple-500 text-white rounded-lg font-bold text-[11px] hover:bg-purple-600"
+                        >성아계좌</button>
+                        <button onClick={() => setSelectedManualIds(new Set())} className="ml-auto px-2 py-1 text-gray-400 hover:text-gray-600 text-[11px]">✕ 해제</button>
                       </div>
-                    </div>
                     <div>
                       {renderDateRangePicker(
                         manualViewDateStart, manualViewDateEnd,
@@ -2828,6 +2870,44 @@ const App: React.FC = () => {
                   {selectedManualIds.size > 0 && (
                     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-blue-600 text-white px-5 py-2.5 rounded-full shadow-lg shadow-blue-600/30 text-sm font-bold animate-bounce-in pointer-events-none">
                       {selectedManualIds.size}개 선택됨
+                    </div>
+                  )}
+                  {colorPicker && (
+                    <div className="color-picker-popup fixed z-[9999] bg-white rounded-2xl shadow-2xl border border-gray-200 p-3" style={{ left: Math.min(colorPicker.x, window.innerWidth - 220), top: colorPicker.y + 8 }}>
+                      <div className="text-[11px] font-bold text-gray-500 mb-2">{colorPicker.type === 'text' ? '폰트 색상' : '행 배경색'}</div>
+                      <div className="flex gap-2 flex-wrap" style={{ maxWidth: 200 }}>
+                        {(colorPicker.type === 'text'
+                          ? [
+                              { name: '검정', value: '#000000' },
+                              { name: '빨강', value: '#ef4444' },
+                              { name: '파랑', value: '#3b82f6' },
+                              { name: '초록', value: '#22c55e' },
+                              { name: '보라', value: '#a855f7' },
+                              { name: '주황', value: '#f97316' },
+                              { name: '분홍', value: '#ec4899' },
+                              { name: '회색', value: '#6b7280' },
+                            ]
+                          : [
+                              { name: '없음', value: '' },
+                              { name: '연노랑', value: '#fef9c3' },
+                              { name: '연분홍', value: '#fce7f3' },
+                              { name: '연초록', value: '#dcfce7' },
+                              { name: '연파랑', value: '#dbeafe' },
+                              { name: '연보라', value: '#f3e8ff' },
+                              { name: '연주황', value: '#ffedd5' },
+                            ]
+                        ).map(c => (
+                          <button
+                            key={c.name}
+                            title={c.name}
+                            onClick={() => handleColorSelect(c.value)}
+                            className="w-7 h-7 rounded-lg border-2 border-gray-200 hover:border-gray-400 hover:scale-110 transition-all flex items-center justify-center text-[9px]"
+                            style={{ backgroundColor: c.value || '#fff' }}
+                          >
+                            {!c.value && '✕'}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                   <div className="overflow-auto relative scrollbar-hide" style={{ maxHeight: 'calc(100vh - 220px)' }}
@@ -2957,14 +3037,23 @@ const App: React.FC = () => {
                                     onMouseDown={(e) => {
                                       e.preventDefault();
                                       isDraggingRef.current = true;
+                                      dragActivatedRef.current = false;
+                                      dragStartPosRef.current = { x: e.clientX, y: e.clientY };
                                       dragStartIndexRef.current = idx;
                                       dragModeRef.current = selectedManualIds.has(entry.id) ? 'remove' : 'add';
                                       const next = new Set(selectedManualIds);
                                       dragModeRef.current === 'remove' ? next.delete(entry.id) : next.add(entry.id);
                                       setSelectedManualIds(next);
                                     }}
-                                    onMouseEnter={() => {
+                                    onMouseEnter={(e) => {
                                       if (!isDraggingRef.current) return;
+                                      if (!dragActivatedRef.current && dragStartPosRef.current) {
+                                        const dx = e.clientX - dragStartPosRef.current.x;
+                                        const dy = e.clientY - dragStartPosRef.current.y;
+                                        if (dx * dx + dy * dy < 25) return;
+                                        dragActivatedRef.current = true;
+                                      }
+                                      if (!dragActivatedRef.current) return;
                                       const start = Math.min(dragStartIndexRef.current, idx);
                                       const end = Math.max(dragStartIndexRef.current, idx);
                                       const next = new Set(selectedManualIds);
@@ -3020,7 +3109,7 @@ const App: React.FC = () => {
                                       ))}
                                     </select>
                                   </td>
-                                  <td className="p-0 border border-gray-200"><input ref={(el) => { if (el && document.activeElement !== el) { el.type = 'text'; el.value = entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''; }}} data-row={idx} data-col={2} className={`excel-input px-1 text-center ${rowColor}`} onFocus={(e) => { e.target.type = 'date'; e.target.value = entry.date || ''; }} onBlur={(e) => { if (e.target.value && e.target.value !== entry.date) updateManualEntry(entry.id, 'date', e.target.value); e.target.type = 'text'; e.target.value = entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''; }} onChange={(e) => { if (e.target.type === 'date' && e.target.value) updateManualEntry(entry.id, 'date', e.target.value); }} /></td>
+                                  <td className="p-0 border border-gray-200"><input ref={(el) => { if (el && document.activeElement !== el) { el.type = 'text'; el.value = entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''; }}} data-row={idx} data-col={2} className={`excel-input px-1 text-center ${rowColor}`} onFocus={(e) => { e.target.type = 'date'; e.target.value = entry.date || ''; }} onBlur={(e) => { if (e.target.value && e.target.value !== entry.date) updateManualEntry(entry.id, 'date', e.target.value); e.target.type = 'text'; e.target.value = entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''; }} onChange={(e) => { if (e.target.type === 'date' && e.target.value && e.target.value !== entry.date) { updateManualEntry(entry.id, 'date', e.target.value); e.target.blur(); }}} /></td>
                                   <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.name1)} data-row={idx} data-col={3} defaultValue={entry.name1} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name1', idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'name1')} /></td>
                                   <td className={`p-0 border border-gray-200 ${isPink ? 'bg-white' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'font-black' : rowColor}`} style={isPink ? { color: '#ff4da6' } : undefined} placeholder="받는사람" onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
                                   <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
