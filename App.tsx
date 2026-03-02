@@ -162,15 +162,18 @@ const App: React.FC = () => {
   const salesFileRef = useRef<HTMLInputElement>(null);
   const [salesSubTab, setSalesSubTab] = useState<SalesSubTab>('summary');
 
-  // Auto-sync: 구매목록 변경 → 매출현황 가구매 자동 반영
+  // Auto-sync: 구매목록 변경 → 매출현황 가구매 자동 반영 (3월부터만)
   const hpSyncTimeout = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
     clearTimeout(hpSyncTimeout.current);
     hpSyncTimeout.current = setTimeout(async () => {
-      // 품목+날짜별 구매목록 수량 집계
+      const AUTO_SYNC_FROM = '2026-03';
+
+      // 품목+날짜별 구매목록 수량 집계 (3월 이후만)
       const hpMap = new Map<string, { product: string; date: string; count: number }>();
       manualEntries.forEach(e => {
         if (!e.product || !e.date) return;
+        if (e.date < AUTO_SYNC_FROM) return;
         const key = `${e.product}\t${e.date}`;
         const cur = hpMap.get(key);
         if (cur) cur.count++;
@@ -200,7 +203,6 @@ const App: React.FC = () => {
             hasChanges = true;
           }
         } else if (hp !== 0) {
-          // 행이 없으면 자동 생성
           const docId = `${date}_${product}`;
           batch.set(doc(db, 'salesDaily', docId), {
             date, product, productDetail: '', quantity: 0, sellingPrice: 0,
@@ -211,9 +213,9 @@ const App: React.FC = () => {
         }
       });
 
-      // 구매목록에서 제거된 항목: 가구매 0으로 리셋
+      // 3월 이후 데이터만: 구매목록에서 제거된 항목 가구매 리셋
       salesDaily.forEach(e => {
-        if (e.housePurchase !== 0) {
+        if (e.housePurchase !== 0 && e.date >= AUTO_SYNC_FROM) {
           const key = `${e.product}\t${e.date}`;
           if (!processedKeys.has(key)) {
             batch.update(doc(db, 'salesDaily', e.id), { housePurchase: 0 });
