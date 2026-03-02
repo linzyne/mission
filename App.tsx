@@ -138,7 +138,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const q = query(collection(db, 'productPrices'));
     const unsub = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProductPrice));
+      const list = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProductPrice));
       setProductPrices(list);
     });
     return () => unsub();
@@ -161,6 +161,71 @@ const App: React.FC = () => {
   const salesMonthStr = `${salesMonth.year}-${String(salesMonth.month).padStart(2, '0')}`;
   const salesFileRef = useRef<HTMLInputElement>(null);
   const [salesSubTab, setSalesSubTab] = useState<SalesSubTab>('summary');
+
+  // Auto-sync: 구매목록 변경 → 매출현황 가구매 자동 반영
+  const hpSyncTimeout = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    clearTimeout(hpSyncTimeout.current);
+    hpSyncTimeout.current = setTimeout(async () => {
+      // 품목+날짜별 구매목록 수량 집계
+      const hpMap = new Map<string, { product: string; date: string; count: number }>();
+      manualEntries.forEach(e => {
+        if (!e.product || !e.date) return;
+        const key = `${e.product}\t${e.date}`;
+        const cur = hpMap.get(key);
+        if (cur) cur.count++;
+        else hpMap.set(key, { product: e.product, date: e.date, count: 1 });
+      });
+
+      const batch = writeBatch(db);
+      let hasChanges = false;
+      const processedKeys = new Set<string>();
+
+      // 구매목록에 있는 품목+날짜: 가구매 계산 후 salesDaily에 반영
+      hpMap.forEach(({ product, date, count }) => {
+        const pp = productPrices.find(p => p.name === product);
+        const sellingPrice = pp?.sellingPrice || pp?.price || 0;
+        let hp = 0;
+        if (sellingPrice > 0) {
+          const unitCost = Math.round(sellingPrice * 0.88 - 1000 - 2300);
+          hp = -(count * unitCost);
+        }
+        const key = `${product}\t${date}`;
+        processedKeys.add(key);
+
+        const existing = salesDaily.find(e => e.product === product && e.date === date);
+        if (existing) {
+          if (existing.housePurchase !== hp) {
+            batch.update(doc(db, 'salesDaily', existing.id), { housePurchase: hp });
+            hasChanges = true;
+          }
+        } else if (hp !== 0) {
+          // 행이 없으면 자동 생성
+          const docId = `${date}_${product}`;
+          batch.set(doc(db, 'salesDaily', docId), {
+            date, product, productDetail: '', quantity: 0, sellingPrice: 0,
+            supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0,
+            housePurchase: hp, solution: 0
+          });
+          hasChanges = true;
+        }
+      });
+
+      // 구매목록에서 제거된 항목: 가구매 0으로 리셋
+      salesDaily.forEach(e => {
+        if (e.housePurchase !== 0) {
+          const key = `${e.product}\t${e.date}`;
+          if (!processedKeys.has(key)) {
+            batch.update(doc(db, 'salesDaily', e.id), { housePurchase: 0 });
+            hasChanges = true;
+          }
+        }
+      });
+
+      if (hasChanges) await batch.commit();
+    }, 500);
+    return () => clearTimeout(hpSyncTimeout.current);
+  }, [manualEntries, productPrices, salesDaily]);
 
   // Firestore Sync: Daily Costs (손익표 비용 항목)
   const [dailyCosts, setDailyCosts] = useState<DailyCostItem[]>([]);
@@ -2595,7 +2660,7 @@ const App: React.FC = () => {
                     <button
                       onClick={async () => {
                         if (!newProductPrice.name || !newProductPrice.price) return alert("품목명과 가격을 입력해주세요.");
-                        await addDoc(collection(db, 'productPrices'), { ...newProductPrice, id: Date.now().toString() });
+                        await addDoc(collection(db, 'productPrices'), { name: newProductPrice.name, price: newProductPrice.price });
                         setNewProductPrice({ name: '', price: 0 });
                       }}
                       className="px-6 py-3 bg-blue-600 text-white rounded-xl text-sm font-black hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
@@ -2624,24 +2689,30 @@ const App: React.FC = () => {
                             <td className="py-1 px-3 text-left">
                               <input
                                 type="text"
-                                value={price.name}
-                                onChange={(e) => updateDoc(doc(db, 'productPrices', price.id), { name: e.target.value })}
+                                defaultValue={price.name}
+                                key={`name-${price.id}-${price.name}`}
+                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                onBlur={(e) => { if (e.target.value !== price.name) updateDoc(doc(db, 'productPrices', price.id), { name: e.target.value }); }}
                                 className="w-full bg-transparent outline-none font-bold text-gray-900 border-b border-transparent focus:border-blue-500 transition-colors"
                               />
                             </td>
                             <td className="py-1 px-3">
                               <input
                                 type="number"
-                                value={price.price}
-                                onChange={(e) => updateDoc(doc(db, 'productPrices', price.id), { price: Number(e.target.value) })}
+                                defaultValue={price.price || ''}
+                                key={`price-${price.id}-${price.price}`}
+                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                onBlur={(e) => updateDoc(doc(db, 'productPrices', price.id), { price: Number(e.target.value) || 0 })}
                                 className="w-full bg-transparent outline-none text-blue-600 font-bold text-center border-b border-transparent focus:border-blue-500 transition-colors"
                               />
                             </td>
                             <td className="py-1 px-3">
                               <input
                                 type="number"
-                                value={price.supplyPrice || ''}
-                                onChange={(e) => updateDoc(doc(db, 'productPrices', price.id), { supplyPrice: Number(e.target.value) })}
+                                defaultValue={price.supplyPrice || ''}
+                                key={`supply-${price.id}-${price.supplyPrice}`}
+                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                onBlur={(e) => updateDoc(doc(db, 'productPrices', price.id), { supplyPrice: Number(e.target.value) || 0 })}
                                 className="w-full bg-transparent outline-none text-gray-400 font-normal text-center border-b border-transparent focus:border-gray-400 transition-colors"
                                 placeholder="-"
                               />
@@ -2649,8 +2720,10 @@ const App: React.FC = () => {
                             <td className="py-1 px-3">
                               <input
                                 type="number"
-                                value={price.sellingPrice || ''}
-                                onChange={(e) => updateDoc(doc(db, 'productPrices', price.id), { sellingPrice: Number(e.target.value) })}
+                                defaultValue={price.sellingPrice || ''}
+                                key={`selling-${price.id}-${price.sellingPrice}`}
+                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                onBlur={(e) => updateDoc(doc(db, 'productPrices', price.id), { sellingPrice: Number(e.target.value) || 0 })}
                                 className="w-full bg-transparent outline-none text-gray-400 font-normal text-center border-b border-transparent focus:border-gray-400 transition-colors"
                                 placeholder="-"
                               />
@@ -2658,8 +2731,10 @@ const App: React.FC = () => {
                             <td className="py-1 px-3">
                               <input
                                 type="number"
-                                value={price.margin || ''}
-                                onChange={(e) => updateDoc(doc(db, 'productPrices', price.id), { margin: Number(e.target.value) })}
+                                defaultValue={price.margin || ''}
+                                key={`margin-${price.id}-${price.margin}`}
+                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                onBlur={(e) => updateDoc(doc(db, 'productPrices', price.id), { margin: Number(e.target.value) || 0 })}
                                 className="w-full bg-transparent outline-none text-gray-400 font-normal text-center border-b border-transparent focus:border-gray-400 transition-colors"
                                 placeholder="-"
                               />
