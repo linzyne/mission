@@ -579,11 +579,25 @@ const App: React.FC = () => {
   };
 
   // Commit cell value on blur (only if changed)
+  const parseDateInput = (raw: string): string => {
+    const s = raw.trim().replace(/[.\-\/\s]/g, '');
+    if (s.length === 4) return `${new Date().getFullYear()}-${s.slice(0,2)}-${s.slice(2,4)}`;
+    if (s.length === 6) return `20${s.slice(0,2)}-${s.slice(2,4)}-${s.slice(4,6)}`;
+    if (s.length === 8) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
+    return '';
+  };
+
   const handleCellBlur = (e: React.FocusEvent<HTMLInputElement>, entry: ManualEntry, field: keyof ManualEntry) => {
     const rawVal = e.target.value;
     let newVal: any = rawVal;
     if (field === 'count') newVal = Number(rawVal) || 0;
     else if (field === 'paymentAmount') newVal = Number(rawVal.replace(/,/g, '')) || 0;
+    else if (field === 'date') {
+      const parsed = parseDateInput(rawVal);
+      if (!parsed) { e.target.value = entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''; return; }
+      newVal = parsed;
+      e.target.value = parsed.slice(2).replace(/-/g, '.');
+    }
 
     const oldVal = entry[field];
     if (String(newVal) !== String(oldVal != null ? oldVal : '')) {
@@ -605,6 +619,11 @@ const App: React.FC = () => {
       let newVal: any = rawVal;
       if (field === 'count') newVal = Number(rawVal) || 0;
       else if (field === 'paymentAmount') newVal = Number(rawVal.replace(/,/g, '')) || 0;
+      else if (field === 'date') {
+        const parsed = parseDateInput(rawVal);
+        if (parsed) { newVal = parsed; e.currentTarget.value = parsed.slice(2).replace(/-/g, '.'); }
+        else { e.currentTarget.value = entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''; return; }
+      }
       if (String(newVal) !== String(entry[field] != null ? entry[field] : '')) {
         updateManualEntry(entry.id, field, newVal);
       }
@@ -2795,6 +2814,22 @@ const App: React.FC = () => {
                         <button onClick={deleteEmptyRows} className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg font-bold text-[11px] hover:bg-gray-200">빈행삭제</button>
                         <button onClick={() => multiImageInputRef.current?.click()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-bold text-[11px] hover:bg-blue-700">이미지등록</button>
                         <input ref={multiImageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleMultiImageUpload} />
+                        <button
+                          onClick={async () => {
+                            if (selectedManualIds.size === 0) { alert('행을 먼저 선택해주세요.'); return; }
+                            if (!window.confirm(`${selectedManualIds.size}건의 계좌번호를 김성아 계좌로 변경하시겠습니까?`)) return;
+                            try {
+                              const batch = writeBatch(db);
+                              selectedManualIds.forEach(id => {
+                                batch.update(doc(db, 'manualEntries', id), { accountNumber: '국민 228 002 04 129095 김성아' });
+                              });
+                              await batch.commit();
+                              alert('변경되었습니다.');
+                            } catch (e) { console.error(e); alert('오류: ' + e); }
+                          }}
+                          className="px-3 py-1.5 bg-purple-500 text-white rounded-lg font-bold text-[11px] hover:bg-purple-600"
+                        >성아계좌</button>
+                        <button onClick={() => { if (selectedManualIds.size === 0) { alert('행을 먼저 선택해주세요.'); return; } deleteSelectedManualEntries(); }} className="px-3 py-1.5 bg-red-500 text-white rounded-lg font-bold text-[11px] hover:bg-red-600">삭제</button>
                       </div>
                       <div className="hidden md:flex gap-1 items-center ml-auto">
                         {undoStack.length > 0 && (
@@ -3109,7 +3144,7 @@ const App: React.FC = () => {
                                       ))}
                                     </select>
                                   </td>
-                                  <td className="p-0 border border-gray-200"><input ref={(el) => { if (el && document.activeElement !== el) { el.type = 'text'; el.value = entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''; }}} data-row={idx} data-col={2} className={`excel-input px-1 text-center ${rowColor}`} onFocus={(e) => { e.target.type = 'date'; e.target.value = entry.date || ''; }} onBlur={(e) => { if (e.target.value && e.target.value !== entry.date) updateManualEntry(entry.id, 'date', e.target.value); e.target.type = 'text'; e.target.value = entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''; }} onChange={(e) => { if (e.target.type === 'date' && e.target.value && e.target.value !== entry.date) { updateManualEntry(entry.id, 'date', e.target.value); e.target.blur(); }}} /></td>
+                                  <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.date ? entry.date.slice(2).replace(/-/g, '.') : '')} data-row={idx} data-col={2} defaultValue={entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'date', idx, 2)} type="text" placeholder="YY.MM.DD" className={`excel-input px-1 text-center ${rowColor}`} onFocus={(e) => e.target.select()} onBlur={(e) => handleCellBlur(e, entry, 'date')} /></td>
                                   <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.name1)} data-row={idx} data-col={3} defaultValue={entry.name1} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name1', idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'name1')} /></td>
                                   <td className={`p-0 border border-gray-200 ${isPink ? 'bg-white' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'font-black' : rowColor}`} style={isPink ? { color: '#ff4da6' } : undefined} placeholder="받는사람" onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
                                   <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
