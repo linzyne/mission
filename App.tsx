@@ -162,72 +162,7 @@ const App: React.FC = () => {
   const salesFileRef = useRef<HTMLInputElement>(null);
   const [salesSubTab, setSalesSubTab] = useState<SalesSubTab>('summary');
 
-  // Auto-sync: 구매목록 변경 → 매출현황 가구매 자동 반영 (3월부터만)
-  const hpSyncTimeout = useRef<ReturnType<typeof setTimeout>>();
-  useEffect(() => {
-    clearTimeout(hpSyncTimeout.current);
-    hpSyncTimeout.current = setTimeout(async () => {
-      const AUTO_SYNC_FROM = '2026-03';
-
-      // 품목+날짜별 구매목록 수량 집계 (3월 이후만)
-      const hpMap = new Map<string, { product: string; date: string; count: number }>();
-      manualEntries.forEach(e => {
-        if (!e.product || !e.date) return;
-        if (e.date < AUTO_SYNC_FROM) return;
-        const key = `${e.product}\t${e.date}`;
-        const cur = hpMap.get(key);
-        if (cur) cur.count++;
-        else hpMap.set(key, { product: e.product, date: e.date, count: 1 });
-      });
-
-      const batch = writeBatch(db);
-      let hasChanges = false;
-      const processedKeys = new Set<string>();
-
-      // 구매목록에 있는 품목+날짜: 가구매 계산 후 salesDaily에 반영
-      hpMap.forEach(({ product, date, count }) => {
-        const pp = productPrices.find(p => p.name === product);
-        const sellingPrice = pp?.sellingPrice || pp?.price || 0;
-        let hp = 0;
-        if (sellingPrice > 0) {
-          const unitCost = Math.round(sellingPrice * 0.88 - 1000 - 2300);
-          hp = -(count * unitCost);
-        }
-        const key = `${product}\t${date}`;
-        processedKeys.add(key);
-
-        const existing = salesDaily.find(e => e.product === product && e.date === date);
-        if (existing) {
-          if (existing.housePurchase !== hp) {
-            batch.update(doc(db, 'salesDaily', existing.id), { housePurchase: hp });
-            hasChanges = true;
-          }
-        } else if (hp !== 0) {
-          const docId = `${date}_${product}`;
-          batch.set(doc(db, 'salesDaily', docId), {
-            date, product, productDetail: '', quantity: 0, sellingPrice: 0,
-            supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0,
-            housePurchase: hp, solution: 0
-          });
-          hasChanges = true;
-        }
-      });
-
-      // 3월 이후 데이터만: 구매목록에서 제거된 항목 가구매 리셋
-      salesDaily.forEach(e => {
-        if (e.housePurchase !== 0 && e.date >= AUTO_SYNC_FROM) {
-          const key = `${e.product}\t${e.date}`;
-          if (!processedKeys.has(key)) {
-            batch.update(doc(db, 'salesDaily', e.id), { housePurchase: 0 });
-            hasChanges = true;
-          }
-        }
-      });
-
-      if (hasChanges) await batch.commit();
-    }, 500);
-    return () => clearTimeout(hpSyncTimeout.current);
-  }, [manualEntries, productPrices, salesDaily]);
+  // Auto-sync 비활성화 - 가구매는 수동 입력 또는 추후 별도 버튼으로 처리
 
   // Firestore Sync: Daily Costs (손익표 비용 항목)
   const [dailyCosts, setDailyCosts] = useState<DailyCostItem[]>([]);
