@@ -50,6 +50,7 @@ export interface ManualEntry {
   reservationComplete?: boolean;
   textColor?: string;
   rowBgColor?: string;
+  cellColors?: Record<string, string>;
   createdAt?: number;
 }
 

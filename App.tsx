@@ -485,8 +485,8 @@ const App: React.FC = () => {
     const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0];
   });
 
-  // Color picker state (폰트색 / 행색상)
-  const [colorPicker, setColorPicker] = useState<{ type: 'text' | 'bg'; x: number; y: number } | null>(null);
+  // Color picker state (폰트색 / 행색상 / 셀색상)
+  const [colorPicker, setColorPicker] = useState<{ type: 'text' | 'bg' | 'cell'; x: number; y: number; entryId?: string; cellField?: string } | null>(null);
 
   useEffect(() => {
     if (!colorPicker) return;
@@ -498,13 +498,19 @@ const App: React.FC = () => {
   }, [colorPicker]);
 
   const handleColorSelect = async (color: string) => {
-    if (!colorPicker || selectedManualIds.size === 0) return;
-    const field = colorPicker.type === 'text' ? 'textColor' : 'rowBgColor';
-    const batch = writeBatch(db);
-    selectedManualIds.forEach(id => {
-      batch.update(doc(db, 'manualEntries', id), { [field]: color });
-    });
-    await batch.commit();
+    if (!colorPicker) return;
+    if (colorPicker.type === 'cell' && colorPicker.entryId && colorPicker.cellField) {
+      const entry = manualEntries.find(e => e.id === colorPicker.entryId);
+      const existing = entry?.cellColors || {};
+      await updateDoc(doc(db, 'manualEntries', colorPicker.entryId), { cellColors: { ...existing, [colorPicker.cellField]: color } });
+    } else if (selectedManualIds.size > 0) {
+      const field = colorPicker.type === 'text' ? 'textColor' : 'rowBgColor';
+      const batch = writeBatch(db);
+      selectedManualIds.forEach(id => {
+        batch.update(doc(db, 'manualEntries', id), { [field]: color });
+      });
+      await batch.commit();
+    }
     setColorPicker(null);
   };
 
@@ -568,6 +574,15 @@ const App: React.FC = () => {
     }, 300);
     return () => clearTimeout(timer);
   }, [manualSearch]);
+
+  const getCellColor = (entry: ManualEntry, field: string): string | undefined => {
+    return entry.cellColors?.[field] || undefined;
+  };
+
+  const handleCellContextMenu = (e: React.MouseEvent, entryId: string, field: string) => {
+    e.preventDefault();
+    setColorPicker({ type: 'cell', x: e.clientX, y: e.clientY, entryId, cellField: field });
+  };
 
   // --- Uncontrolled input helpers (no cursor jump, no IME issues) ---
   // Sync uncontrolled input from Firestore when cell is NOT focused
@@ -1896,14 +1911,14 @@ const App: React.FC = () => {
                       </div>
                       {depositSubTab === 'before' && manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit).length > 0 && (
                         <div className="flex gap-2">
-                          <button onClick={downloadBeforeDepositCsv} className="px-5 py-2 rounded-xl text-sm font-black bg-gray-100 text-gray-600 hover:bg-gray-200 transition-all">
+                          <button onClick={downloadBeforeDepositCsv} className="px-5 py-2 rounded-xl text-sm font-black bg-green-600 text-white hover:bg-green-700 transition-all">
                             엑셀 다운 📥
                           </button>
                           <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl">
                             <input type="date" value={depositActionDate} onChange={e => setDepositActionDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none px-2 text-gray-600" />
                             <button
                               onClick={handleBulkDepositComplete}
-                              className={`px-5 py-2 rounded-xl text-sm font-black transition-all ${selectedDepositIds.size > 0 ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                              className={`px-5 py-2 rounded-xl text-sm font-black transition-all ${selectedDepositIds.size > 0 ? 'bg-gray-600 text-white hover:bg-gray-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
                             >
                               입금완료 ({selectedDepositIds.size}건)
                             </button>
@@ -1989,10 +2004,10 @@ const App: React.FC = () => {
                               <th className="py-1 px-2">날짜</th>
                               <th className="py-1 px-2">이름1</th>
                               <th className="py-1 px-2">이름2</th>
-                              <th className="py-1 px-2">주문번호</th>
+                              <th className="py-1 px-2 hidden md:table-cell">주문번호</th>
                               <th className="py-1 px-2">결제금액</th>
                               <th className="py-1 px-2">계좌번호</th>
-                              <th className="py-1 px-2 w-14">해제</th>
+                              <th className="py-1 px-2 w-14 hidden md:table-cell">해제</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -2009,14 +2024,14 @@ const App: React.FC = () => {
                                 </td>
                                 <td className="py-0.5 px-2">
                                   {entry.isManualCheck && <span className="inline-block px-1 rounded bg-orange-100 text-orange-600 text-[8px] font-black mr-0.5">수동</span>}
-                                  {entry.date}
+                                  {entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''}
                                 </td>
                                 <td className="py-0.5 px-2">{entry.name1}</td>
                                 <td className="py-0.5 px-2">{entry.name2}</td>
-                                <td className="py-0.5 px-2 text-blue-600 font-black">{entry.orderNumber}</td>
+                                <td className="py-0.5 px-2 text-blue-600 font-black hidden md:table-cell">{entry.orderNumber}</td>
                                 <td className="py-0.5 px-2">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
                                 <td className="py-0.5 px-2 text-blue-600">{entry.accountNumber}</td>
-                                <td className="py-0.5 px-2">
+                                <td className="py-0.5 px-2 hidden md:table-cell">
                                   <button onClick={() => handleDepositRelease(entry.id, 'before')} className="px-1 py-0 bg-red-50 text-red-500 rounded text-[8px] font-black hover:bg-red-100 transition-all mr-0.5">해제</button>
                                   <button onClick={() => handleDepositDelete(entry.id)} className="px-1 py-0 bg-gray-100 text-gray-400 rounded text-[8px] font-black hover:bg-gray-200 transition-all">삭제</button>
                                 </td>
@@ -2053,6 +2068,7 @@ const App: React.FC = () => {
                         }
                         return depositAfterDate === 'all' || e.date === depositAfterDate;
                       });
+                      afterItems.sort((a, b) => (b.depositDate || '').localeCompare(a.depositDate || ''));
                       const allAfterSelected = afterItems.length > 0 && afterItems.every(e => selectedDepositIds.has(e.id));
                       return (
                         <table className="w-full text-xs text-center">
@@ -2067,14 +2083,14 @@ const App: React.FC = () => {
                                   }
                                 }} />
                               </th>
-                              <th className="py-1 px-2">날짜</th>
+                              <th className="py-1 px-2">구매날짜</th>
                               <th className="py-1 px-2 text-blue-600">입금날짜</th>
                               <th className="py-1 px-2">이름1</th>
                               <th className="py-1 px-2">이름2</th>
-                              <th className="py-1 px-2">주문번호</th>
+                              <th className="py-1 px-2 hidden md:table-cell">주문번호</th>
                               <th className="py-1 px-2">결제금액</th>
-                              <th className="py-1 px-2">계좌번호</th>
-                              <th className="py-1 px-2 w-16">해제</th>
+                              <th className="py-1 px-2 hidden md:table-cell">계좌번호</th>
+                              <th className="py-1 px-2 w-16 hidden md:table-cell">해제</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -2089,14 +2105,14 @@ const App: React.FC = () => {
                                     setSelectedDepositIds(next);
                                   }} />
                                 </td>
-                                <td className="py-0.5 px-2">{entry.date}</td>
-                                <td className="py-0.5 px-2 text-blue-600">{entry.depositDate || '-'}</td>
+                                <td className="py-0.5 px-2">{entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''}</td>
+                                <td className="py-0.5 px-2 text-blue-600">{entry.depositDate ? entry.depositDate.slice(2).replace(/-/g, '.') : '-'}</td>
                                 <td className="py-0.5 px-2">{entry.name1}</td>
                                 <td className="py-0.5 px-2">{entry.name2}</td>
-                                <td className="py-0.5 px-2 text-blue-600 font-black">{entry.orderNumber}</td>
+                                <td className="py-0.5 px-2 text-blue-600 font-black hidden md:table-cell">{entry.orderNumber}</td>
                                 <td className="py-0.5 px-2">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
-                                <td className="py-0.5 px-2 text-blue-600">{entry.accountNumber}</td>
-                                <td className="py-0.5 px-2">
+                                <td className="py-0.5 px-2 text-blue-600 hidden md:table-cell">{entry.accountNumber}</td>
+                                <td className="py-0.5 px-2 hidden md:table-cell">
                                   <button onClick={() => handleDepositRelease(entry.id, 'after')} className="px-1 py-0 bg-red-50 text-red-500 rounded text-[8px] font-black hover:bg-red-100 transition-all mr-0.5">해제</button>
                                   <button onClick={() => handleDepositDelete(entry.id)} className="px-1 py-0 bg-gray-100 text-gray-400 rounded text-[8px] font-black hover:bg-gray-200 transition-all">삭제</button>
                                 </td>
@@ -2850,7 +2866,6 @@ const App: React.FC = () => {
                         <button onClick={handleReservationComplete} className="px-2.5 py-1 bg-pink-500 text-white rounded-lg font-bold text-[11px] hover:bg-pink-600">예약완료</button>
                         <button onClick={handleReservationCancel} className="px-2.5 py-1 bg-white text-pink-500 rounded-lg font-bold text-[11px] hover:bg-pink-50 border border-pink-200">예약취소</button>
                         <button onClick={downloadManualCsv} className="px-2.5 py-1 bg-white text-green-600 rounded-lg font-bold text-[11px] hover:bg-green-50 border border-green-200">엑셀</button>
-                        <button onClick={deleteSelectedManualEntries} className="px-2.5 py-1 bg-white text-red-500 rounded-lg font-bold text-[11px] hover:bg-red-50 border border-red-200">삭제</button>
                         <span className="w-px h-4 bg-blue-200 mx-0.5"></span>
                         <button onClick={(e) => { e.stopPropagation(); setColorPicker({ type: 'text', x: e.clientX, y: e.clientY }); }} className="px-2.5 py-1 bg-white text-purple-600 rounded-lg font-bold text-[11px] hover:bg-purple-50 border border-purple-200">폰트색</button>
                         <button onClick={(e) => { e.stopPropagation(); setColorPicker({ type: 'bg', x: e.clientX, y: e.clientY }); }} className="px-2.5 py-1 bg-white text-yellow-700 rounded-lg font-bold text-[11px] hover:bg-yellow-50 border border-yellow-200">행색상</button>
@@ -2873,20 +2888,6 @@ const App: React.FC = () => {
                           }}
                           className="px-2.5 py-1 bg-red-500 text-white rounded-lg font-bold text-[11px] hover:bg-red-600"
                         >롯데예약</button>
-                        <button
-                          onClick={async () => {
-                            if (!window.confirm(`${selectedManualIds.size}건의 계좌번호를 김성아 계좌로 변경하시겠습니까?`)) return;
-                            try {
-                              const batch = writeBatch(db);
-                              selectedManualIds.forEach(id => {
-                                batch.update(doc(db, 'manualEntries', id), { accountNumber: '국민 228 002 04 129095 김성아' });
-                              });
-                              await batch.commit();
-                              alert('변경되었습니다.');
-                            } catch (e) { console.error(e); alert('오류: ' + e); }
-                          }}
-                          className="px-2.5 py-1 bg-purple-500 text-white rounded-lg font-bold text-[11px] hover:bg-purple-600"
-                        >성아계좌</button>
                         <button onClick={() => setSelectedManualIds(new Set())} className="ml-auto px-2 py-1 text-gray-400 hover:text-gray-600 text-[11px]">✕ 해제</button>
                       </div>
                     <div>
@@ -2909,9 +2910,9 @@ const App: React.FC = () => {
                   )}
                   {colorPicker && (
                     <div className="color-picker-popup fixed z-[9999] bg-white rounded-2xl shadow-2xl border border-gray-200 p-3" style={{ left: Math.min(colorPicker.x, window.innerWidth - 220), top: colorPicker.y + 8 }}>
-                      <div className="text-[11px] font-bold text-gray-500 mb-2">{colorPicker.type === 'text' ? '폰트 색상' : '행 배경색'}</div>
+                      <div className="text-[11px] font-bold text-gray-500 mb-2">{colorPicker.type === 'cell' ? '셀 폰트색' : colorPicker.type === 'text' ? '폰트 색상' : '행 배경색'}</div>
                       <div className="flex gap-2 flex-wrap" style={{ maxWidth: 200 }}>
-                        {(colorPicker.type === 'text'
+                        {(colorPicker.type === 'text' || colorPicker.type === 'cell'
                           ? [
                               { name: '검정', value: '#000000' },
                               { name: '빨강', value: '#ef4444' },
@@ -3145,15 +3146,15 @@ const App: React.FC = () => {
                                     </select>
                                   </td>
                                   <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.date ? entry.date.slice(2).replace(/-/g, '.') : '')} data-row={idx} data-col={2} defaultValue={entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'date', idx, 2)} type="text" placeholder="YY.MM.DD" className={`excel-input px-1 text-center ${rowColor}`} onFocus={(e) => e.target.select()} onBlur={(e) => handleCellBlur(e, entry, 'date')} /></td>
-                                  <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.name1)} data-row={idx} data-col={3} defaultValue={entry.name1} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name1', idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'name1')} /></td>
-                                  <td className={`p-0 border border-gray-200 ${isPink ? 'bg-white' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'font-black' : rowColor}`} style={isPink ? { color: '#ff4da6' } : undefined} placeholder="받는사람" onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
-                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
-                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.address)} data-row={idx} data-col={6} defaultValue={entry.address} onKeyDown={(e) => handleCellKeyDown(e, entry, 'address', idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'address')} /></td>
-                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.memo)} data-row={idx} data-col={7} defaultValue={entry.memo} onKeyDown={(e) => handleCellKeyDown(e, entry, 'memo', idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'memo')} /></td>
-                                  <td className="p-0 border border-gray-200"><input ref={(el) => { if (el && document.activeElement !== el) { el.value = entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''; } }} data-row={idx} data-col={8} defaultValue={entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'paymentAmount', idx, 8)} type="text" className={`excel-input text-center ${rowColor}`} onFocus={(e) => { e.target.value = entry.paymentAmount ? String(entry.paymentAmount) : ''; e.target.select(); }} onBlur={(e) => { const raw = Number(e.target.value.replace(/,/g, '')) || 0; if (raw !== (entry.paymentAmount || 0)) updateManualEntry(entry.id, 'paymentAmount', raw); e.target.value = raw ? raw.toLocaleString() : ''; }} /></td>
-                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.emergencyContact)} data-row={idx} data-col={9} defaultValue={entry.emergencyContact} onKeyDown={(e) => handleCellKeyDown(e, entry, 'emergencyContact', idx, 9)} type="text" className={`excel-input ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'emergencyContact')} /></td>
-                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.accountNumber)} data-row={idx} data-col={10} defaultValue={entry.accountNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'accountNumber', idx, 10)} type="text" className={`excel-input ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'accountNumber')} /></td>
-                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.trackingNumber || '')} data-row={idx} data-col={11} defaultValue={entry.trackingNumber || ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'trackingNumber', idx, 11)} type="text" className={`excel-input ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'trackingNumber')} /></td>
+                                  <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.name1)} data-row={idx} data-col={3} defaultValue={entry.name1} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name1', idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'name1') ? { color: getCellColor(entry, 'name1') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'name1')} onBlur={(e) => handleCellBlur(e, entry, 'name1')} /></td>
+                                  <td className={`p-0 border border-gray-200 ${isPink ? 'bg-white' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'font-black' : rowColor}`} style={getCellColor(entry, 'name2') ? { color: getCellColor(entry, 'name2') } : isPink ? { color: '#ff4da6' } : undefined} placeholder="받는사람" onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'name2')} onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
+                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'orderNumber') ? { color: getCellColor(entry, 'orderNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'orderNumber')} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
+                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.address)} data-row={idx} data-col={6} defaultValue={entry.address} onKeyDown={(e) => handleCellKeyDown(e, entry, 'address', idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} style={getCellColor(entry, 'address') ? { color: getCellColor(entry, 'address') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'address')} onBlur={(e) => handleCellBlur(e, entry, 'address')} /></td>
+                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.memo)} data-row={idx} data-col={7} defaultValue={entry.memo} onKeyDown={(e) => handleCellKeyDown(e, entry, 'memo', idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} style={getCellColor(entry, 'memo') ? { color: getCellColor(entry, 'memo') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'memo')} onBlur={(e) => handleCellBlur(e, entry, 'memo')} /></td>
+                                  <td className="p-0 border border-gray-200"><input ref={(el) => { if (el && document.activeElement !== el) { el.value = entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''; } }} data-row={idx} data-col={8} defaultValue={entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'paymentAmount', idx, 8)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'paymentAmount') ? { color: getCellColor(entry, 'paymentAmount') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'paymentAmount')} onFocus={(e) => { e.target.value = entry.paymentAmount ? String(entry.paymentAmount) : ''; e.target.select(); }} onBlur={(e) => { const raw = Number(e.target.value.replace(/,/g, '')) || 0; if (raw !== (entry.paymentAmount || 0)) updateManualEntry(entry.id, 'paymentAmount', raw); e.target.value = raw ? raw.toLocaleString() : ''; }} /></td>
+                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.emergencyContact)} data-row={idx} data-col={9} defaultValue={entry.emergencyContact} onKeyDown={(e) => handleCellKeyDown(e, entry, 'emergencyContact', idx, 9)} type="text" className={`excel-input ${rowColor}`} style={getCellColor(entry, 'emergencyContact') ? { color: getCellColor(entry, 'emergencyContact') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'emergencyContact')} onBlur={(e) => handleCellBlur(e, entry, 'emergencyContact')} /></td>
+                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.accountNumber)} data-row={idx} data-col={10} defaultValue={entry.accountNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'accountNumber', idx, 10)} type="text" className={`excel-input ${rowColor}`} style={getCellColor(entry, 'accountNumber') ? { color: getCellColor(entry, 'accountNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'accountNumber')} onBlur={(e) => handleCellBlur(e, entry, 'accountNumber')} /></td>
+                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.trackingNumber || '')} data-row={idx} data-col={11} defaultValue={entry.trackingNumber || ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'trackingNumber', idx, 11)} type="text" className={`excel-input ${rowColor}`} style={getCellColor(entry, 'trackingNumber') ? { color: getCellColor(entry, 'trackingNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'trackingNumber')} onBlur={(e) => handleCellBlur(e, entry, 'trackingNumber')} /></td>
                                   <td className="p-0 border border-gray-200 text-center align-middle">
                                     <input type="checkbox" className="w-4 h-4 accent-blue-600" checked={entry.beforeDeposit} onChange={() => toggleBeforeDeposit(entry.id, entry.beforeDeposit)} />
                                   </td>
