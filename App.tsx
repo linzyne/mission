@@ -479,10 +479,10 @@ const App: React.FC = () => {
 
   // Date range for purchase list
   const [manualViewDateStart, setManualViewDateStart] = useState<string>(() => {
-    const d = new Date(); d.setDate(d.getDate() - 2); return d.toISOString().split('T')[0];
+    const d = new Date(); d.setDate(d.getDate() - 4); return d.toISOString().split('T')[0];
   });
   const [manualViewDateEnd, setManualViewDateEnd] = useState<string>(() => {
-    const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split('T')[0];
+    return new Date().toISOString().split('T')[0];
   });
 
   // Color picker state (폰트색 / 행색상 / 셀색상)
