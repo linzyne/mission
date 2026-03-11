@@ -479,11 +479,13 @@ const App: React.FC = () => {
 
     if (rows.length === 0) { alert('마진시트에 데이터가 없습니다.'); return; }
 
-    // 업로드 날짜: 선택된 월의 오늘 날짜 or 마지막 날
+    // 업로드 날짜: 파일명에서 추출 (예: 2026-03-10_업무일지.xlsx → 2026-03-10)
+    const dateMatch = file.name.match(/(\d{4}-\d{2}-\d{2})/);
     const today = new Date();
-    const uploadDate = (today.getFullYear() === salesMonth.year && today.getMonth() + 1 === salesMonth.month)
-      ? today.toISOString().split('T')[0]
-      : `${salesMonthStr}-01`;
+    const uploadDate = dateMatch ? dateMatch[1]
+      : (today.getFullYear() === salesMonth.year && today.getMonth() + 1 === salesMonth.month)
+        ? today.toISOString().split('T')[0]
+        : `${salesMonthStr}-01`;
 
     // 같은 등록상품명 기준으로 합산 (날짜+상품명 = 1행)
     const merged: Record<string, { product: string; details: string[]; quantity: number; sellingPrice: number; supplyPrice: number; totalMargin: number }> = {};
