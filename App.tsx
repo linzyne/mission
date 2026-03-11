@@ -485,33 +485,35 @@ const App: React.FC = () => {
       ? today.toISOString().split('T')[0]
       : `${salesMonthStr}-01`;
 
-    // 같은 등록상품명+품목명 행 합산
-    const merged: Record<string, { product: string; productDetail: string; quantity: number; sellingPrice: number; supplyPrice: number; marginPerUnit: number; totalMargin: number }> = {};
+    // 같은 등록상품명 기준으로 합산 (날짜+상품명 = 1행)
+    const merged: Record<string, { product: string; details: string[]; quantity: number; sellingPrice: number; supplyPrice: number; totalMargin: number }> = {};
     for (const row of rows) {
       const product = String(row['등록상품명'] || '').trim();
       const productDetail = String(row['품목명'] || '').trim();
       if (!product) continue;
-      const key = `${product}_${productDetail}`;
-      if (!merged[key]) {
-        merged[key] = { product, productDetail, quantity: 0, sellingPrice: Number(row['판매가'] || 0), supplyPrice: Number(row['공급가'] || 0), marginPerUnit: Number(row['마진(개당)'] || row['마진'] || 0), totalMargin: 0 };
+      if (!merged[product]) {
+        merged[product] = { product, details: [], quantity: 0, sellingPrice: 0, supplyPrice: 0, totalMargin: 0 };
       }
-      merged[key].quantity += Number(row['수량'] || 0);
-      merged[key].totalMargin += Number(row['총마진'] || 0);
+      if (productDetail && !merged[product].details.includes(productDetail)) merged[product].details.push(productDetail);
+      merged[product].quantity += Number(row['수량'] || 0);
+      merged[product].sellingPrice += Number(row['판매가'] || 0);
+      merged[product].supplyPrice += Number(row['공급가'] || 0);
+      merged[product].totalMargin += Number(row['총마진'] || 0);
     }
 
     const batch = writeBatch(db);
     let count = 0;
-    for (const [key, m] of Object.entries(merged)) {
-      const docId = `${uploadDate}_${key}`;
-      const existingSD = salesDaily.find(e => e.date === uploadDate && e.product === m.product && e.productDetail === m.productDetail);
+    for (const m of Object.values(merged)) {
+      const docId = `${uploadDate}_${m.product}`;
+      const existingSD = salesDaily.find(e => e.date === uploadDate && e.product === m.product);
       batch.set(doc(db, 'salesDaily', docId), {
         date: uploadDate,
         product: m.product,
-        productDetail: m.productDetail,
+        productDetail: m.details.join(', '),
         quantity: m.quantity,
         sellingPrice: m.sellingPrice,
         supplyPrice: m.supplyPrice,
-        marginPerUnit: m.marginPerUnit,
+        marginPerUnit: m.quantity > 0 ? Math.round(m.totalMargin / m.quantity) : 0,
         totalMargin: m.totalMargin,
         adCost: existingSD?.adCost || 0,
         housePurchase: existingSD?.housePurchase || 0,
