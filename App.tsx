@@ -148,12 +148,16 @@ const App: React.FC = () => {
 
   // Firestore Sync: Sales Daily
   const [salesDaily, setSalesDaily] = useState<SalesDailyEntry[]>([]);
+  const salesDailyRef = useRef<SalesDailyEntry[]>([]);
+  const [salesDailyLoaded, setSalesDailyLoaded] = useState(false);
   useEffect(() => {
     const q = query(collection(db, 'salesDaily'));
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as SalesDailyEntry));
       list.sort((a, b) => a.date.localeCompare(b.date));
       setSalesDaily(list);
+      salesDailyRef.current = list;
+      setSalesDailyLoaded(true);
     });
     return () => unsub();
   }, []);
@@ -162,7 +166,9 @@ const App: React.FC = () => {
   const salesFileRef = useRef<HTMLInputElement>(null);
   const [salesSubTab, setSalesSubTab] = useState<SalesSubTab>('summary');
 
-  // Auto-sync 비활성화 - 가구매는 수동 입력 또는 추후 별도 버튼으로 처리
+  // Auto-sync: 비활성화됨 (수동 관리)
+  // 1월·2월은 수동 입력 데이터 - 보호 대상
+  const isProtectedMonth = (monthStr: string) => monthStr === '2026-01' || monthStr === '2026-02';
 
   // Firestore Sync: Daily Costs (손익표 비용 항목)
   const [dailyCosts, setDailyCosts] = useState<DailyCostItem[]>([]);
@@ -284,17 +290,74 @@ const App: React.FC = () => {
     await setDoc(doc(db, 'salesDaily', docId), newEntry);
   };
 
-  // 가구매 자동계산: 구매목록 수량 × (판매가*0.88 - 1000 - 2300)
+  // 가구매 자동계산: 구매목록 수량 × (1000 + 공급가*11.66% + 2300)
   const calcHousePurchase = (product: string, date: string) => {
+    // 1월·2월은 수동 입력 데이터 - 자동계산 하지 않음
+    if (isProtectedMonth(date.substring(0, 7))) return 0;
     const count = manualEntries.filter(e => e.product === product && e.date === date).length;
     if (count === 0) return 0;
     const pp = productPrices.find(p => p.name === product);
-    const sellingPrice = pp?.sellingPrice || pp?.price || 0;
-    if (sellingPrice === 0) return 0;
-    const unitCost = Math.round(sellingPrice * 0.88 - 1000 - 2300);
+    const supPrice = pp?.supplyPrice || ((pp?.sellingPrice || pp?.price || 0) - 1000);
+    if (supPrice <= 0) return 0;
+    const unitCost = Math.round(1000 + supPrice * 0.1166 + 2300);
     return -(count * unitCost);
   };
 
+  // 구매목록 변경 시 가구매 자동 재계산 (1월·2월 보호)
+  useEffect(() => {
+    if (!salesDailyLoaded || manualEntries.length === 0) return;
+    const update = async () => {
+      const batch = writeBatch(db);
+      let hasUpdate = false;
+
+      // 1) 기존 salesDaily 항목 업데이트
+      const sdMap = new Map<string, SalesDailyEntry>();
+      for (const sd of salesDaily) {
+        sdMap.set(`${sd.date}|||${sd.product}`, sd);
+        if (isProtectedMonth(sd.date.substring(0, 7))) continue;
+        const count = manualEntries.filter(e => e.product === sd.product && e.date === sd.date).length;
+        let hp = 0;
+        if (count > 0) {
+          const pp = productPrices.find(p => p.name === sd.product);
+          const supPrice = pp?.supplyPrice || ((pp?.sellingPrice || pp?.price || 0) - 1000);
+          if (supPrice > 0) {
+            hp = -(count * Math.round(1000 + supPrice * 0.1166 + 2300));
+          }
+        }
+        if (sd.housePurchase !== hp) {
+          batch.update(doc(db, 'salesDaily', sd.id), { housePurchase: hp });
+          hasUpdate = true;
+        }
+      }
+
+      // 2) salesDaily에 없는 날짜+품목 조합은 새로 생성
+      const combos = new Map<string, number>();
+      for (const me of manualEntries) {
+        if (!me.product || !me.date || isProtectedMonth(me.date.substring(0, 7))) continue;
+        const key = `${me.date}|||${me.product}`;
+        combos.set(key, (combos.get(key) || 0) + 1);
+      }
+      for (const [key, count] of combos) {
+        if (sdMap.has(key)) continue; // 이미 위에서 처리됨
+        const date = key.split('|||')[0];
+        const product = key.split('|||')[1];
+        const pp = productPrices.find(p => p.name === product);
+        const supPrice = pp?.supplyPrice || ((pp?.sellingPrice || pp?.price || 0) - 1000);
+        if (supPrice <= 0) continue;
+        const hp = -(count * Math.round(1000 + supPrice * 0.1166 + 2300));
+        const docId = `${date}_${product}`;
+        batch.set(doc(db, 'salesDaily', docId), {
+          date, product, productDetail: '', quantity: 0, sellingPrice: 0,
+          supplyPrice: 0, marginPerUnit: 0, totalMargin: 0,
+          adCost: 0, housePurchase: hp, solution: 0,
+        });
+        hasUpdate = true;
+      }
+
+      if (hasUpdate) await batch.commit();
+    };
+    update();
+  }, [manualEntries, salesDailyLoaded]);
 
   const handleSalesDeleteRow = async (entry: SalesDailyEntry) => {
     const { id, ...data } = entry;
@@ -400,6 +463,11 @@ const App: React.FC = () => {
   const handleSalesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (isProtectedMonth(salesMonthStr)) {
+      alert('1월·2월은 수동 입력 데이터입니다. 엑셀 업로드가 차단됩니다.');
+      e.target.value = '';
+      return;
+    }
     const XLSX = await import('xlsx');
     const data = await file.arrayBuffer();
     const wb = XLSX.read(data);
@@ -425,6 +493,7 @@ const App: React.FC = () => {
       if (!product) continue;
 
       const docId = `${uploadDate}_${product}`;
+      const existingSD = salesDaily.find(e => e.date === uploadDate && e.product === product);
       batch.set(doc(db, 'salesDaily', docId), {
         date: uploadDate,
         product,
@@ -434,9 +503,9 @@ const App: React.FC = () => {
         supplyPrice: Number(row['공급가'] || 0),
         marginPerUnit: Number(row['마진(개당)'] || row['마진'] || 0),
         totalMargin: Number(row['총마진'] || 0),
-        adCost: 0,
-        housePurchase: 0,
-        solution: 0,
+        adCost: existingSD?.adCost || 0,
+        housePurchase: existingSD?.housePurchase || 0,
+        solution: existingSD?.solution || 0,
       });
       count++;
     }
@@ -2130,9 +2199,9 @@ const App: React.FC = () => {
                   </div>
                 </section>
               ) : adminTab === 'sales' ? (
-                <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl p-8 animate-in slide-in-from-right-10 duration-500">
+                <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl p-4 sm:p-8 animate-in slide-in-from-right-10 duration-500">
                   <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-black text-gray-900">매출현황</h2>
+                    <h2 className="text-lg sm:text-xl font-black text-gray-900">매출현황</h2>
                     <div className="flex items-center gap-1">
                       <button onClick={() => setSalesMonth(p => { let m = p.month - 1, y = p.year; if (m < 1) { m = 12; y--; } return { year: y, month: m }; })} className="px-2 py-2 text-gray-500 hover:text-gray-800 font-black text-sm">&larr;</button>
                       <span className="text-sm font-black text-gray-700 min-w-[100px] text-center">{salesMonth.year}.{salesMonth.month}월</span>
@@ -2140,7 +2209,7 @@ const App: React.FC = () => {
                     </div>
                   </div>
                   {/* 서브 탭 */}
-                  <div className="flex gap-2 mb-6">
+                  <div className="flex gap-1.5 sm:gap-2 mb-6 overflow-x-auto">
                     <button onClick={() => setSalesSubTab('summary')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'summary' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>요약</button>
                     <button onClick={() => setSalesSubTab('profitLoss')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'profitLoss' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>손익표</button>
                     <button onClick={() => setSalesSubTab('salesDetail')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'salesDetail' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>품목별판매</button>
@@ -2251,13 +2320,13 @@ const App: React.FC = () => {
                               {firstHalf.length > 0 && (
                                 <div>
                                   <div className="text-[10px] text-gray-400 font-bold mb-1">상반기</div>
-                                  <div className="grid grid-cols-6 gap-2">{firstHalf.map(renderCard)}</div>
+                                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">{firstHalf.map(renderCard)}</div>
                                 </div>
                               )}
                               {secondHalf.length > 0 && (
                                 <div>
                                   <div className="text-[10px] text-gray-400 font-bold mb-1">하반기</div>
-                                  <div className="grid grid-cols-6 gap-2">{secondHalf.map(renderCard)}</div>
+                                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">{secondHalf.map(renderCard)}</div>
                                 </div>
                               )}
                               {months.length > 1 && (
@@ -2280,8 +2349,8 @@ const App: React.FC = () => {
                         })()}
 
                         {/* 품목별 × 월별 매트릭스 (순이익만) */}
-                        <div>
-                          <table className="w-full border-collapse text-xs text-center">
+                        <div className="overflow-x-auto">
+                          <table className="w-full border-collapse text-xs text-center min-w-[500px]">
                             <thead className="bg-gray-100 text-gray-500 font-bold">
                               <tr>
                                 <th className="py-1.5 px-3 text-left">품목</th>
@@ -2471,9 +2540,9 @@ const App: React.FC = () => {
                             <div className="bg-white border-b-2 border-gray-300 py-4 text-center">
                               <h3 className="text-xl font-black text-gray-900">{salesMonth.month}월 손익 계산서</h3>
                             </div>
-                            <div className="grid grid-cols-2">
+                            <div className="grid grid-cols-1 md:grid-cols-2">
                               {/* 총 매출 내역 */}
-                              <div className="border-r-2 border-gray-300">
+                              <div className="md:border-r-2 border-b-2 md:border-b-0 border-gray-300">
                                 <div className="bg-yellow-50 border-b border-gray-300 py-2 text-center font-black text-sm text-gray-800">총 매출 내역</div>
                                 <div className="text-right text-[10px] text-gray-400 px-3 py-1 border-b border-gray-200">(단위 : 원)</div>
                                 <table className="w-full text-xs">
@@ -2555,9 +2624,9 @@ const App: React.FC = () => {
                   ) : (
                     /* ===== 판매현황 ===== */
                     <div>
-                      <div className="flex justify-between items-center mb-4">
-                        <p className="text-[11px] text-gray-400">마진 데이터는 업무일지(발주앱)에서 업로드하며, 가구매는 구매목록 수량 기반으로 자동 계산됩니다.</p>
-                        <div className="flex gap-2 items-center">
+                      <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 justify-between items-start sm:items-center mb-4">
+                        <p className="text-[11px] text-gray-400 hidden sm:block">마진 데이터는 업무일지(발주앱)에서 업로드하며, 가구매는 구매목록 수량 기반으로 자동 계산됩니다.</p>
+                        <div className="flex gap-2 items-center flex-wrap">
                           {salesUndoStack.length > 0 && (
                             <button onClick={handleSalesUndo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
                           )}
@@ -2598,13 +2667,15 @@ const App: React.FC = () => {
 
                               return (
                                 <div key={product} className="border rounded-2xl overflow-hidden">
-                                  <div className="bg-gray-50 p-4 flex items-center gap-6">
-                                    <span className="text-lg font-black">{product}</span>
-                                    <span className="text-xs text-gray-400">({entries[0]?.productDetail})</span>
-                                    <button onClick={() => handleSalesDeleteProduct(product)} className="text-xs text-red-400 hover:text-red-600 ml-1" title="품목 삭제">&times;</button>
-                                    <span className="ml-auto text-lg font-black" style={{color: profit >= 0 ? '#16a34a' : '#dc2626'}}>{profit.toLocaleString()}</span>
+                                  <div className="bg-gray-50 p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-6">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-base sm:text-lg font-black">{product}</span>
+                                      <span className="text-xs text-gray-400">({entries[0]?.productDetail})</span>
+                                      <button onClick={() => handleSalesDeleteProduct(product)} className="text-xs text-red-400 hover:text-red-600 ml-1" title="품목 삭제">&times;</button>
+                                    </div>
+                                    <span className="sm:ml-auto text-base sm:text-lg font-black" style={{color: profit >= 0 ? '#16a34a' : '#dc2626'}}>{profit.toLocaleString()}</span>
                                   </div>
-                                  <div className="text-[11px] bg-gray-50 px-4 pb-2 flex gap-4 text-gray-400 font-bold">
+                                  <div className="text-[11px] bg-gray-50 px-3 sm:px-4 pb-2 flex flex-wrap gap-2 sm:gap-4 text-gray-400 font-bold">
                                     <span>공급가 {totals.supplyPrice.toLocaleString()}</span>
                                     <span>마진 {totals.totalMargin.toLocaleString()}</span>
                                     <span>수량 {totals.quantity}</span>
@@ -2613,17 +2684,17 @@ const App: React.FC = () => {
                                     <span>솔룻 {totals.solution.toLocaleString()}</span>
                                   </div>
                                   <div className="overflow-x-auto">
-                                    <table className="w-full text-xs text-center">
+                                    <table className="w-full text-xs text-center min-w-[520px]">
                                       <thead className="bg-gray-100 text-gray-500 font-bold">
                                         <tr>
                                           <th className="py-1.5 w-6"></th>
-                                          <th className="py-1.5 px-3">날짜</th>
-                                          <th className="py-1.5 px-3">공급가</th>
-                                          <th className="py-1.5 px-3">마진</th>
-                                          <th className="py-1.5 px-3">수량</th>
-                                          <th className="py-1.5 px-3">광고비</th>
-                                          <th className="py-1.5 px-3">가구매</th>
-                                          <th className="py-1.5 px-3">솔룻</th>
+                                          <th className="py-1.5 px-2 sm:px-3">날짜</th>
+                                          <th className="py-1.5 px-2 sm:px-3">공급가</th>
+                                          <th className="py-1.5 px-2 sm:px-3">마진</th>
+                                          <th className="py-1.5 px-2 sm:px-3">수량</th>
+                                          <th className="py-1.5 px-2 sm:px-3">광고비</th>
+                                          <th className="py-1.5 px-2 sm:px-3">가구매</th>
+                                          <th className="py-1.5 px-2 sm:px-3">솔룻</th>
                                         </tr>
                                       </thead>
                                       <tbody>
