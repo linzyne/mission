@@ -490,7 +490,7 @@ const App: React.FC = () => {
     // 같은 등록상품명 기준으로 합산 (날짜+상품명 = 1행)
     const merged: Record<string, { product: string; details: string[]; quantity: number; sellingPrice: number; supplyPrice: number; totalMargin: number }> = {};
     for (const row of rows) {
-      const product = String(row['등록상품명'] || '').trim();
+      const product = String(row['등록상품명'] || row['업체명'] || '').trim();
       const productDetail = String(row['품목명'] || '').trim();
       if (!product) continue;
       if (!merged[product]) {
