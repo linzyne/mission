@@ -2415,15 +2415,16 @@ const App: React.FC = () => {
                     (() => {
                       const filtered = salesDaily.filter(e => e.date.startsWith(salesMonthStr));
                       // 날짜별 전체 품목 합산
-                      const byDate: Record<string, { margin: number }> = {};
+                      const byDate: Record<string, { margin: number; adCost: number }> = {};
                       filtered.forEach(e => {
-                        if (!byDate[e.date]) byDate[e.date] = { margin: 0 };
+                        if (!byDate[e.date]) byDate[e.date] = { margin: 0, adCost: 0 };
                         byDate[e.date].margin += (e.totalMargin + e.adCost + e.housePurchase + e.solution);
+                        byDate[e.date].adCost += (e.adCost || 0);
                       });
                       const monthlyCosts = dailyCosts.filter(c => c.date.startsWith(salesMonthStr));
                       // 비용이 있는 날짜도 포함
                       monthlyCosts.forEach(c => {
-                        if (!byDate[c.date]) byDate[c.date] = { margin: 0 };
+                        if (!byDate[c.date]) byDate[c.date] = { margin: 0, adCost: 0 };
                       });
                       const dates = Object.keys(byDate).sort();
                       const grandMargin = dates.reduce((s, d) => s + byDate[d].margin, 0);
@@ -2445,7 +2446,9 @@ const App: React.FC = () => {
                         expenseByCategory[c.name] = (expenseByCategory[c.name] || 0) + c.amount;
                       });
                       const expenseItems = Object.entries(expenseByCategory).sort((a, b) => b[1] - a[1]);
-                      const totalExpense = expenseItems.reduce((s, [, v]) => s + v, 0);
+                      // 광고비 합산 (salesDaily의 adCost는 음수이므로 절대값)
+                      const totalAdCost = Math.abs(filtered.reduce((s, e) => s + (e.adCost || 0), 0));
+                      const totalExpense = expenseItems.reduce((s, [, v]) => s + v, 0) + totalAdCost;
 
                       return (
                         <div>
@@ -2458,6 +2461,7 @@ const App: React.FC = () => {
                                   <tr>
                                     <th className="py-1.5 px-3">날짜</th>
                                     <th className="py-1.5 px-3">마진</th>
+                                    <th className="py-1.5 px-3">광고비</th>
                                     <th className="py-1.5 px-3">비용</th>
                                     <th className="py-1.5 px-3">순익</th>
                                     <th className="py-1.5 px-3">비고</th>
@@ -2476,6 +2480,7 @@ const App: React.FC = () => {
                                         <tr className="border-t hover:bg-gray-50 text-center">
                                           <td className="py-1 px-3 text-gray-600 font-bold">{date.slice(5)}</td>
                                           <td className="py-1 px-3 font-bold">{dayMargin.toLocaleString()}</td>
+                                          <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].adCost ? byDate[date].adCost.toLocaleString() : '-'}</td>
                                           <td className="py-1 px-3">
                                             <button
                                               onClick={() => setExpandedCostDate(isExpanded ? null : date)}
@@ -2497,7 +2502,7 @@ const App: React.FC = () => {
                                         </tr>
                                         {isExpanded && (
                                           <tr>
-                                            <td colSpan={5} className="bg-blue-50 px-6 py-2">
+                                            <td colSpan={6} className="bg-blue-50 px-6 py-2">
                                               <div className="space-y-1.5">
                                                 {dayCostItems.map(item => (
                                                   <div key={item.id} className="flex items-center justify-between text-xs">
@@ -2603,6 +2608,11 @@ const App: React.FC = () => {
                                     </tr>
                                   </thead>
                                   <tbody>
+                                    <tr className="border-b border-gray-100 bg-red-50">
+                                      <td className="py-1.5 px-3 text-gray-700 font-bold">광고비</td>
+                                      <td className="py-1.5 px-3 text-right font-bold">{totalAdCost ? totalAdCost.toLocaleString() : '-'}</td>
+                                      <td className="py-1.5 px-3 text-right text-gray-500">{totalExpense && totalAdCost ? Math.round(totalAdCost / totalExpense * 100) : 0}%</td>
+                                    </tr>
                                     {costCategories.map(cat => {
                                       const amt = expenseByCategory[cat] || 0;
                                       return (
