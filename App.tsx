@@ -2699,7 +2699,7 @@ const App: React.FC = () => {
                                     </div>
                                     <span className="sm:ml-auto text-base sm:text-lg font-black" style={{color: profit >= 0 ? '#16a34a' : '#dc2626'}}>{profit.toLocaleString()}</span>
                                   </div>
-                                  <div className="text-[11px] bg-gray-50 px-3 sm:px-4 pb-2 flex flex-wrap gap-2 sm:gap-4 text-gray-400 font-bold">
+                                  <div className="text-xs bg-gray-50 px-3 sm:px-4 pb-2 flex flex-wrap gap-2 sm:gap-4 text-gray-400 font-bold">
                                     <span>공급가 {totals.supplyPrice.toLocaleString()}</span>
                                     <span>마진 {totals.totalMargin.toLocaleString()}</span>
                                     <span>수량 {totals.quantity}</span>
