@@ -427,7 +427,7 @@ const App: React.FC = () => {
   const [pendingUpload, setPendingUpload] = useState<{
     uploadDate: string;
     salesItems: { docId: string; product: string; productDetail: string; quantity: number; sellingPrice: number; supplyPrice: number; marginPerUnit: number; totalMargin: number; adCost: number; housePurchase: number; solution: number }[];
-    expenseItems: { name: string; amount: number }[];
+    expenseItems: { name: string; amount: number; description: string }[];
   } | null>(null);
   // 마지막 업로드 삭제용
   const [lastUploadInfo, setLastUploadInfo] = useState<{ uploadDate: string; salesDocIds: string[]; costDocIds: string[] } | null>(null);
@@ -496,19 +496,29 @@ const App: React.FC = () => {
 
     // 판매 항목 합산 (A열 있는 행)
     const merged: Record<string, { product: string; details: string[]; quantity: number; sellingPrice: number; supplyPrice: number; totalMargin: number }> = {};
-    // 비용 항목 합산 (A열 비어있는 행 → B열 품목명이 카테고리)
-    const expenseMerged: Record<string, number> = {};
+    // 비용 항목 합산 ([비용] 섹션 아래 행 → B열 품목명이 카테고리)
+    const expenseMerged: Record<string, { amount: number; descriptions: string[] }> = {};
+    let inExpenseSection = false;
 
     for (const row of rows) {
       const product = String(row['등록상품명'] || row['업체명'] || '').trim();
       const productDetail = String(row['품목명'] || '').trim();
 
+      // [비용] 마커 감지
+      if (productDetail === '[비용]') {
+        inExpenseSection = true;
+        continue;
+      }
+
       if (!product) {
-        // A열 비어있음 → 비용 항목
-        if (productDetail) {
-          const amount = Math.abs(Number(row['총마진'] || 0));
+        // A열 비어있음 → 비용 항목 (지출금액 컬럼 우선, 총마진 폴백)
+        if (productDetail && inExpenseSection) {
+          const amount = Math.abs(Number(row['지출금액'] || row['총마진'] || 0));
+          const description = String(row['지출내역'] || '').trim();
           if (amount > 0) {
-            expenseMerged[productDetail] = (expenseMerged[productDetail] || 0) + amount;
+            if (!expenseMerged[productDetail]) expenseMerged[productDetail] = { amount: 0, descriptions: [] };
+            expenseMerged[productDetail].amount += amount;
+            if (description) expenseMerged[productDetail].descriptions.push(description);
           }
         }
         continue;
@@ -551,7 +561,7 @@ const App: React.FC = () => {
       };
     });
 
-    const expenseItems = Object.entries(expenseMerged).map(([name, amount]) => ({ name, amount }));
+    const expenseItems = Object.entries(expenseMerged).map(([name, { amount, descriptions }]) => ({ name, amount, description: descriptions.join(', ') }));
 
     setPendingUpload({ uploadDate, salesItems, expenseItems });
     e.target.value = '';
@@ -588,6 +598,7 @@ const App: React.FC = () => {
         date: uploadDate,
         name: item.name,
         amount: item.amount,
+        ...(item.description ? { description: item.description } : {}),
       });
       savedCostIds.push(costDocId);
     }
@@ -958,6 +969,42 @@ const App: React.FC = () => {
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  const handleManualImagePaste = (id: string, e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          const base64Image = reader.result as string;
+          await updateDoc(doc(db, 'manualEntries', id), { proofImage: base64Image });
+          try {
+            const { extractOrderInfo } = await import('./services/geminiService');
+            const result = await extractOrderInfo(base64Image);
+            console.log('[Paste OCR] 결과:', result);
+            const updates: Partial<ManualEntry> = {};
+            if (result.orderNumber) updates.orderNumber = result.orderNumber;
+            if (result.receiverName) updates.name2 = result.receiverName;
+            else if (result.ordererName) updates.name2 = result.ordererName;
+            if (result.address) updates.address = result.address;
+            if (result.phone) updates.emergencyContact = result.phone;
+            if (Object.keys(updates).length > 0) {
+              await updateDoc(doc(db, 'manualEntries', id), updates);
+            }
+          } catch (err) {
+            console.error('[Paste OCR] 실패:', err);
+          }
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+    }
   };
 
   const deleteSelectedManualEntries = async () => {
@@ -2313,6 +2360,7 @@ const App: React.FC = () => {
                     <button onClick={() => setSalesSubTab('summary')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'summary' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>요약</button>
                     <button onClick={() => setSalesSubTab('profitLoss')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'profitLoss' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>손익표</button>
                     <button onClick={() => setSalesSubTab('salesDetail')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'salesDetail' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>품목별판매</button>
+                    <button onClick={() => setSalesSubTab('expenses')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'expenses' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>지출내역</button>
                   </div>
 
                   {salesSubTab === 'summary' ? (() => {
@@ -2592,7 +2640,10 @@ const App: React.FC = () => {
                                               <div className="space-y-1.5">
                                                 {dayCostItems.map(item => (
                                                   <div key={item.id} className="flex items-center justify-between text-xs">
-                                                    <span className="text-gray-600">{item.name}</span>
+                                                    <div className="flex items-center gap-2">
+                                                      <span className="text-gray-600">{item.name}</span>
+                                                      {item.description && <span className="text-gray-400">({item.description})</span>}
+                                                    </div>
                                                     <div className="flex items-center gap-2">
                                                       <span className="font-bold text-gray-700">{item.amount.toLocaleString()}원</span>
                                                       <button onClick={() => handleDeleteCostItem(item.id)} className="text-red-400 hover:text-red-600">&times;</button>
@@ -2727,6 +2778,128 @@ const App: React.FC = () => {
                                 </table>
                               </div>
                             </div>
+                          </div>
+                        </div>
+                      );
+                    })()
+                  ) : salesSubTab === 'expenses' ? (
+                    /* ===== 지출내역 ===== */
+                    (() => {
+                      const monthlyCosts = dailyCosts.filter(c => c.date.startsWith(salesMonthStr)).sort((a, b) => a.date.localeCompare(b.date));
+                      const totalAmount = monthlyCosts.reduce((s, c) => s + c.amount, 0);
+                      // 카테고리별 합산
+                      const byCategory: Record<string, number> = {};
+                      monthlyCosts.forEach(c => { byCategory[c.name] = (byCategory[c.name] || 0) + c.amount; });
+                      const categoryItems = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
+
+                      return (
+                        <div>
+                          {/* 카테고리별 요약 */}
+                          {categoryItems.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mb-4">
+                              {categoryItems.map(([cat, amt]) => (
+                                <div key={cat} className="px-3 py-1.5 bg-gray-50 rounded-xl text-xs">
+                                  <span className="text-gray-500 font-bold">{cat}</span>
+                                  <span className="ml-2 font-black text-gray-700">{amt.toLocaleString()}</span>
+                                </div>
+                              ))}
+                              <div className="px-3 py-1.5 bg-red-50 rounded-xl text-xs">
+                                <span className="text-red-500 font-bold">합계</span>
+                                <span className="ml-2 font-black text-red-600">{totalAmount.toLocaleString()}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {monthlyCosts.length === 0 ? (
+                            <p className="text-gray-300 text-center py-16">등록된 지출 내역이 없습니다.</p>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-xs">
+                                <thead className="bg-gray-100 text-gray-500 font-bold text-center">
+                                  <tr>
+                                    <th className="py-1.5 px-3">날짜</th>
+                                    <th className="py-1.5 px-3">카테고리</th>
+                                    <th className="py-1.5 px-3">금액</th>
+                                    <th className="py-1.5 px-3">내역</th>
+                                    <th className="py-1.5 px-3 w-8"></th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {monthlyCosts.map(item => (
+                                    <tr key={item.id} className="border-t hover:bg-gray-50 text-center">
+                                      <td className="py-1.5 px-3 text-gray-600 font-bold">{item.date.slice(5)}</td>
+                                      <td className="py-1.5 px-3">
+                                        <span className="px-2 py-0.5 bg-gray-100 rounded-lg text-gray-700 font-bold">{item.name}</span>
+                                      </td>
+                                      <td className="py-1.5 px-3 font-bold text-red-600">{item.amount.toLocaleString()}</td>
+                                      <td className="py-1.5 px-3 text-gray-500">{item.description || '-'}</td>
+                                      <td className="py-1.5 px-1">
+                                        <button onClick={() => handleDeleteCostItem(item.id)} className="text-red-300 hover:text-red-500 text-xs">&times;</button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot>
+                                  <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold text-center">
+                                    <td className="py-2 px-3"></td>
+                                    <td className="py-2 px-3 text-gray-700">합계</td>
+                                    <td className="py-2 px-3 text-red-600">{totalAmount.toLocaleString()}</td>
+                                    <td className="py-2 px-3"></td>
+                                    <td></td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+                          )}
+
+                          {/* 수동 비용 추가 */}
+                          <div className="mt-4 flex gap-2 items-center bg-gray-50 p-3 rounded-xl">
+                            <select
+                              className="flex-1 px-3 py-2 bg-white rounded-xl text-xs border border-gray-200 outline-none focus:border-blue-400 font-bold"
+                              value={newCostName}
+                              onChange={e => {
+                                if (e.target.value === '__add__') {
+                                  const name = prompt('새 비용 항목명을 입력하세요');
+                                  if (name && name.trim()) { addCostCategory(name); setNewCostName(name.trim()); }
+                                  else e.target.value = newCostName;
+                                } else setNewCostName(e.target.value);
+                              }}
+                            >
+                              <option value="">카테고리 선택</option>
+                              {costCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                              <option value="__add__">+ 항목 추가...</option>
+                            </select>
+                            <input
+                              type="number"
+                              className="w-24 px-3 py-2 bg-white rounded-xl text-xs border border-gray-200 outline-none focus:border-blue-400"
+                              placeholder="금액"
+                              value={newCostAmount}
+                              onChange={e => setNewCostAmount(e.target.value)}
+                            />
+                            <input
+                              type="text"
+                              id="expenseDescInput"
+                              className="flex-1 px-3 py-2 bg-white rounded-xl text-xs border border-gray-200 outline-none focus:border-blue-400"
+                              placeholder="내역 (선택)"
+                            />
+                            <button
+                              onClick={async () => {
+                                const name = newCostName.trim();
+                                const amount = Number(newCostAmount);
+                                if (!name || !amount) return;
+                                const descEl = document.getElementById('expenseDescInput') as HTMLInputElement;
+                                const description = descEl?.value?.trim() || '';
+                                const today = new Date();
+                                const dateStr = (today.getFullYear() === salesMonth.year && today.getMonth() + 1 === salesMonth.month)
+                                  ? today.toISOString().split('T')[0]
+                                  : `${salesMonthStr}-01`;
+                                await addDoc(collection(db, 'dailyCosts'), { date: dateStr, name, amount, ...(description ? { description } : {}) });
+                                setNewCostName('');
+                                setNewCostAmount('');
+                                if (descEl) descEl.value = '';
+                              }}
+                              className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700"
+                            >추가</button>
                           </div>
                         </div>
                       );
@@ -3293,6 +3466,8 @@ const App: React.FC = () => {
                                   <td className="p-0.5 border border-gray-200 hidden md:table-cell"
                                     onDragOver={(e) => e.preventDefault()}
                                     onDrop={(e) => handleManualImageDrop(entry.id, e)}
+                                    onPaste={(e) => handleManualImagePaste(entry.id, e)}
+                                    tabIndex={0}
                                   >
                                     <div className="relative h-5 w-5 mx-auto group/img">
                                       {entry.proofImage ? (
@@ -3724,6 +3899,7 @@ const App: React.FC = () => {
                         <tr className="border-b border-red-100">
                           <th className="py-2 px-3 text-left text-gray-500 font-bold">카테고리</th>
                           <th className="py-2 px-3 text-right text-gray-500 font-bold">금액</th>
+                          <th className="py-2 px-3 text-left text-gray-500 font-bold">내역</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3731,6 +3907,7 @@ const App: React.FC = () => {
                           <tr key={idx} className="border-b border-red-100 last:border-0">
                             <td className="py-1.5 px-3 text-gray-700">{item.name}</td>
                             <td className="py-1.5 px-3 text-right font-bold text-red-600">{item.amount.toLocaleString()}</td>
+                            <td className="py-1.5 px-3 text-gray-500">{item.description || ''}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -3738,6 +3915,7 @@ const App: React.FC = () => {
                         <tr className="bg-red-100 font-bold">
                           <td className="py-2 px-3 text-gray-700">합계</td>
                           <td className="py-2 px-3 text-right text-red-600">{pendingUpload.expenseItems.reduce((s, i) => s + i.amount, 0).toLocaleString()}</td>
+                          <td></td>
                         </tr>
                       </tfoot>
                     </table>
