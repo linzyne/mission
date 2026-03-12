@@ -3463,7 +3463,7 @@ const App: React.FC = () => {
                                       readOnly
                                     />
                                   </td>
-                                  <td className="p-0.5 border border-gray-200 hidden md:table-cell"
+                                  <td className="p-0.5 border border-gray-200 hidden md:table-cell focus:outline focus:outline-2 focus:outline-blue-400"
                                     onDragOver={(e) => e.preventDefault()}
                                     onDrop={(e) => handleManualImageDrop(entry.id, e)}
                                     onPaste={(e) => handleManualImagePaste(entry.id, e)}
@@ -3479,10 +3479,15 @@ const App: React.FC = () => {
                                           >&times;</button>
                                         </>
                                       ) : (
-                                        <label className="cursor-pointer block w-full h-full">
-                                          <div className="w-full h-full bg-gray-50 border border-dashed border-gray-200 flex items-center justify-center text-[8px] text-gray-300">UP</div>
-                                          <input type="file" className="hidden" onChange={(e) => handleManualImageUpload(entry.id, e)} />
-                                        </label>
+                                        <div className="cursor-pointer block w-full h-full" onDoubleClick={() => {
+                                          const input = document.createElement('input');
+                                          input.type = 'file';
+                                          input.accept = 'image/*';
+                                          input.onchange = (ev) => handleManualImageUpload(entry.id, ev as any);
+                                          input.click();
+                                        }}>
+                                          <div className="w-full h-full bg-gray-50 border border-dashed border-gray-200 flex items-center justify-center text-[8px] text-gray-300">V</div>
+                                        </div>
                                       )}
                                     </div>
                                   </td>
