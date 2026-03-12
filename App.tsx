@@ -423,6 +423,15 @@ const App: React.FC = () => {
   const [expenseUploading, setExpenseUploading] = useState(false);
   const [pendingExpenses, setPendingExpenses] = useState<{date: string; name: string; amount: number; originalDesc: string}[] | null>(null);
 
+  // 업무일지 업로드 미리보기 상태
+  const [pendingUpload, setPendingUpload] = useState<{
+    uploadDate: string;
+    salesItems: { docId: string; product: string; productDetail: string; quantity: number; sellingPrice: number; supplyPrice: number; marginPerUnit: number; totalMargin: number; adCost: number; housePurchase: number; solution: number }[];
+    expenseItems: { name: string; amount: number }[];
+  } | null>(null);
+  // 마지막 업로드 삭제용
+  const [lastUploadInfo, setLastUploadInfo] = useState<{ uploadDate: string; salesDocIds: string[]; costDocIds: string[] } | null>(null);
+
   const handleExpenseScreenshot = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -472,14 +481,12 @@ const App: React.FC = () => {
     const data = await file.arrayBuffer();
     const wb = XLSX.read(data);
 
-    // 마진시트 찾기
     const sheetName = wb.SheetNames.find(n => n.includes('마진')) || wb.SheetNames[wb.SheetNames.length - 1];
     const ws = wb.Sheets[sheetName];
     const rows: any[] = XLSX.utils.sheet_to_json(ws);
 
     if (rows.length === 0) { alert('마진시트에 데이터가 없습니다.'); return; }
 
-    // 업로드 날짜: 파일명에서 추출 (예: 2026-03-10_업무일지.xlsx → 2026-03-10)
     const dateMatch = file.name.match(/(\d{4}-\d{2}-\d{2})/);
     const today = new Date();
     const uploadDate = dateMatch ? dateMatch[1]
@@ -487,12 +494,26 @@ const App: React.FC = () => {
         ? today.toISOString().split('T')[0]
         : `${salesMonthStr}-01`;
 
-    // 같은 등록상품명 기준으로 합산 (날짜+상품명 = 1행)
+    // 판매 항목 합산 (A열 있는 행)
     const merged: Record<string, { product: string; details: string[]; quantity: number; sellingPrice: number; supplyPrice: number; totalMargin: number }> = {};
+    // 비용 항목 합산 (A열 비어있는 행 → B열 품목명이 카테고리)
+    const expenseMerged: Record<string, number> = {};
+
     for (const row of rows) {
       const product = String(row['등록상품명'] || row['업체명'] || '').trim();
       const productDetail = String(row['품목명'] || '').trim();
-      if (!product) continue;
+
+      if (!product) {
+        // A열 비어있음 → 비용 항목
+        if (productDetail) {
+          const amount = Math.abs(Number(row['총마진'] || 0));
+          if (amount > 0) {
+            expenseMerged[productDetail] = (expenseMerged[productDetail] || 0) + amount;
+          }
+        }
+        continue;
+      }
+
       if (!merged[product]) {
         merged[product] = { product, details: [], quantity: 0, sellingPrice: 0, supplyPrice: 0, totalMargin: 0 };
       }
@@ -503,13 +524,20 @@ const App: React.FC = () => {
       merged[product].totalMargin += Number(row['총마진'] || 0);
     }
 
-    const batch = writeBatch(db);
-    let count = 0;
-    for (const m of Object.values(merged)) {
-      const docId = `${uploadDate}_${m.product}`;
-      const existingSD = salesDaily.find(e => e.date === uploadDate && e.product === m.product);
-      batch.set(doc(db, 'salesDaily', docId), {
-        date: uploadDate,
+    // 비용 카테고리 검증
+    const expenseNames = Object.keys(expenseMerged);
+    const invalidCategories = expenseNames.filter(name => !costCategories.includes(name));
+    if (invalidCategories.length > 0) {
+      alert(`일치하지 않는 비용 카테고리가 있습니다:\n\n${invalidCategories.map(c => `• "${c}"`).join('\n')}\n\n기존 카테고리: ${costCategories.join(', ')}\n\n엑셀 파일의 품목명을 수정 후 다시 업로드해주세요.`);
+      e.target.value = '';
+      return;
+    }
+
+    // 미리보기 데이터 세팅 (아직 저장 안 함)
+    const salesItems = Object.values(merged).map(m => {
+      const existingSD = salesDaily.find(entry => entry.date === uploadDate && entry.product === m.product);
+      return {
+        docId: `${uploadDate}_${m.product}`,
         product: m.product,
         productDetail: m.details.join(', '),
         quantity: m.quantity,
@@ -520,12 +548,70 @@ const App: React.FC = () => {
         adCost: existingSD?.adCost || 0,
         housePurchase: existingSD?.housePurchase || 0,
         solution: existingSD?.solution || 0,
+      };
+    });
+
+    const expenseItems = Object.entries(expenseMerged).map(([name, amount]) => ({ name, amount }));
+
+    setPendingUpload({ uploadDate, salesItems, expenseItems });
+    e.target.value = '';
+  };
+
+  // 업로드 미리보기 확인 → 실제 저장
+  const handleConfirmUpload = async () => {
+    if (!pendingUpload) return;
+    const { uploadDate, salesItems, expenseItems } = pendingUpload;
+    const batch = writeBatch(db);
+    const savedSalesIds: string[] = [];
+    const savedCostIds: string[] = [];
+
+    for (const item of salesItems) {
+      batch.set(doc(db, 'salesDaily', item.docId), {
+        date: uploadDate,
+        product: item.product,
+        productDetail: item.productDetail,
+        quantity: item.quantity,
+        sellingPrice: item.sellingPrice,
+        supplyPrice: item.supplyPrice,
+        marginPerUnit: item.marginPerUnit,
+        totalMargin: item.totalMargin,
+        adCost: item.adCost,
+        housePurchase: item.housePurchase,
+        solution: item.solution,
       });
-      count++;
+      savedSalesIds.push(item.docId);
+    }
+
+    for (const item of expenseItems) {
+      const costDocId = `${uploadDate}_${item.name}`;
+      batch.set(doc(db, 'dailyCosts', costDocId), {
+        date: uploadDate,
+        name: item.name,
+        amount: item.amount,
+      });
+      savedCostIds.push(costDocId);
+    }
+
+    await batch.commit();
+    setLastUploadInfo({ uploadDate, salesDocIds: savedSalesIds, costDocIds: savedCostIds });
+    setPendingUpload(null);
+    alert(`${uploadDate} / ${salesItems.length}개 품목${expenseItems.length > 0 ? `, ${expenseItems.length}건 비용` : ''} 등록 완료`);
+  };
+
+  // 마지막 업로드 삭제
+  const handleDeleteLastUpload = async () => {
+    if (!lastUploadInfo) return;
+    if (!confirm(`${lastUploadInfo.uploadDate} 업로드 데이터를 삭제하시겠습니까?\n\n• 판매 ${lastUploadInfo.salesDocIds.length}건\n• 비용 ${lastUploadInfo.costDocIds.length}건`)) return;
+    const batch = writeBatch(db);
+    for (const id of lastUploadInfo.salesDocIds) {
+      batch.delete(doc(db, 'salesDaily', id));
+    }
+    for (const id of lastUploadInfo.costDocIds) {
+      batch.delete(doc(db, 'dailyCosts', id));
     }
     await batch.commit();
-    alert(`${uploadDate} / ${count}개 품목 등록 완료`);
-    e.target.value = '';
+    alert(`${lastUploadInfo.uploadDate} 업로드 데이터가 삭제되었습니다.`);
+    setLastUploadInfo(null);
   };
 
   const [showSuccess, setShowSuccess] = useState(false);
@@ -2659,6 +2745,9 @@ const App: React.FC = () => {
                           )}
                           <button onClick={() => salesFileRef.current?.click()} className="px-5 py-2.5 bg-green-600 text-white rounded-xl font-black text-xs hover:bg-green-700 transition-colors">업무일지 업로드</button>
                           <input ref={salesFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleSalesUpload} />
+                          {lastUploadInfo && (
+                            <button onClick={handleDeleteLastUpload} className="px-4 py-2.5 bg-red-100 text-red-600 rounded-xl font-black text-xs hover:bg-red-200 transition-colors">업로드 삭제 ({lastUploadInfo.uploadDate})</button>
+                          )}
                           <button onClick={handleSalesAddProduct} className="px-4 py-2.5 bg-gray-200 text-gray-600 rounded-xl font-black text-xs hover:bg-gray-300 transition-colors">+ 품목추가</button>
 
                         </div>
@@ -3570,6 +3659,103 @@ const App: React.FC = () => {
               <button onClick={handleConfirmExpenses} disabled={pendingExpenses.length === 0}
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 disabled:opacity-40 transition-colors">
                 {pendingExpenses.length}건 저장
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 업무일지 업로드 미리보기 모달 */}
+      {pendingUpload && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setPendingUpload(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100">
+              <h3 className="text-lg font-bold text-gray-800">업로드 미리보기</h3>
+              <p className="text-xs text-gray-500 mt-1">{pendingUpload.uploadDate} · 확인 후 저장하세요</p>
+            </div>
+            <div className="p-4 space-y-4">
+              {/* 판매 항목 */}
+              {pendingUpload.salesItems.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                    판매 항목 ({pendingUpload.salesItems.length}건)
+                  </h4>
+                  <div className="bg-gray-50 rounded-xl overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-gray-200">
+                          <th className="py-2 px-3 text-left text-gray-500 font-bold">품목</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">수량</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">마진</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pendingUpload.salesItems.map((item, idx) => (
+                          <tr key={idx} className="border-b border-gray-100 last:border-0">
+                            <td className="py-1.5 px-3 text-gray-700">{item.product}</td>
+                            <td className="py-1.5 px-3 text-right text-gray-600">{item.quantity}</td>
+                            <td className="py-1.5 px-3 text-right font-bold">{item.totalMargin.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-gray-100 font-bold">
+                          <td className="py-2 px-3 text-gray-700">합계</td>
+                          <td className="py-2 px-3 text-right text-gray-600">{pendingUpload.salesItems.reduce((s, i) => s + i.quantity, 0)}</td>
+                          <td className="py-2 px-3 text-right">{pendingUpload.salesItems.reduce((s, i) => s + i.totalMargin, 0).toLocaleString()}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* 비용 항목 */}
+              {pendingUpload.expenseItems.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+                    <span className="w-2 h-2 bg-red-500 rounded-full"></span>
+                    비용 항목 ({pendingUpload.expenseItems.length}건)
+                  </h4>
+                  <div className="bg-red-50 rounded-xl overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-red-100">
+                          <th className="py-2 px-3 text-left text-gray-500 font-bold">카테고리</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">금액</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pendingUpload.expenseItems.map((item, idx) => (
+                          <tr key={idx} className="border-b border-red-100 last:border-0">
+                            <td className="py-1.5 px-3 text-gray-700">{item.name}</td>
+                            <td className="py-1.5 px-3 text-right font-bold text-red-600">{item.amount.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-red-100 font-bold">
+                          <td className="py-2 px-3 text-gray-700">합계</td>
+                          <td className="py-2 px-3 text-right text-red-600">{pendingUpload.expenseItems.reduce((s, i) => s + i.amount, 0).toLocaleString()}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {pendingUpload.salesItems.length === 0 && pendingUpload.expenseItems.length === 0 && (
+                <p className="text-center text-gray-400 text-sm py-4">등록할 항목이 없습니다.</p>
+              )}
+            </div>
+            <div className="p-4 border-t border-gray-100 flex gap-2">
+              <button onClick={() => setPendingUpload(null)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 transition-colors">취소</button>
+              <button onClick={handleConfirmUpload}
+                disabled={pendingUpload.salesItems.length === 0 && pendingUpload.expenseItems.length === 0}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 disabled:opacity-40 transition-colors">
+                저장
               </button>
             </div>
           </div>
