@@ -62,6 +62,7 @@ const App: React.FC = () => {
 
   // Firestore Sync: Manual Entries
   const [manualEntries, setManualEntries] = useState<ManualEntry[]>([]);
+  const [ocrLoadingIds, setOcrLoadingIds] = useState<Set<string>>(new Set());
   useEffect(() => {
     const q = query(collection(db, 'manualEntries'));
     const unsub = onSnapshot(q, (snapshot) => {
@@ -948,6 +949,7 @@ const App: React.FC = () => {
     reader.onloadend = async () => {
       const base64Image = reader.result as string;
       await updateDoc(doc(db, 'manualEntries', id), { proofImage: base64Image });
+      setOcrLoadingIds(prev => new Set(prev).add(id));
 
       try {
         const { extractOrderInfo } = await import('./services/geminiService');
@@ -966,6 +968,8 @@ const App: React.FC = () => {
         }
       } catch (err) {
         console.error('[Drop OCR] 실패:', err);
+      } finally {
+        setOcrLoadingIds(prev => { const s = new Set(prev); s.delete(id); return s; });
       }
     };
     reader.readAsDataURL(file);
@@ -984,6 +988,7 @@ const App: React.FC = () => {
         reader.onloadend = async () => {
           const base64Image = reader.result as string;
           await updateDoc(doc(db, 'manualEntries', id), { proofImage: base64Image });
+          setOcrLoadingIds(prev => new Set(prev).add(id));
           try {
             const { extractOrderInfo } = await import('./services/geminiService');
             const result = await extractOrderInfo(base64Image);
@@ -999,6 +1004,8 @@ const App: React.FC = () => {
             }
           } catch (err) {
             console.error('[Paste OCR] 실패:', err);
+          } finally {
+            setOcrLoadingIds(prev => { const s = new Set(prev); s.delete(id); return s; });
           }
         };
         reader.readAsDataURL(file);
@@ -1311,6 +1318,7 @@ const App: React.FC = () => {
     reader.onloadend = async () => {
       const base64Image = reader.result as string;
       updateManualEntry(id, 'proofImage', base64Image);
+      setOcrLoadingIds(prev => new Set(prev).add(id));
 
       try {
         const { extractOrderInfo } = await import('./services/geminiService');
@@ -1329,6 +1337,8 @@ const App: React.FC = () => {
         }
       } catch (err) {
         console.error('[Upload OCR] 실패:', err);
+      } finally {
+        setOcrLoadingIds(prev => { const s = new Set(prev); s.delete(id); return s; });
       }
     };
     reader.readAsDataURL(file);
@@ -1387,6 +1397,7 @@ const App: React.FC = () => {
       const targetEntry = available[i];
       const base64Image = await readFileAsDataURL(fileArr[i]);
       await updateDoc(doc(db, 'manualEntries', targetEntry.id), { proofImage: base64Image });
+      setOcrLoadingIds(prev => new Set(prev).add(targetEntry.id));
 
       try {
         const result = await extractOrderInfo(base64Image);
@@ -1404,6 +1415,8 @@ const App: React.FC = () => {
         }
       } catch (err) {
         console.error(`[Multi OCR ${i + 1}] 실패:`, err);
+      } finally {
+        setOcrLoadingIds(prev => { const s = new Set(prev); s.delete(targetEntry.id); return s; });
       }
     }
   };
@@ -3473,8 +3486,19 @@ const App: React.FC = () => {
                                       {entry.proofImage ? (
                                         <>
                                           <img src={entry.proofImage} onClick={() => openPreview(entry.proofImage)} className="w-full h-full object-cover border cursor-pointer" />
+                                          {ocrLoadingIds.has(entry.id) ? (
+                                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center rounded">
+                                              <div className="w-4 h-1 bg-gray-300 rounded-full overflow-hidden">
+                                                <div className="h-full bg-blue-400 rounded-full animate-pulse" style={{width: '60%', animation: 'ocrProgress 1.5s ease-in-out infinite'}} />
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <div className="absolute -top-1 -left-1 w-3 h-3 bg-green-500 rounded-full flex items-center justify-center">
+                                              <span className="text-white text-[6px] font-bold">✓</span>
+                                            </div>
+                                          )}
                                           <button
-                                            onClick={(e) => { e.stopPropagation(); updateManualEntry(entry.id, 'proofImage', ''); }}
+                                            onClick={(e) => { e.stopPropagation(); if (window.confirm('이미지를 삭제하시겠습니까?')) updateManualEntry(entry.id, 'proofImage', ''); }}
                                             className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] leading-none flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity shadow-sm"
                                           >&times;</button>
                                         </>
@@ -3486,7 +3510,7 @@ const App: React.FC = () => {
                                           input.onchange = (ev) => handleManualImageUpload(entry.id, ev as any);
                                           input.click();
                                         }}>
-                                          <div className="w-full h-full bg-gray-50 border border-dashed border-gray-200 flex items-center justify-center text-[8px] text-gray-300">V</div>
+                                          <div className="w-full h-full bg-gray-50 border border-dashed border-gray-300 rounded flex items-center justify-center text-[8px] text-gray-400">V</div>
                                         </div>
                                       )}
                                     </div>
@@ -3738,6 +3762,11 @@ const App: React.FC = () => {
         td:hover > .excel-input:not(:focus) {
           background: rgba(59,130,246,0.06);
           border-color: rgba(59,130,246,0.2);
+        }
+        @keyframes ocrProgress {
+          0% { width: 10%; }
+          50% { width: 80%; }
+          100% { width: 10%; }
         }
         @keyframes cellPop {
           0% { transform: scale(1); }
