@@ -3532,14 +3532,30 @@ const App: React.FC = () => {
                                       readOnly
                                     />
                                   </td>
-                                  <td className="p-0.5 border border-gray-200 hidden md:table-cell focus:outline focus:outline-2 focus:outline-blue-400 cursor-pointer"
+                                  <td className="p-0.5 border border-gray-200 hidden md:table-cell focus:outline focus:outline-2 focus:outline-blue-400 cursor-pointer relative"
                                     onDragOver={(e) => e.preventDefault()}
                                     onDrop={(e) => handleManualImageDrop(entry.id, e)}
                                     onPaste={(e) => handleManualImagePaste(entry.id, e)}
-                                    onClick={(e) => { activePasteCellIdRef.current = entry.id; (e.currentTarget as HTMLElement).focus(); }}
-                                    onBlur={() => { if (activePasteCellIdRef.current === entry.id) activePasteCellIdRef.current = null; }}
+                                    onClick={(e) => {
+                                      activePasteCellIdRef.current = entry.id;
+                                      const ta = e.currentTarget.querySelector('textarea');
+                                      if (ta) ta.focus();
+                                      else (e.currentTarget as HTMLElement).focus();
+                                    }}
+                                    onBlur={(e) => {
+                                      if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                                        if (activePasteCellIdRef.current === entry.id) activePasteCellIdRef.current = null;
+                                      }
+                                    }}
                                     tabIndex={0}
                                   >
+                                    <textarea
+                                      className="absolute opacity-0 w-0 h-0 p-0 m-0 border-0 overflow-hidden"
+                                      style={{position:'absolute',top:0,left:0,pointerEvents:'none'}}
+                                      onPaste={(e) => { e.stopPropagation(); handleManualImagePaste(entry.id, e); }}
+                                      tabIndex={-1}
+                                      aria-hidden="true"
+                                    />
                                     <div className="relative h-5 w-5 mx-auto group/img">
                                       {entry.proofImage ? (
                                         <>
