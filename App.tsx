@@ -3532,7 +3532,7 @@ const App: React.FC = () => {
                                       readOnly
                                     />
                                   </td>
-                                  <td className="p-0.5 border border-gray-200 hidden md:table-cell focus:outline focus:outline-2 focus:outline-blue-400 cursor-pointer relative"
+                                  <td className="p-0.5 border border-gray-200 hidden md:table-cell focus:outline focus:outline-2 focus:outline-blue-400 focus-within:outline focus-within:outline-2 focus-within:outline-blue-400 cursor-pointer relative"
                                     onDragOver={(e) => e.preventDefault()}
                                     onDrop={(e) => handleManualImageDrop(entry.id, e)}
                                     onPaste={(e) => handleManualImagePaste(entry.id, e)}
