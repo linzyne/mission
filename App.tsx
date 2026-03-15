@@ -764,6 +764,8 @@ const App: React.FC = () => {
 
   const handleCellContextMenu = (e: React.MouseEvent, entryId: string, field: string) => {
     e.preventDefault();
+    e.stopPropagation();
+    e.nativeEvent.stopImmediatePropagation();
     setColorPicker({ type: 'cell', x: e.clientX, y: e.clientY, entryId, cellField: field });
   };
 
@@ -3490,10 +3492,11 @@ const App: React.FC = () => {
                               const rowColor = isBlue ? 'text-blue-600' : '';
                               const isPink = entry.reservationComplete;
                               const textStyle = isBlue ? { color: '#2563eb' } : entry.textColor ? { color: entry.textColor } : {};
+                              const rowStyle = { ...textStyle, ...(entry.rowBgColor ? { backgroundColor: entry.rowBgColor } : {}) };
                               return (
                                 <tr key={entry.id}
-                                  style={textStyle}
-                                  className={`group hover:bg-blue-100 transition-colors ${isBlue ? 'bg-blue-50/40' : ''}`}
+                                  style={rowStyle}
+                                  className={`group hover:bg-blue-100 transition-colors ${!entry.rowBgColor && isBlue ? 'bg-blue-50/40' : ''}`}
                                 >
                                   <td className="p-0 border border-gray-200 text-center sticky left-0 bg-white z-20 select-none cursor-pointer"
                                     onMouseDown={(e) => {
