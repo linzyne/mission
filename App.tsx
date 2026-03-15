@@ -62,6 +62,7 @@ const App: React.FC = () => {
 
   // Firestore Sync: Manual Entries
   const [manualEntries, setManualEntries] = useState<ManualEntry[]>([]);
+  const [manualEntriesLoaded, setManualEntriesLoaded] = useState(false);
   const [ocrLoadingIds, setOcrLoadingIds] = useState<Set<string>>(new Set());
   useEffect(() => {
     const q = query(collection(db, 'manualEntries'));
@@ -118,6 +119,7 @@ const App: React.FC = () => {
         return (a.createdAt || 0) - (b.createdAt || 0);
       });
       setManualEntries(list);
+      setManualEntriesLoaded(true);
     });
     return () => unsub();
   }, []);
@@ -706,7 +708,7 @@ const App: React.FC = () => {
   const [cellSelection, setCellSelection] = useState<{startRow: number, startCol: number, endRow: number, endCol: number} | null>(null);
 
   // Resizable column widths for purchase list
-  const DEFAULT_COL_WIDTHS: Record<string, number> = { photo: 32, id: 28, count: 32, product: 64, date: 58, name1: 56, name2: 56, orderNumber: 80, address: 64, memo: 56, paymentAmount: 56, emergencyContact: 64, accountNumber: 112, trackingNumber: 80, beforeDeposit: 32, afterDeposit: 32 };
+  const DEFAULT_COL_WIDTHS: Record<string, number> = { photo: 32, id: 28, count: 32, product: 64, date: 64, name1: 56, name2: 56, orderNumber: 80, address: 64, memo: 56, paymentAmount: 56, emergencyContact: 64, accountNumber: 112, trackingNumber: 80, beforeDeposit: 32, afterDeposit: 32 };
   const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
     try { const s = localStorage.getItem('manualColWidths'); return s ? { ...DEFAULT_COL_WIDTHS, ...JSON.parse(s) } : { ...DEFAULT_COL_WIDTHS }; } catch { return { ...DEFAULT_COL_WIDTHS }; }
   });
@@ -1013,6 +1015,53 @@ const App: React.FC = () => {
       }
     }
   };
+
+  // Document-level paste listener (브라우저 호환성: td onPaste가 안 먹는 환경 대응)
+  useEffect(() => {
+    const handleDocPaste = (e: ClipboardEvent) => {
+      if (e.defaultPrevented) return; // React onPaste에서 이미 처리됨
+      if (!activePasteCellIdRef.current) return;
+      const id: string = activePasteCellIdRef.current;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const base64Image = reader.result as string;
+            await updateDoc(doc(db, 'manualEntries', id), { proofImage: base64Image });
+            setOcrLoadingIds(prev => new Set(prev).add(id));
+            try {
+              const { extractOrderInfo } = await import('./services/geminiService');
+              const result = await extractOrderInfo(base64Image);
+              console.log('[DocPaste OCR] 결과:', result);
+              const updates: Partial<ManualEntry> = {};
+              if (result.orderNumber) updates.orderNumber = result.orderNumber;
+              if (result.receiverName) updates.name2 = result.receiverName;
+              else if (result.ordererName) updates.name2 = result.ordererName;
+              if (result.address) updates.address = result.address;
+              if (result.phone) updates.emergencyContact = result.phone;
+              if (Object.keys(updates).length > 0) {
+                await updateDoc(doc(db, 'manualEntries', id), updates);
+              }
+            } catch (err) {
+              console.error('[DocPaste OCR] 실패:', err);
+            } finally {
+              setOcrLoadingIds(prev => { const s = new Set(prev); s.delete(id); return s; });
+            }
+          };
+          reader.readAsDataURL(file);
+          return;
+        }
+      }
+    };
+    document.addEventListener('paste', handleDocPaste);
+    return () => document.removeEventListener('paste', handleDocPaste);
+  }, []);
 
   const deleteSelectedManualEntries = async () => {
     if (selectedManualIds.size === 0) return;
@@ -1345,6 +1394,7 @@ const App: React.FC = () => {
   };
 
   const multiImageInputRef = useRef<HTMLInputElement>(null);
+  const activePasteCellIdRef = useRef<string | null>(null);
 
   const handleMultiImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -3385,7 +3435,13 @@ const App: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="text-[12px]">
-                        {(() => {
+                        {!manualEntriesLoaded ? (
+                          <tr>
+                            <td colSpan={17} className="p-16 text-center text-gray-400 font-bold">
+                              로딩중입니다...
+                            </td>
+                          </tr>
+                        ) : (() => {
                           // 3개월 전 날짜 계산 (검색 최적화)
                           const limitDate = new Date();
                           limitDate.setMonth(limitDate.getMonth() - 3);
@@ -3476,10 +3532,12 @@ const App: React.FC = () => {
                                       readOnly
                                     />
                                   </td>
-                                  <td className="p-0.5 border border-gray-200 hidden md:table-cell focus:outline focus:outline-2 focus:outline-blue-400"
+                                  <td className="p-0.5 border border-gray-200 hidden md:table-cell focus:outline focus:outline-2 focus:outline-blue-400 cursor-pointer"
                                     onDragOver={(e) => e.preventDefault()}
                                     onDrop={(e) => handleManualImageDrop(entry.id, e)}
                                     onPaste={(e) => handleManualImagePaste(entry.id, e)}
+                                    onClick={(e) => { activePasteCellIdRef.current = entry.id; (e.currentTarget as HTMLElement).focus(); }}
+                                    onBlur={() => { if (activePasteCellIdRef.current === entry.id) activePasteCellIdRef.current = null; }}
                                     tabIndex={0}
                                   >
                                     <div className="relative h-5 w-5 mx-auto group/img">
