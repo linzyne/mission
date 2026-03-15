@@ -680,6 +680,17 @@ const App: React.FC = () => {
     return () => document.removeEventListener('mousedown', handler);
   }, [colorPicker]);
 
+  // 네이티브 capture 리스너로 input 셀 우클릭 시 브라우저 메뉴 완전 차단
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest('input[data-row]')) {
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('contextmenu', handler, true);
+    return () => document.removeEventListener('contextmenu', handler, true);
+  }, []);
+
   const handleColorSelect = async (color: string) => {
     if (!colorPicker) return;
     if (colorPicker.type === 'cell' && colorPicker.entryId && colorPicker.cellField) {
@@ -1415,6 +1426,7 @@ const App: React.FC = () => {
 
   const multiImageInputRef = useRef<HTMLInputElement>(null);
   const activePasteCellIdRef = useRef<string | null>(null);
+  const tableWrapRef = useRef<HTMLDivElement>(null);
 
   const handleMultiImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -3387,14 +3399,7 @@ const App: React.FC = () => {
                       </div>
                     </div>
                   )}
-                  <div className="overflow-auto relative scrollbar-hide" style={{ maxHeight: 'calc(100vh - 220px)' }}
-                    onContextMenu={(e) => {
-                      // input 셀 위에서 우클릭 시 브라우저 메뉴 차단
-                      const target = e.target as HTMLElement;
-                      if (target.closest('input[data-row]')) {
-                        e.preventDefault();
-                      }
-                    }}
+                  <div ref={tableWrapRef} className="overflow-auto relative scrollbar-hide" style={{ maxHeight: 'calc(100vh - 220px)' }}
                     onMouseUp={() => { isDraggingRef.current = false; handleCellMouseUp(); }}
                     onMouseLeave={() => { isDraggingRef.current = false; handleCellMouseUp(); }}
                     onMouseDown={(e) => {
