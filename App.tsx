@@ -1331,6 +1331,24 @@ const App: React.FC = () => {
     });
   };
 
+  const insertRowAfterSelected = async () => {
+    if (selectedManualIds.size === 0) { alert('행을 먼저 선택해주세요.'); return; }
+    const selectedEntries = manualEntries.filter(e => selectedManualIds.has(e.id));
+    // 선택된 항목 중 createdAt이 가장 큰 것(화면상 마지막) 찾기
+    const lastSelected = selectedEntries.reduce((a, b) => {
+      if (a.date !== b.date) return a.date > b.date ? b : a; // date desc이므로 작은 date가 아래
+      return (a.createdAt || 0) > (b.createdAt || 0) ? a : b;
+    });
+    const newRow = createEmptyRow(lastSelected.date);
+    newRow.createdAt = (lastSelected.createdAt || Date.now()) + 1;
+    await setDoc(doc(db, 'manualEntries', newRow.id), newRow);
+    pushUndo({
+      type: 'add',
+      entries: [{ id: newRow.id, data: {} }],
+      description: '행 삽입'
+    });
+  };
+
   const updateManualEntry = async (id: string, field: keyof ManualEntry, value: any) => {
     const entry = manualEntries.find(e => e.id === id);
     if (!entry) return;
@@ -3285,6 +3303,7 @@ const App: React.FC = () => {
                           const text = selected.map(e => `${e.name2 || ''}\t${e.orderNumber || ''}`).join('\n');
                           navigator.clipboard.writeText(text).then(() => alert(`${selected.length}건 복사 완료`));
                         }} className="px-2.5 py-1 bg-white text-blue-600 rounded-lg font-bold text-[11px] hover:bg-blue-100 border border-blue-200">복사</button>
+                        <button onClick={insertRowAfterSelected} className="px-2.5 py-1 bg-white text-gray-700 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300">행삽입</button>
                         <button onClick={handleReservationComplete} className="px-2.5 py-1 bg-pink-500 text-white rounded-lg font-bold text-[11px] hover:bg-pink-600">예약완료</button>
                         <button onClick={handleReservationCancel} className="px-2.5 py-1 bg-white text-pink-500 rounded-lg font-bold text-[11px] hover:bg-pink-50 border border-pink-200">예약취소</button>
                         <button onClick={downloadManualCsv} className="px-2.5 py-1 bg-white text-green-600 rounded-lg font-bold text-[11px] hover:bg-green-50 border border-green-200">엑셀</button>
