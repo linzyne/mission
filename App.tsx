@@ -3388,6 +3388,13 @@ const App: React.FC = () => {
                     </div>
                   )}
                   <div className="overflow-auto relative scrollbar-hide" style={{ maxHeight: 'calc(100vh - 220px)' }}
+                    onContextMenu={(e) => {
+                      // input 셀 위에서 우클릭 시 브라우저 메뉴 차단
+                      const target = e.target as HTMLElement;
+                      if (target.closest('input[data-row]')) {
+                        e.preventDefault();
+                      }
+                    }}
                     onMouseUp={() => { isDraggingRef.current = false; handleCellMouseUp(); }}
                     onMouseLeave={() => { isDraggingRef.current = false; handleCellMouseUp(); }}
                     onMouseDown={(e) => {
