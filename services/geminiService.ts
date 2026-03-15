@@ -460,15 +460,17 @@ export const extractOrderInfo = async (base64Image: string): Promise<OcrResult> 
       console.log('[OCR] 파싱 결과:', result);
     }
 
-    // 항상 이름을 한번 더 확인 (텍스트 통째로 읽을 때 문맥 편향으로 글자를 잘못 읽을 수 있음)
-    console.log('[OCR] Gemini 이름 재확인...');
-    const name = await geminiExtractName(gemini, base64Image);
-    const sanitized = sanitizeName(name);
-    if (sanitized) {
-      if (!result) result = { orderNumber: '', ordererName: '', receiverName: '', address: '', phone: '' };
-      result.receiverName = sanitized;
-      result.ordererName = result.ordererName || sanitized;
-      console.log('[OCR] Gemini 이름 확정:', sanitized);
+    // 이름이 비어있으면 Gemini에 직접 이름만 물어보기
+    if (!result?.receiverName) {
+      console.log('[OCR] 이름 못 찾음 → Gemini에 이름 직접 질문...');
+      const name = await geminiExtractName(gemini, base64Image);
+      const sanitized = sanitizeName(name);
+      if (sanitized) {
+        if (!result) result = { orderNumber: '', ordererName: '', receiverName: '', address: '', phone: '' };
+        result.receiverName = sanitized;
+        result.ordererName = result.ordererName || sanitized;
+        console.log('[OCR] Gemini 이름 직접 추출 성공:', sanitized);
+      }
     }
 
     if (result && isResultValid(result)) return result;
