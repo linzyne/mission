@@ -127,7 +127,26 @@ export interface DailyCostItem {
   description?: string;
 }
 
-export type SalesSubTab = 'summary' | 'profitLoss' | 'salesDetail' | 'expenses';
+export type SalesSubTab = 'vendorSettlement' | 'summary' | 'profitLoss' | 'salesDetail' | 'expenses';
+
+export interface VendorItem {
+  product: string;
+  quantity: number;
+  price: number;
+}
+
+export interface VendorSettlement {
+  name: string;
+  totalCount: number;
+  subtotal: number;
+  items: VendorItem[];
+}
+
+export interface VendorSummaryDoc {
+  id: string;
+  date: string;
+  vendors: VendorSettlement[];
+}
 
 export interface ProductPrice {
   id: string;

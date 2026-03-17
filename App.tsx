@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Product, Submission, AppMode, CustomerView, AppSettings, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, DailyCostItem, SalesSubTab } from './types';
+import { Product, Submission, AppMode, CustomerView, AppSettings, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, DailyCostItem, SalesSubTab, VendorSettlement, VendorSummaryDoc } from './types';
 import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch } from 'firebase/firestore';
@@ -191,6 +191,19 @@ const App: React.FC = () => {
     });
     return () => unsub();
   }, []);
+  // Firestore Sync: Vendor Summaries (업체별정산)
+  const [vendorSummaries, setVendorSummaries] = useState<VendorSummaryDoc[]>([]);
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'vendorSummaries'), (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VendorSummaryDoc));
+      list.sort((a, b) => b.date.localeCompare(a.date));
+      setVendorSummaries(list);
+    });
+    return () => unsub();
+  }, []);
+  const [expandedVendorDate, setExpandedVendorDate] = useState<string | null>(null);
+  const [vendorEditModal, setVendorEditModal] = useState<{ date: string; vendors: VendorSettlement[] } | null>(null);
+
   const [expandedCostDate, setExpandedCostDate] = useState<string | null>(null);
   const [newCostName, setNewCostName] = useState('');
   const [newCostAmount, setNewCostAmount] = useState('');
@@ -431,9 +444,10 @@ const App: React.FC = () => {
     uploadDate: string;
     salesItems: { docId: string; product: string; productDetail: string; quantity: number; sellingPrice: number; supplyPrice: number; marginPerUnit: number; totalMargin: number; adCost: number; housePurchase: number; solution: number }[];
     expenseItems: { name: string; amount: number; description: string }[];
+    vendorSummaryData?: VendorSettlement[];
   } | null>(null);
   // 마지막 업로드 삭제용
-  const [lastUploadInfo, setLastUploadInfo] = useState<{ uploadDate: string; salesDocIds: string[]; costDocIds: string[] } | null>(null);
+  const [lastUploadInfo, setLastUploadInfo] = useState<{ uploadDate: string; salesDocIds: string[]; costDocIds: string[]; vendorSummaryDocId?: string } | null>(null);
 
   const handleExpenseScreenshot = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -566,17 +580,67 @@ const App: React.FC = () => {
 
     const expenseItems = Object.entries(expenseMerged).map(([name, { amount, descriptions }]) => ({ name, amount, description: descriptions.join(', ') }));
 
-    setPendingUpload({ uploadDate, salesItems, expenseItems });
+    // 요약시트 파싱 (업체별정산)
+    let vendorSummaryData: VendorSettlement[] | undefined;
+    const summarySheetName = wb.SheetNames.find((n: string) => n.includes('요약'));
+    if (summarySheetName) {
+      const summaryWs = wb.Sheets[summarySheetName];
+      const summaryRows: any[][] = XLSX.utils.sheet_to_json(summaryWs, { header: 1, defval: '' });
+      vendorSummaryData = [];
+      let currentVendor: VendorSettlement | null = null;
+
+      for (const row of summaryRows) {
+        const col0 = String(row[0] || '').trim();
+        const col1 = String(row[1] || '').trim();
+        const col2 = String(row[2] || '').trim();
+        const col3 = String(row[3] || '').trim();
+        const col4 = String(row[4] || '').trim();
+
+        // [업체명 정산내역] 패턴 감지
+        const vendorMatch = col0.match(/^\[(.+?)\s*정산내역\]$/);
+        if (vendorMatch) {
+          if (currentVendor) vendorSummaryData.push(currentVendor);
+          currentVendor = { name: vendorMatch[1], totalCount: 0, subtotal: 0, items: [] };
+          continue;
+        }
+
+        if (!currentVendor || !col1) continue;
+
+        // 총 N개 패턴에서 수량 추출
+        const totalMatch = col0.match(/총\s*(\d+)\s*개/);
+        if (totalMatch) {
+          currentVendor.totalCount = parseInt(totalMatch[1]);
+        }
+
+        // 품목 행 파싱
+        const parseNum = (s: string) => Number(s.replace(/,/g, '')) || 0;
+        const qty = parseInt(col2.replace(/개/g, '').replace(/,/g, '').trim()) || 0;
+        const price = parseNum(col3);
+
+        if (qty > 0 && col1) {
+          currentVendor.items.push({ product: col1, quantity: qty, price });
+        }
+
+        // 소계 (E열)
+        if (col4) {
+          currentVendor.subtotal = parseNum(col4);
+        }
+      }
+      if (currentVendor) vendorSummaryData.push(currentVendor);
+    }
+
+    setPendingUpload({ uploadDate, salesItems, expenseItems, vendorSummaryData });
     e.target.value = '';
   };
 
   // 업로드 미리보기 확인 → 실제 저장
   const handleConfirmUpload = async () => {
     if (!pendingUpload) return;
-    const { uploadDate, salesItems, expenseItems } = pendingUpload;
+    const { uploadDate, salesItems, expenseItems, vendorSummaryData } = pendingUpload;
     const batch = writeBatch(db);
     const savedSalesIds: string[] = [];
     const savedCostIds: string[] = [];
+    let vendorSummaryDocId: string | undefined;
 
     for (const item of salesItems) {
       batch.set(doc(db, 'salesDaily', item.docId), {
@@ -606,22 +670,34 @@ const App: React.FC = () => {
       savedCostIds.push(costDocId);
     }
 
+    // 업체별정산 데이터 저장
+    if (vendorSummaryData && vendorSummaryData.length > 0) {
+      vendorSummaryDocId = uploadDate;
+      batch.set(doc(db, 'vendorSummaries', vendorSummaryDocId), {
+        date: uploadDate,
+        vendors: vendorSummaryData,
+      });
+    }
+
     await batch.commit();
-    setLastUploadInfo({ uploadDate, salesDocIds: savedSalesIds, costDocIds: savedCostIds });
+    setLastUploadInfo({ uploadDate, salesDocIds: savedSalesIds, costDocIds: savedCostIds, vendorSummaryDocId });
     setPendingUpload(null);
-    alert(`${uploadDate} / ${salesItems.length}개 품목${expenseItems.length > 0 ? `, ${expenseItems.length}건 비용` : ''} 등록 완료`);
+    alert(`${uploadDate} / ${salesItems.length}개 품목${expenseItems.length > 0 ? `, ${expenseItems.length}건 비용` : ''}${vendorSummaryData && vendorSummaryData.length > 0 ? `, ${vendorSummaryData.length}개 업체 정산` : ''} 등록 완료`);
   };
 
   // 마지막 업로드 삭제
   const handleDeleteLastUpload = async () => {
     if (!lastUploadInfo) return;
-    if (!confirm(`${lastUploadInfo.uploadDate} 업로드 데이터를 삭제하시겠습니까?\n\n• 판매 ${lastUploadInfo.salesDocIds.length}건\n• 비용 ${lastUploadInfo.costDocIds.length}건`)) return;
+    if (!confirm(`${lastUploadInfo.uploadDate} 업로드 데이터를 삭제하시겠습니까?\n\n• 판매 ${lastUploadInfo.salesDocIds.length}건\n• 비용 ${lastUploadInfo.costDocIds.length}건${lastUploadInfo.vendorSummaryDocId ? '\n• 업체별정산 1건' : ''}`)) return;
     const batch = writeBatch(db);
     for (const id of lastUploadInfo.salesDocIds) {
       batch.delete(doc(db, 'salesDaily', id));
     }
     for (const id of lastUploadInfo.costDocIds) {
       batch.delete(doc(db, 'dailyCosts', id));
+    }
+    if (lastUploadInfo.vendorSummaryDocId) {
+      batch.delete(doc(db, 'vendorSummaries', lastUploadInfo.vendorSummaryDocId));
     }
     await batch.commit();
     alert(`${lastUploadInfo.uploadDate} 업로드 데이터가 삭제되었습니다.`);
@@ -2452,13 +2528,99 @@ const App: React.FC = () => {
                   </div>
                   {/* 서브 탭 */}
                   <div className="flex gap-1.5 sm:gap-2 mb-6 overflow-x-auto">
+                    <button onClick={() => setSalesSubTab('vendorSettlement')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'vendorSettlement' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>업체별정산</button>
                     <button onClick={() => setSalesSubTab('summary')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'summary' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>요약</button>
                     <button onClick={() => setSalesSubTab('profitLoss')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'profitLoss' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>손익표</button>
                     <button onClick={() => setSalesSubTab('salesDetail')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'salesDetail' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>품목별판매</button>
                     <button onClick={() => setSalesSubTab('expenses')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'expenses' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>지출내역</button>
                   </div>
 
-                  {salesSubTab === 'summary' ? (() => {
+                  {salesSubTab === 'vendorSettlement' ? (() => {
+                    const filteredSummaries = vendorSummaries.filter(s => s.date.startsWith(salesMonthStr));
+                    return (
+                      <div className="space-y-3">
+                        <div className="flex justify-end">
+                          <button
+                            onClick={() => setVendorEditModal({ date: new Date().toISOString().split('T')[0], vendors: [{ name: '', totalCount: 0, subtotal: 0, items: [{ product: '', quantity: 0, price: 0 }] }] })}
+                            className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-500 hover:bg-blue-600 transition-colors"
+                          >+ 수동 입력</button>
+                        </div>
+                        {filteredSummaries.length === 0 ? (
+                          <div className="text-center text-gray-400 text-sm py-12">
+                            {salesMonthStr} 업체별정산 데이터가 없습니다.<br/>
+                            <span className="text-xs">업무일지를 업로드하거나 수동 입력으로 등록할 수 있습니다.</span>
+                          </div>
+                        ) : filteredSummaries.map(summary => {
+                          const isExpanded = expandedVendorDate === summary.date;
+                          const totalAmount = summary.vendors.reduce((s, v) => s + v.subtotal, 0);
+                          const totalCount = summary.vendors.reduce((s, v) => s + v.totalCount, 0);
+                          return (
+                            <div key={summary.date} className="border rounded-xl overflow-hidden">
+                              <button
+                                onClick={() => setExpandedVendorDate(isExpanded ? null : summary.date)}
+                                className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="text-sm font-black text-gray-800">{summary.date}</span>
+                                  <span className="text-xs text-gray-400">{summary.vendors.length}개 업체 · {totalCount}건</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-bold text-blue-600">{totalAmount.toLocaleString()}원</span>
+                                  <span className={`text-gray-400 text-xs transition-transform ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
+                                </div>
+                              </button>
+                              {isExpanded && (
+                                <div className="border-t bg-gray-50 p-4 space-y-3">
+                                  <div className="flex justify-end gap-2">
+                                    <button
+                                      onClick={() => setVendorEditModal({ date: summary.date, vendors: JSON.parse(JSON.stringify(summary.vendors)) })}
+                                      className="px-3 py-1 rounded-lg text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors"
+                                    >수정</button>
+                                    <button
+                                      onClick={async () => {
+                                        if (!confirm(`${summary.date} 업체별정산 데이터를 삭제하시겠습니까?`)) return;
+                                        await deleteDoc(doc(db, 'vendorSummaries', summary.date));
+                                      }}
+                                      className="px-3 py-1 rounded-lg text-[10px] font-bold text-red-500 bg-red-50 hover:bg-red-100 transition-colors"
+                                    >삭제</button>
+                                  </div>
+                                  {summary.vendors.map((vendor, vi) => (
+                                    <div key={vi} className="bg-white rounded-xl border p-3 space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <span className="text-sm font-black text-gray-800">{vendor.name}</span>
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[10px] text-gray-400">총 {vendor.totalCount}개</span>
+                                          <span className="text-sm font-bold text-blue-600">{vendor.subtotal.toLocaleString()}원</span>
+                                        </div>
+                                      </div>
+                                      <table className="w-full text-xs">
+                                        <thead>
+                                          <tr className="text-gray-400 border-b">
+                                            <th className="py-1 text-left font-bold">품목</th>
+                                            <th className="py-1 text-right font-bold">수량</th>
+                                            <th className="py-1 text-right font-bold">금액</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {vendor.items.map((item, ii) => (
+                                            <tr key={ii} className="border-b border-gray-50">
+                                              <td className="py-1 text-gray-700">{item.product}</td>
+                                              <td className="py-1 text-right text-gray-600">{item.quantity}개</td>
+                                              <td className="py-1 text-right font-bold text-gray-700">{item.price.toLocaleString()}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })() : salesSubTab === 'summary' ? (() => {
                     // 품목명 정규화: "은갈치 (1월)", "순살 갈치 (1월 합계)" → "은갈치", "순살 갈치"
                     const normProduct = (name: string) => name.replace(/\s*\(.*?\)\s*$/, '').trim();
 
@@ -4065,7 +4227,44 @@ const App: React.FC = () => {
                 </div>
               )}
 
-              {pendingUpload.salesItems.length === 0 && pendingUpload.expenseItems.length === 0 && (
+              {/* 업체별정산 항목 */}
+              {pendingUpload.vendorSummaryData && pendingUpload.vendorSummaryData.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+                    <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                    업체별정산 ({pendingUpload.vendorSummaryData.length}개 업체)
+                  </h4>
+                  <div className="bg-green-50 rounded-xl overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-green-100">
+                          <th className="py-2 px-3 text-left text-gray-500 font-bold">업체</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">수량</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">소계</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pendingUpload.vendorSummaryData.map((vendor, idx) => (
+                          <tr key={idx} className="border-b border-green-100 last:border-0">
+                            <td className="py-1.5 px-3 text-gray-700">{vendor.name}</td>
+                            <td className="py-1.5 px-3 text-right text-gray-600">{vendor.totalCount}개</td>
+                            <td className="py-1.5 px-3 text-right font-bold text-green-700">{vendor.subtotal.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-green-100 font-bold">
+                          <td className="py-2 px-3 text-gray-700">합계</td>
+                          <td className="py-2 px-3 text-right text-gray-600">{pendingUpload.vendorSummaryData.reduce((s, v) => s + v.totalCount, 0)}개</td>
+                          <td className="py-2 px-3 text-right text-green-700">{pendingUpload.vendorSummaryData.reduce((s, v) => s + v.subtotal, 0).toLocaleString()}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {pendingUpload.salesItems.length === 0 && pendingUpload.expenseItems.length === 0 && (!pendingUpload.vendorSummaryData || pendingUpload.vendorSummaryData.length === 0) && (
                 <p className="text-center text-gray-400 text-sm py-4">등록할 항목이 없습니다.</p>
               )}
             </div>
@@ -4073,8 +4272,132 @@ const App: React.FC = () => {
               <button onClick={() => setPendingUpload(null)}
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 transition-colors">취소</button>
               <button onClick={handleConfirmUpload}
-                disabled={pendingUpload.salesItems.length === 0 && pendingUpload.expenseItems.length === 0}
+                disabled={pendingUpload.salesItems.length === 0 && pendingUpload.expenseItems.length === 0 && (!pendingUpload.vendorSummaryData || pendingUpload.vendorSummaryData.length === 0)}
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 disabled:opacity-40 transition-colors">
+                저장
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 업체별정산 수동 입력/수정 모달 */}
+      {vendorEditModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setVendorEditModal(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100">
+              <h3 className="text-lg font-bold text-gray-800">업체별정산 {vendorSummaries.some(s => s.date === vendorEditModal.date) ? '수정' : '입력'}</h3>
+            </div>
+            <div className="p-4 space-y-4">
+              {/* 날짜 */}
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-bold text-gray-500 w-10">날짜</label>
+                <input type="date" value={vendorEditModal.date}
+                  onChange={e => setVendorEditModal(prev => prev ? { ...prev, date: e.target.value } : null)}
+                  className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:border-blue-400 outline-none" />
+              </div>
+
+              {/* 업체 블록 */}
+              {vendorEditModal.vendors.map((vendor, vi) => (
+                <div key={vi} className="border rounded-xl p-3 space-y-2 bg-gray-50">
+                  <div className="flex items-center gap-2">
+                    <input type="text" placeholder="업체명" value={vendor.name}
+                      onChange={e => setVendorEditModal(prev => {
+                        if (!prev) return null;
+                        const vendors = [...prev.vendors];
+                        vendors[vi] = { ...vendors[vi], name: e.target.value };
+                        return { ...prev, vendors };
+                      })}
+                      className="flex-1 text-sm font-bold border border-gray-200 rounded-lg px-3 py-1.5 focus:border-blue-400 outline-none" />
+                    {vendorEditModal.vendors.length > 1 && (
+                      <button onClick={() => setVendorEditModal(prev => {
+                        if (!prev) return null;
+                        return { ...prev, vendors: prev.vendors.filter((_, i) => i !== vi) };
+                      })} className="text-red-400 hover:text-red-600 text-xs font-bold px-2">삭제</button>
+                    )}
+                  </div>
+
+                  {/* 품목 행 */}
+                  {vendor.items.map((item, ii) => (
+                    <div key={ii} className="flex items-center gap-1.5">
+                      <input type="text" placeholder="품목명" value={item.product}
+                        onChange={e => setVendorEditModal(prev => {
+                          if (!prev) return null;
+                          const vendors = JSON.parse(JSON.stringify(prev.vendors));
+                          vendors[vi].items[ii].product = e.target.value;
+                          return { ...prev, vendors };
+                        })}
+                        className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:border-blue-400 outline-none" />
+                      <input type="number" placeholder="수량" value={item.quantity || ''}
+                        onChange={e => setVendorEditModal(prev => {
+                          if (!prev) return null;
+                          const vendors = JSON.parse(JSON.stringify(prev.vendors));
+                          vendors[vi].items[ii].quantity = Number(e.target.value) || 0;
+                          vendors[vi].totalCount = vendors[vi].items.reduce((s: number, it: any) => s + it.quantity, 0);
+                          return { ...prev, vendors };
+                        })}
+                        className="w-16 text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-right focus:border-blue-400 outline-none" />
+                      <input type="number" placeholder="금액" value={item.price || ''}
+                        onChange={e => setVendorEditModal(prev => {
+                          if (!prev) return null;
+                          const vendors = JSON.parse(JSON.stringify(prev.vendors));
+                          vendors[vi].items[ii].price = Number(e.target.value) || 0;
+                          vendors[vi].subtotal = vendors[vi].items.reduce((s: number, it: any) => s + it.price, 0);
+                          return { ...prev, vendors };
+                        })}
+                        className="w-24 text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-right focus:border-blue-400 outline-none" />
+                      {vendor.items.length > 1 && (
+                        <button onClick={() => setVendorEditModal(prev => {
+                          if (!prev) return null;
+                          const vendors = JSON.parse(JSON.stringify(prev.vendors));
+                          vendors[vi].items = vendors[vi].items.filter((_: any, i: number) => i !== ii);
+                          vendors[vi].totalCount = vendors[vi].items.reduce((s: number, it: any) => s + it.quantity, 0);
+                          vendors[vi].subtotal = vendors[vi].items.reduce((s: number, it: any) => s + it.price, 0);
+                          return { ...prev, vendors };
+                        })} className="text-red-300 hover:text-red-500 text-xs">✕</button>
+                      )}
+                    </div>
+                  ))}
+
+                  <div className="flex items-center justify-between">
+                    <button onClick={() => setVendorEditModal(prev => {
+                      if (!prev) return null;
+                      const vendors = JSON.parse(JSON.stringify(prev.vendors));
+                      vendors[vi].items.push({ product: '', quantity: 0, price: 0 });
+                      return { ...prev, vendors };
+                    })} className="text-[10px] text-blue-500 hover:text-blue-700 font-bold">+ 품목 추가</button>
+                    <div className="text-[10px] text-gray-400">
+                      {vendor.totalCount}개 · <span className="font-bold text-gray-600">{vendor.subtotal.toLocaleString()}원</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              <button onClick={() => setVendorEditModal(prev => {
+                if (!prev) return null;
+                return { ...prev, vendors: [...prev.vendors, { name: '', totalCount: 0, subtotal: 0, items: [{ product: '', quantity: 0, price: 0 }] }] };
+              })} className="w-full py-2 rounded-xl text-xs font-bold text-blue-500 border border-dashed border-blue-300 hover:bg-blue-50 transition-colors">
+                + 업체 추가
+              </button>
+            </div>
+
+            <div className="p-4 border-t border-gray-100 flex gap-2">
+              <button onClick={() => setVendorEditModal(null)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 transition-colors">취소</button>
+              <button onClick={async () => {
+                if (!vendorEditModal.date) { alert('날짜를 입력해주세요.'); return; }
+                const validVendors = vendorEditModal.vendors.filter(v => v.name.trim() && v.items.some(it => it.product.trim()));
+                if (validVendors.length === 0) { alert('업체와 품목을 입력해주세요.'); return; }
+                const cleanVendors = validVendors.map(v => ({
+                  name: v.name.trim(),
+                  totalCount: v.items.reduce((s, it) => s + it.quantity, 0),
+                  subtotal: v.items.reduce((s, it) => s + it.price, 0),
+                  items: v.items.filter(it => it.product.trim()).map(it => ({ product: it.product.trim(), quantity: it.quantity, price: it.price })),
+                }));
+                await setDoc(doc(db, 'vendorSummaries', vendorEditModal.date), { date: vendorEditModal.date, vendors: cleanVendors });
+                setVendorEditModal(null);
+              }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 transition-colors">
                 저장
               </button>
             </div>
