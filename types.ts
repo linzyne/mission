@@ -156,3 +156,12 @@ export interface ProductPrice {
   sellingPrice?: number;
   margin?: number;
 }
+
+export interface BusinessInfo {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+  accountInfo: string;
+  collectionPrefix: string;
+}

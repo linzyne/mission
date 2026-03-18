@@ -1,13 +1,50 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Product, Submission, AppMode, CustomerView, AppSettings, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, DailyCostItem, SalesSubTab, VendorSettlement, VendorSummaryDoc } from './types';
+import { Product, Submission, AppMode, CustomerView, AppSettings, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, DailyCostItem, SalesSubTab, VendorSettlement, VendorSummaryDoc, BusinessInfo } from './types';
 import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch } from 'firebase/firestore';
+
+const BUSINESSES: Record<string, BusinessInfo> = {
+  angun: {
+    id: 'angun',
+    name: '안군농원',
+    phone: '01050447749',
+    address: '인천시 연수구 송도동 214, D동 2206-1호',
+    accountInfo: '국민 228 002 04 129095 김성아',
+    collectionPrefix: '',
+  },
+  zoe: {
+    id: 'zoe',
+    name: '조에농원',
+    phone: '01094496343',
+    address: '',
+    accountInfo: '',
+    collectionPrefix: 'zoe_',
+  },
+};
+
+function getCol(baseName: string, prefix: string): string {
+  return prefix ? `${prefix}${baseName}` : baseName;
+}
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('customer');
   const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
   const [customerView, setCustomerView] = useState<CustomerView>('landing');
+
+  // Multi-tenant: 선택된 사업자
+  const [selectedBiz, setSelectedBiz] = useState<string | null>(null);
+  const bizInfo = selectedBiz ? BUSINESSES[selectedBiz] : null;
+  const colPrefix = bizInfo?.collectionPrefix ?? '';
+
+  // URL 파라미터로 사업자 자동 선택 (?biz=angun 또는 ?biz=zoe)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const bizParam = params.get('biz');
+    if (bizParam && BUSINESSES[bizParam]) {
+      setSelectedBiz(bizParam);
+    }
+  }, []);
 
   const [adminPassword, setAdminPassword] = useState('1234');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -18,14 +55,16 @@ const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>({ isApplyActive: true });
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'settings', 'global'), (doc) => {
-      if (doc.exists()) setSettings(doc.data() as AppSettings);
+    if (!selectedBiz) { setSettings({ isApplyActive: true }); return; }
+    const unsub = onSnapshot(doc(db, getCol('settings', colPrefix), 'global'), (d) => {
+      if (d.exists()) setSettings(d.data() as AppSettings);
+      else setSettings({ isApplyActive: true });
     });
     return () => unsub();
-  }, []);
+  }, [selectedBiz]);
 
   const updateSettings = async (newSettings: AppSettings) => {
-    await setDoc(doc(db, 'settings', 'global'), newSettings, { merge: true });
+    await setDoc(doc(db, getCol('settings', colPrefix), 'global'), newSettings, { merge: true });
   };
 
   const createEmptyRow = (date?: string): ManualEntry => ({
@@ -52,20 +91,23 @@ const App: React.FC = () => {
   // Firestore Sync: Products
   const [products, setProducts] = useState<Product[]>([]);
   useEffect(() => {
-    const q = query(collection(db, 'products'));
+    if (!selectedBiz) { setProducts([]); return; }
+    const q = query(collection(db, getCol('products', colPrefix)));
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(list);
     });
     return () => unsub();
-  }, []);
+  }, [selectedBiz]);
 
   // Firestore Sync: Manual Entries
   const [manualEntries, setManualEntries] = useState<ManualEntry[]>([]);
   const [manualEntriesLoaded, setManualEntriesLoaded] = useState(false);
   const [ocrLoadingIds, setOcrLoadingIds] = useState<Set<string>>(new Set());
   useEffect(() => {
-    const q = query(collection(db, 'manualEntries'));
+    if (!selectedBiz) { setManualEntries([]); setManualEntriesLoaded(false); return; }
+    const colName = getCol('manualEntries', colPrefix);
+    const q = query(collection(db, colName));
     const unsub = onSnapshot(q, (snapshot) => {
       const defaults = createEmptyRow();
       const list = snapshot.docs.map(d => {
@@ -95,7 +137,6 @@ const App: React.FC = () => {
       // 마이그레이션: createdAt 없는 행에 자동 부여
       const missing = list.filter(e => !e.createdAt);
       if (missing.length > 0) {
-        // 날짜별로 그룹핑 → 같은 날짜 내 문서 ID 순으로 createdAt 부여
         const byDate: Record<string, typeof missing> = {};
         missing.forEach(e => {
           const d = e.date || '0000';
@@ -103,10 +144,10 @@ const App: React.FC = () => {
           byDate[d].push(e);
         });
         const batch = writeBatch(db);
-        let base = 1000000000000; // 2001년 기준 timestamp (기존 행은 앞에 배치)
+        let base = 1000000000000;
         Object.keys(byDate).sort().forEach(date => {
           byDate[date].forEach((e, i) => {
-            batch.update(doc(db, 'manualEntries', e.id), { createdAt: base + i });
+            batch.update(doc(db, colName, e.id), { createdAt: base + i });
           });
           base += byDate[date].length;
         });
@@ -122,30 +163,32 @@ const App: React.FC = () => {
       setManualEntriesLoaded(true);
     });
     return () => unsub();
-  }, []);
+  }, [selectedBiz]);
 
   // Firestore Sync: Review Entries
   const [reviewEntries, setReviewEntries] = useState<ReviewEntry[]>([]);
   useEffect(() => {
-    const q = query(collection(db, 'reviewEntries'));
+    if (!selectedBiz) { setReviewEntries([]); return; }
+    const q = query(collection(db, getCol('reviewEntries', colPrefix)));
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ReviewEntry));
       list.sort((a, b) => b.date.localeCompare(a.date));
       setReviewEntries(list);
     });
     return () => unsub();
-  }, []);
+  }, [selectedBiz]);
 
   // Firestore Sync: Product Prices
   const [productPrices, setProductPrices] = useState<ProductPrice[]>([]);
   useEffect(() => {
-    const q = query(collection(db, 'productPrices'));
+    if (!selectedBiz) { setProductPrices([]); return; }
+    const q = query(collection(db, getCol('productPrices', colPrefix)));
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProductPrice));
       setProductPrices(list);
     });
     return () => unsub();
-  }, []);
+  }, [selectedBiz]);
 
   const [newProductPrice, setNewProductPrice] = useState({ name: '', price: 0 });
 
@@ -154,7 +197,8 @@ const App: React.FC = () => {
   const salesDailyRef = useRef<SalesDailyEntry[]>([]);
   const [salesDailyLoaded, setSalesDailyLoaded] = useState(false);
   useEffect(() => {
-    const q = query(collection(db, 'salesDaily'));
+    if (!selectedBiz) { setSalesDaily([]); salesDailyRef.current = []; setSalesDailyLoaded(false); return; }
+    const q = query(collection(db, getCol('salesDaily', colPrefix)));
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as SalesDailyEntry));
       list.sort((a, b) => a.date.localeCompare(b.date));
@@ -163,7 +207,7 @@ const App: React.FC = () => {
       setSalesDailyLoaded(true);
     });
     return () => unsub();
-  }, []);
+  }, [selectedBiz]);
   const [salesMonth, setSalesMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() + 1 }; });
   const salesMonthStr = `${salesMonth.year}-${String(salesMonth.month).padStart(2, '0')}`;
   const salesFileRef = useRef<HTMLInputElement>(null);
@@ -176,31 +220,34 @@ const App: React.FC = () => {
   // Firestore Sync: Daily Costs (손익표 비용 항목)
   const [dailyCosts, setDailyCosts] = useState<DailyCostItem[]>([]);
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'dailyCosts'), (snapshot) => {
+    if (!selectedBiz) { setDailyCosts([]); return; }
+    const unsub = onSnapshot(collection(db, getCol('dailyCosts', colPrefix)), (snapshot) => {
       const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as DailyCostItem));
       setDailyCosts(list);
     });
     return () => unsub();
-  }, []);
+  }, [selectedBiz]);
   const [dailyMemos, setDailyMemos] = useState<Record<string, string>>({});
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'dailyMemos'), (snapshot) => {
+    if (!selectedBiz) { setDailyMemos({}); return; }
+    const unsub = onSnapshot(collection(db, getCol('dailyMemos', colPrefix)), (snapshot) => {
       const m: Record<string, string> = {};
       snapshot.docs.forEach(d => { m[d.id] = (d.data() as any).memo || ''; });
       setDailyMemos(m);
     });
     return () => unsub();
-  }, []);
+  }, [selectedBiz]);
   // Firestore Sync: Vendor Summaries (업체별정산)
   const [vendorSummaries, setVendorSummaries] = useState<VendorSummaryDoc[]>([]);
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'vendorSummaries'), (snapshot) => {
+    if (!selectedBiz) { setVendorSummaries([]); return; }
+    const unsub = onSnapshot(collection(db, getCol('vendorSummaries', colPrefix)), (snapshot) => {
       const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VendorSummaryDoc));
       list.sort((a, b) => b.date.localeCompare(a.date));
       setVendorSummaries(list);
     });
     return () => unsub();
-  }, []);
+  }, [selectedBiz]);
   const [expandedVendorDate, setExpandedVendorDate] = useState<string | null>(null);
   const [vendorEditModal, setVendorEditModal] = useState<{ date: string; vendors: VendorSettlement[] } | null>(null);
 
@@ -208,15 +255,21 @@ const App: React.FC = () => {
   const [newCostName, setNewCostName] = useState('');
   const [newCostAmount, setNewCostAmount] = useState('');
   const DEFAULT_COST_CATEGORIES = ['임대료', '통신비', '소모품비', '물류비', '마케팅', '식비', '기타'];
-  const [costCategories, setCostCategories] = useState<string[]>(() => {
-    const saved = localStorage.getItem('costCategories');
-    return saved ? JSON.parse(saved) : DEFAULT_COST_CATEGORIES;
-  });
+  // localStorage 키를 사업자별로 분리 (안군농원은 기존 키 유지)
+  const lsKey = (key: string) => !selectedBiz || selectedBiz === 'angun' ? key : `${selectedBiz}_${key}`;
+  const [costCategories, setCostCategories] = useState<string[]>(DEFAULT_COST_CATEGORIES);
+  // selectedBiz 변경 시 localStorage에서 다시 로드
+  useEffect(() => {
+    if (!selectedBiz) return;
+    const lk = (key: string) => selectedBiz === 'angun' ? key : `${selectedBiz}_${key}`;
+    try { const s = localStorage.getItem(lk('costCategories')); setCostCategories(s ? JSON.parse(s) : DEFAULT_COST_CATEGORIES); } catch { setCostCategories(DEFAULT_COST_CATEGORIES); }
+    try { const s = localStorage.getItem(lk('manualColWidths')); setColWidths(s ? { ...DEFAULT_COL_WIDTHS, ...JSON.parse(s) } : { ...DEFAULT_COL_WIDTHS }); } catch { setColWidths({ ...DEFAULT_COL_WIDTHS }); }
+  }, [selectedBiz]);
   const addCostCategory = (name: string) => {
     if (!name.trim() || costCategories.includes(name.trim())) return;
     const updated = [...costCategories, name.trim()];
     setCostCategories(updated);
-    localStorage.setItem('costCategories', JSON.stringify(updated));
+    localStorage.setItem(lsKey('costCategories'), JSON.stringify(updated));
   };
 
   // Sales undo/redo
@@ -230,7 +283,7 @@ const App: React.FC = () => {
     if (oldVal === value) return;
     setSalesUndoStack(prev => [...prev, { type: 'update', entries: [{ id: entryId, data: { [field]: oldVal } }] }]);
     setSalesRedoStack([]);
-    await updateDoc(doc(db, 'salesDaily', entryId), { [field]: value });
+    await updateDoc(doc(db, getCol('salesDaily', colPrefix), entryId), { [field]: value });
   };
 
   const handleSalesUndo = async () => {
@@ -245,13 +298,13 @@ const App: React.FC = () => {
         const currentData: any = {};
         Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : 0; });
         redoEntries.push({ id: e.id, data: currentData });
-        batch.update(doc(db, 'salesDaily', e.id), e.data);
+        batch.update(doc(db, getCol('salesDaily', colPrefix), e.id), e.data);
       } else if (last.type === 'delete') {
-        batch.set(doc(db, 'salesDaily', e.id), e.data);
+        batch.set(doc(db, getCol('salesDaily', colPrefix), e.id), e.data);
         redoEntries.push({ id: e.id, data: {} });
       } else if (last.type === 'add') {
         if (current) redoEntries.push({ id: e.id, data: { ...current } });
-        batch.delete(doc(db, 'salesDaily', e.id));
+        batch.delete(doc(db, getCol('salesDaily', colPrefix), e.id));
       }
     }
     const redoType = last.type === 'delete' ? 'add' : last.type === 'add' ? 'delete' : 'update';
@@ -271,13 +324,13 @@ const App: React.FC = () => {
         const currentData: any = {};
         Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : 0; });
         undoEntries.push({ id: e.id, data: currentData });
-        batch.update(doc(db, 'salesDaily', e.id), e.data);
+        batch.update(doc(db, getCol('salesDaily', colPrefix), e.id), e.data);
       } else if (last.type === 'delete') {
-        batch.set(doc(db, 'salesDaily', e.id), e.data);
+        batch.set(doc(db, getCol('salesDaily', colPrefix), e.id), e.data);
         undoEntries.push({ id: e.id, data: {} });
       } else if (last.type === 'add') {
         if (current) undoEntries.push({ id: e.id, data: { ...current } });
-        batch.delete(doc(db, 'salesDaily', e.id));
+        batch.delete(doc(db, getCol('salesDaily', colPrefix), e.id));
       }
     }
     const undoType = last.type === 'delete' ? 'add' : last.type === 'add' ? 'delete' : 'update';
@@ -303,7 +356,7 @@ const App: React.FC = () => {
     const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: autoHP, solution: 0 };
     setSalesUndoStack(prev => [...prev, { type: 'add', entries: [{ id: docId, data: {} }] }]);
     setSalesRedoStack([]);
-    await setDoc(doc(db, 'salesDaily', docId), newEntry);
+    await setDoc(doc(db, getCol('salesDaily', colPrefix), docId), newEntry);
   };
 
   // 가구매 자동계산: 구매목록 수량 × (1000 + 공급가*11.66% + 2300)
@@ -341,7 +394,7 @@ const App: React.FC = () => {
           }
         }
         if (sd.housePurchase !== hp) {
-          batch.update(doc(db, 'salesDaily', sd.id), { housePurchase: hp });
+          batch.update(doc(db, getCol('salesDaily', colPrefix), sd.id), { housePurchase: hp });
           hasUpdate = true;
         }
       }
@@ -362,7 +415,7 @@ const App: React.FC = () => {
         if (supPrice <= 0) continue;
         const hp = -(count * Math.round(1000 + supPrice * 0.1166 + 2300));
         const docId = `${date}_${product}`;
-        batch.set(doc(db, 'salesDaily', docId), {
+        batch.set(doc(db, getCol('salesDaily', colPrefix), docId), {
           date, product, productDetail: '', quantity: 0, sellingPrice: 0,
           supplyPrice: 0, marginPerUnit: 0, totalMargin: 0,
           adCost: 0, housePurchase: hp, solution: 0,
@@ -379,7 +432,7 @@ const App: React.FC = () => {
     const { id, ...data } = entry;
     setSalesUndoStack(prev => [...prev, { type: 'delete', entries: [{ id, data }] }]);
     setSalesRedoStack([]);
-    await deleteDoc(doc(db, 'salesDaily', id));
+    await deleteDoc(doc(db, getCol('salesDaily', colPrefix), id));
   };
 
   const handleSalesAddProduct = async () => {
@@ -396,7 +449,7 @@ const App: React.FC = () => {
     const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: 0, solution: 0 };
     setSalesUndoStack(prev => [...prev, { type: 'add', entries: [{ id: docId, data: {} }] }]);
     setSalesRedoStack([]);
-    await setDoc(doc(db, 'salesDaily', docId), newEntry);
+    await setDoc(doc(db, getCol('salesDaily', colPrefix), docId), newEntry);
   };
 
   const handleSalesDeleteProduct = async (product: string) => {
@@ -408,7 +461,7 @@ const App: React.FC = () => {
     for (const e of targets) {
       const { id, ...data } = e;
       undoEntries.push({ id, data });
-      batch.delete(doc(db, 'salesDaily', id));
+      batch.delete(doc(db, getCol('salesDaily', colPrefix), id));
     }
     setSalesUndoStack(prev => [...prev, { type: 'delete', entries: undoEntries }]);
     setSalesRedoStack([]);
@@ -420,19 +473,19 @@ const App: React.FC = () => {
     const name = newCostName.trim();
     const amount = Number(newCostAmount);
     if (!name || !amount) return;
-    await addDoc(collection(db, 'dailyCosts'), { date, name, amount });
+    await addDoc(collection(db, getCol('dailyCosts', colPrefix)), { date, name, amount });
     setNewCostName('');
     setNewCostAmount('');
   };
 
   // 손익표: 비용 항목 삭제
   const handleDeleteCostItem = async (id: string) => {
-    await deleteDoc(doc(db, 'dailyCosts', id));
+    await deleteDoc(doc(db, getCol('dailyCosts', colPrefix), id));
   };
 
   // 손익표: 비고 저장
   const handleSaveMemo = async (date: string, memo: string) => {
-    await setDoc(doc(db, 'dailyMemos', date), { memo });
+    await setDoc(doc(db, getCol('dailyMemos', colPrefix), date), { memo });
   };
 
   const expenseCostInputRef = useRef<HTMLInputElement>(null);
@@ -480,7 +533,7 @@ const App: React.FC = () => {
     if (!pendingExpenses) return;
     for (const item of pendingExpenses) {
       if (!costCategories.includes(item.name)) addCostCategory(item.name);
-      await addDoc(collection(db, 'dailyCosts'), { date: item.date, name: item.name, amount: item.amount });
+      await addDoc(collection(db, getCol('dailyCosts', colPrefix)), { date: item.date, name: item.name, amount: item.amount });
     }
     alert(`${pendingExpenses.length}건의 비용이 등록되었습니다.`);
     setPendingExpenses(null);
@@ -643,7 +696,7 @@ const App: React.FC = () => {
     let vendorSummaryDocId: string | undefined;
 
     for (const item of salesItems) {
-      batch.set(doc(db, 'salesDaily', item.docId), {
+      batch.set(doc(db, getCol('salesDaily', colPrefix), item.docId), {
         date: uploadDate,
         product: item.product,
         productDetail: item.productDetail,
@@ -661,7 +714,7 @@ const App: React.FC = () => {
 
     for (const item of expenseItems) {
       const costDocId = `${uploadDate}_${item.name}`;
-      batch.set(doc(db, 'dailyCosts', costDocId), {
+      batch.set(doc(db, getCol('dailyCosts', colPrefix), costDocId), {
         date: uploadDate,
         name: item.name,
         amount: item.amount,
@@ -673,7 +726,7 @@ const App: React.FC = () => {
     // 업체별정산 데이터 저장
     if (vendorSummaryData && vendorSummaryData.length > 0) {
       vendorSummaryDocId = uploadDate;
-      batch.set(doc(db, 'vendorSummaries', vendorSummaryDocId), {
+      batch.set(doc(db, getCol('vendorSummaries', colPrefix), vendorSummaryDocId), {
         date: uploadDate,
         vendors: vendorSummaryData,
       });
@@ -691,13 +744,13 @@ const App: React.FC = () => {
     if (!confirm(`${lastUploadInfo.uploadDate} 업로드 데이터를 삭제하시겠습니까?\n\n• 판매 ${lastUploadInfo.salesDocIds.length}건\n• 비용 ${lastUploadInfo.costDocIds.length}건${lastUploadInfo.vendorSummaryDocId ? '\n• 업체별정산 1건' : ''}`)) return;
     const batch = writeBatch(db);
     for (const id of lastUploadInfo.salesDocIds) {
-      batch.delete(doc(db, 'salesDaily', id));
+      batch.delete(doc(db, getCol('salesDaily', colPrefix), id));
     }
     for (const id of lastUploadInfo.costDocIds) {
-      batch.delete(doc(db, 'dailyCosts', id));
+      batch.delete(doc(db, getCol('dailyCosts', colPrefix), id));
     }
     if (lastUploadInfo.vendorSummaryDocId) {
-      batch.delete(doc(db, 'vendorSummaries', lastUploadInfo.vendorSummaryDocId));
+      batch.delete(doc(db, getCol('vendorSummaries', colPrefix), lastUploadInfo.vendorSummaryDocId));
     }
     await batch.commit();
     alert(`${lastUploadInfo.uploadDate} 업로드 데이터가 삭제되었습니다.`);
@@ -772,12 +825,12 @@ const App: React.FC = () => {
     if (colorPicker.type === 'cell' && colorPicker.entryId && colorPicker.cellField) {
       const entry = manualEntries.find(e => e.id === colorPicker.entryId);
       const existing = entry?.cellColors || {};
-      await updateDoc(doc(db, 'manualEntries', colorPicker.entryId), { cellColors: { ...existing, [colorPicker.cellField]: color } });
+      await updateDoc(doc(db, getCol('manualEntries', colPrefix), colorPicker.entryId), { cellColors: { ...existing, [colorPicker.cellField]: color } });
     } else if (selectedManualIds.size > 0) {
       const field = colorPicker.type === 'text' ? 'textColor' : 'rowBgColor';
       const batch = writeBatch(db);
       selectedManualIds.forEach(id => {
-        batch.update(doc(db, 'manualEntries', id), { [field]: color });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { [field]: color });
       });
       await batch.commit();
     }
@@ -796,9 +849,7 @@ const App: React.FC = () => {
 
   // Resizable column widths for purchase list
   const DEFAULT_COL_WIDTHS: Record<string, number> = { photo: 32, id: 28, count: 32, product: 64, date: 64, name1: 56, name2: 56, orderNumber: 80, address: 64, memo: 56, paymentAmount: 56, emergencyContact: 64, accountNumber: 112, trackingNumber: 80, beforeDeposit: 32, afterDeposit: 32 };
-  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
-    try { const s = localStorage.getItem('manualColWidths'); return s ? { ...DEFAULT_COL_WIDTHS, ...JSON.parse(s) } : { ...DEFAULT_COL_WIDTHS }; } catch { return { ...DEFAULT_COL_WIDTHS }; }
-  });
+  const [colWidths, setColWidths] = useState<Record<string, number>>({ ...DEFAULT_COL_WIDTHS });
   const resizeColRef = useRef<{ key: string; startX: number; startW: number } | null>(null);
   const colResizedRef = useRef(false);
   const handleColResizeStart = (key: string, e: React.MouseEvent) => {
@@ -807,13 +858,13 @@ const App: React.FC = () => {
     const onMove = (ev: MouseEvent) => {
       if (!resizeColRef.current) return;
       const newW = Math.max(20, resizeColRef.current.startW + ev.clientX - resizeColRef.current.startX);
-      setColWidths(prev => { const next = { ...prev, [resizeColRef.current!.key]: newW }; localStorage.setItem('manualColWidths', JSON.stringify(next)); return next; });
+      setColWidths(prev => { const next = { ...prev, [resizeColRef.current!.key]: newW }; localStorage.setItem(lsKey('manualColWidths'), JSON.stringify(next)); return next; });
     };
     const onUp = () => { resizeColRef.current = null; colResizedRef.current = true; setTimeout(() => { colResizedRef.current = false; }, 100); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); document.body.style.cursor = ''; document.body.style.userSelect = ''; };
     document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
     document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
   };
-  const resetColWidth = (key: string) => { setColWidths(prev => { const next = { ...prev, [key]: DEFAULT_COL_WIDTHS[key] }; localStorage.setItem('manualColWidths', JSON.stringify(next)); return next; }); };
+  const resetColWidth = (key: string) => { setColWidths(prev => { const next = { ...prev, [key]: DEFAULT_COL_WIDTHS[key] }; localStorage.setItem(lsKey('manualColWidths'), JSON.stringify(next)); return next; }); };
   const cellDragRef = useRef({row: -1, col: -1, active: false});
 
   const [manualCalOpen, setManualCalOpen] = useState(false);
@@ -947,7 +998,7 @@ const App: React.FC = () => {
       const redoEntries: { id: string, data: any }[] = [];
       if (last.type === 'delete') {
         last.entries.forEach(e => {
-          batch.set(doc(db, 'manualEntries', e.id), e.data);
+          batch.set(doc(db, getCol('manualEntries', colPrefix), e.id), e.data);
           redoEntries.push({ id: e.id, data: {} });
         });
         setRedoStack(prev => [...prev, { type: 'add', entries: redoEntries, description: last.description }]);
@@ -957,14 +1008,14 @@ const App: React.FC = () => {
           const currentData: any = {};
           Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : ''; });
           redoEntries.push({ id: e.id, data: currentData });
-          batch.update(doc(db, 'manualEntries', e.id), e.data);
+          batch.update(doc(db, getCol('manualEntries', colPrefix), e.id), e.data);
         });
         setRedoStack(prev => [...prev, { type: 'update', entries: redoEntries, description: last.description }]);
       } else if (last.type === 'add') {
         last.entries.forEach(e => {
           const current = manualEntries.find(m => m.id === e.id);
           redoEntries.push({ id: e.id, data: current ? { ...current } : {} });
-          batch.delete(doc(db, 'manualEntries', e.id));
+          batch.delete(doc(db, getCol('manualEntries', colPrefix), e.id));
         });
         setRedoStack(prev => [...prev, { type: 'delete', entries: redoEntries, description: last.description }]);
       }
@@ -987,7 +1038,7 @@ const App: React.FC = () => {
         last.entries.forEach(e => {
           const current = manualEntries.find(m => m.id === e.id);
           undoEntries.push({ id: e.id, data: current ? { ...current } : {} });
-          batch.delete(doc(db, 'manualEntries', e.id));
+          batch.delete(doc(db, getCol('manualEntries', colPrefix), e.id));
         });
         setUndoStack(prev => [...prev, { type: 'delete', entries: undoEntries, description: last.description }]);
       } else if (last.type === 'update') {
@@ -996,12 +1047,12 @@ const App: React.FC = () => {
           const currentData: any = {};
           Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : ''; });
           undoEntries.push({ id: e.id, data: currentData });
-          batch.update(doc(db, 'manualEntries', e.id), e.data);
+          batch.update(doc(db, getCol('manualEntries', colPrefix), e.id), e.data);
         });
         setUndoStack(prev => [...prev, { type: 'update', entries: undoEntries, description: last.description }]);
       } else if (last.type === 'delete') {
         last.entries.forEach(e => {
-          batch.set(doc(db, 'manualEntries', e.id), e.data);
+          batch.set(doc(db, getCol('manualEntries', colPrefix), e.id), e.data);
           undoEntries.push({ id: e.id, data: {} });
         });
         setUndoStack(prev => [...prev, { type: 'add', entries: undoEntries, description: last.description }]);
@@ -1039,7 +1090,7 @@ const App: React.FC = () => {
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64Image = reader.result as string;
-      await updateDoc(doc(db, 'manualEntries', id), { proofImage: base64Image });
+      await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), { proofImage: base64Image });
       setOcrLoadingIds(prev => new Set(prev).add(id));
 
       try {
@@ -1055,7 +1106,7 @@ const App: React.FC = () => {
         if (result.phone) updates.emergencyContact = result.phone;
 
         if (Object.keys(updates).length > 0) {
-          await updateDoc(doc(db, 'manualEntries', id), updates);
+          await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), updates);
         }
       } catch (err) {
         console.error('[Drop OCR] 실패:', err);
@@ -1078,7 +1129,7 @@ const App: React.FC = () => {
         const reader = new FileReader();
         reader.onloadend = async () => {
           const base64Image = reader.result as string;
-          await updateDoc(doc(db, 'manualEntries', id), { proofImage: base64Image });
+          await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), { proofImage: base64Image });
           setOcrLoadingIds(prev => new Set(prev).add(id));
           try {
             const { extractOrderInfo } = await import('./services/geminiService');
@@ -1091,7 +1142,7 @@ const App: React.FC = () => {
             if (result.address) updates.address = result.address;
             if (result.phone) updates.emergencyContact = result.phone;
             if (Object.keys(updates).length > 0) {
-              await updateDoc(doc(db, 'manualEntries', id), updates);
+              await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), updates);
             }
           } catch (err) {
             console.error('[Paste OCR] 실패:', err);
@@ -1122,7 +1173,7 @@ const App: React.FC = () => {
           const reader = new FileReader();
           reader.onloadend = async () => {
             const base64Image = reader.result as string;
-            await updateDoc(doc(db, 'manualEntries', id), { proofImage: base64Image });
+            await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), { proofImage: base64Image });
             setOcrLoadingIds(prev => new Set(prev).add(id));
             try {
               const { extractOrderInfo } = await import('./services/geminiService');
@@ -1135,7 +1186,7 @@ const App: React.FC = () => {
               if (result.address) updates.address = result.address;
               if (result.phone) updates.emergencyContact = result.phone;
               if (Object.keys(updates).length > 0) {
-                await updateDoc(doc(db, 'manualEntries', id), updates);
+                await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), updates);
               }
             } catch (err) {
               console.error('[DocPaste OCR] 실패:', err);
@@ -1166,7 +1217,7 @@ const App: React.FC = () => {
 
         const batch = writeBatch(db);
         selectedManualIds.forEach(id => {
-          batch.delete(doc(db, 'manualEntries', id));
+          batch.delete(doc(db, getCol('manualEntries', colPrefix), id));
         });
         await batch.commit();
         setSelectedManualIds(new Set());
@@ -1213,7 +1264,7 @@ const App: React.FC = () => {
       });
 
       const batch = writeBatch(db);
-      emptyRows.forEach(e => batch.delete(doc(db, 'manualEntries', e.id)));
+      emptyRows.forEach(e => batch.delete(doc(db, getCol('manualEntries', colPrefix), e.id)));
       await batch.commit();
       setSelectedManualIds(prev => {
         const next = new Set(prev);
@@ -1243,7 +1294,7 @@ const App: React.FC = () => {
     try {
       const batch = writeBatch(db);
       selectedDepositIds.forEach(id => {
-        batch.update(doc(db, 'manualEntries', id), { afterDeposit: true, depositDate: depositActionDate });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { afterDeposit: true, depositDate: depositActionDate });
       });
       await batch.commit();
       setSelectedDepositIds(new Set());
@@ -1261,7 +1312,7 @@ const App: React.FC = () => {
     try {
       const batch = writeBatch(db);
       selectedDepositIds.forEach(id => {
-        batch.update(doc(db, 'manualEntries', id), { afterDeposit: false });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { afterDeposit: false });
       });
       await batch.commit();
       setSelectedDepositIds(new Set());
@@ -1278,7 +1329,7 @@ const App: React.FC = () => {
     try {
       const batch = writeBatch(db);
       selectedManualIds.forEach(id => {
-        batch.update(doc(db, 'manualEntries', id), { reservationComplete: true });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { reservationComplete: true });
       });
       await batch.commit();
       setSelectedManualIds(new Set());
@@ -1295,7 +1346,7 @@ const App: React.FC = () => {
     try {
       const batch = writeBatch(db);
       selectedManualIds.forEach(id => {
-        batch.update(doc(db, 'manualEntries', id), { reservationComplete: false });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { reservationComplete: false });
       });
       await batch.commit();
       setSelectedManualIds(new Set());
@@ -1310,7 +1361,7 @@ const App: React.FC = () => {
     if (!window.confirm("해제하시겠습니까?")) return;
     try {
       const field = type === 'before' ? 'beforeDeposit' : 'afterDeposit';
-      await updateDoc(doc(db, 'manualEntries', id), { [field]: false });
+      await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), { [field]: false });
     } catch (e) {
       console.error(e);
       alert("해제 중 오류가 발생했습니다: " + e);
@@ -1322,7 +1373,7 @@ const App: React.FC = () => {
     if (!window.confirm("정말로 이 항목을 영구 삭제하시겠습니까? (복구 불가)")) return;
     try {
       console.log("Proceeding with deletion...");
-      await deleteDoc(doc(db, 'manualEntries', id));
+      await deleteDoc(doc(db, getCol('manualEntries', colPrefix), id));
       console.log("Deletion successful");
       alert("삭제되었습니다.");
     } catch (e) {
@@ -1348,7 +1399,7 @@ const App: React.FC = () => {
         }
       }
 
-      await updateDoc(doc(db, 'manualEntries', id), updates);
+      await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), updates);
     } catch (e) {
       console.error("Toggle Error:", e);
       alert("오류가 발생했습니다: " + e);
@@ -1357,7 +1408,7 @@ const App: React.FC = () => {
 
   const toggleAfterDeposit = async (id: string, currentVal: boolean) => {
     try {
-      await updateDoc(doc(db, 'manualEntries', id), {
+      await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), {
         afterDeposit: !currentVal
       });
     } catch (e) {
@@ -1370,7 +1421,7 @@ const App: React.FC = () => {
     if (!newProduct.name) { alert("품목명을 입력해주세요."); return; }
 
     if (editingProductId) {
-      await updateDoc(doc(db, 'products', editingProductId), {
+      await updateDoc(doc(db, getCol('products', colPrefix), editingProductId), {
         name: newProduct.name!,
         guideText: newProduct.guideText || '',
         refundAmount: newProduct.refundAmount || 0,
@@ -1390,14 +1441,14 @@ const App: React.FC = () => {
         remainingQuota: newProduct.totalQuota || 10,
         thumbnail: newProduct.thumbnail,
       };
-      await addDoc(collection(db, 'products'), product);
+      await addDoc(collection(db, getCol('products', colPrefix)), product);
     }
     setNewProduct({ name: '', guideText: '', refundAmount: 0, totalQuota: 10, thumbnail: '' });
   };
 
   const deleteProduct = async (id: string) => {
     if (window.confirm("이 품목을 삭제하시겠습니까?")) {
-      await deleteDoc(doc(db, 'products', id));
+      await deleteDoc(doc(db, getCol('products', colPrefix), id));
     }
   };
 
@@ -1407,7 +1458,7 @@ const App: React.FC = () => {
     const promises = Array.from({ length: count }).map(() => {
       const newRow = createEmptyRow(dateToUse);
       newIds.push(newRow.id);
-      return setDoc(doc(db, 'manualEntries', newRow.id), newRow);
+      return setDoc(doc(db, getCol('manualEntries', colPrefix), newRow.id), newRow);
     });
     await Promise.all(promises);
     // Save for undo
@@ -1428,7 +1479,7 @@ const App: React.FC = () => {
     });
     const newRow = createEmptyRow(lastSelected.date);
     newRow.createdAt = (lastSelected.createdAt || Date.now()) + 1;
-    await setDoc(doc(db, 'manualEntries', newRow.id), newRow);
+    await setDoc(doc(db, getCol('manualEntries', colPrefix), newRow.id), newRow);
     pushUndo({
       type: 'add',
       entries: [{ id: newRow.id, data: {} }],
@@ -1464,7 +1515,7 @@ const App: React.FC = () => {
       }
     }
 
-    await updateDoc(doc(db, 'manualEntries', id), updates);
+    await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), updates);
   };
 
   const handleManualImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1489,7 +1540,7 @@ const App: React.FC = () => {
         if (result.phone) ocrUpdates.emergencyContact = result.phone;
 
         if (Object.keys(ocrUpdates).length > 0) {
-          await updateDoc(doc(db, 'manualEntries', id), ocrUpdates);
+          await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), ocrUpdates);
         }
       } catch (err) {
         console.error('[Upload OCR] 실패:', err);
@@ -1532,7 +1583,7 @@ const App: React.FC = () => {
       const promises = Array.from({ length: needed }).map(() => {
         const newRow = createEmptyRow(dateToUse);
         newIds.push(newRow.id);
-        return setDoc(doc(db, 'manualEntries', newRow.id), newRow);
+        return setDoc(doc(db, getCol('manualEntries', colPrefix), newRow.id), newRow);
       });
       await Promise.all(promises);
       // 새로 만든 행 추가
@@ -1554,7 +1605,7 @@ const App: React.FC = () => {
     for (let i = 0; i < fileArr.length && i < available.length; i++) {
       const targetEntry = available[i];
       const base64Image = await readFileAsDataURL(fileArr[i]);
-      await updateDoc(doc(db, 'manualEntries', targetEntry.id), { proofImage: base64Image });
+      await updateDoc(doc(db, getCol('manualEntries', colPrefix), targetEntry.id), { proofImage: base64Image });
       setOcrLoadingIds(prev => new Set(prev).add(targetEntry.id));
 
       try {
@@ -1569,7 +1620,7 @@ const App: React.FC = () => {
         if (result.phone) ocrUpdates.emergencyContact = result.phone;
 
         if (Object.keys(ocrUpdates).length > 0) {
-          await updateDoc(doc(db, 'manualEntries', targetEntry.id), ocrUpdates);
+          await updateDoc(doc(db, getCol('manualEntries', colPrefix), targetEntry.id), ocrUpdates);
         }
       } catch (err) {
         console.error(`[Multi OCR ${i + 1}] 실패:`, err);
@@ -1722,7 +1773,7 @@ const App: React.FC = () => {
 
     const allRows = beforeItems.map(e => {
       const [bank, account, accountName] = parseAccount(e.accountNumber);
-      return [bank, account, e.paymentAmount || '', accountName || e.name1 || e.name2, '안군농원환불'];
+      return [bank, account, e.paymentAmount || '', accountName || e.name1 || e.name2, `${bizInfo?.name || ''}환불`];
     });
 
     // 15개씩 분할 다운로드
@@ -1781,7 +1832,7 @@ const App: React.FC = () => {
       const priceObj = productPrices.find(p => p.name === newEntry.product);
       if (priceObj) newEntry.paymentAmount = priceObj.price;
 
-      await addDoc(collection(db, 'manualEntries'), newEntry);
+      await addDoc(collection(db, getCol('manualEntries', colPrefix)), newEntry);
 
       setLastSubmittedType('apply');
       setIsSubmitting(false);
@@ -1826,12 +1877,12 @@ const App: React.FC = () => {
           bankInfo: customerForm.orderNumber || '',
           date: new Date().toISOString().split('T')[0],
         };
-        await addDoc(collection(db, 'reviewEntries'), reviewEntry);
+        await addDoc(collection(db, getCol('reviewEntries', colPrefix)), reviewEntry);
 
         if (extractedOrderNumber) {
           const matchedEntry = manualEntries.find(entry => entry.orderNumber === extractedOrderNumber);
           if (matchedEntry) {
-            await updateDoc(doc(db, 'manualEntries', matchedEntry.id), { beforeDeposit: true });
+            await updateDoc(doc(db, getCol('manualEntries', colPrefix), matchedEntry.id), { beforeDeposit: true });
             console.log(`[OCR 매칭 성공] 주문번호 [${extractedOrderNumber}] → 입금 대기 상태로 변경`);
           } else {
             console.log(`[OCR 매칭 실패] 주문번호 [${extractedOrderNumber}] → 매칭되는 주문 내역 없음`);
@@ -1851,6 +1902,26 @@ const App: React.FC = () => {
     setSelectedProductId(null);
     setCustomerForm({ kakaoNick: '', phoneNumber: '', proofImage: '', orderNumber: '' });
   };
+
+  // 사업자 전환 시 UI state 초기화
+  useEffect(() => {
+    setSelectedManualIds(new Set());
+    setSelectedDepositIds(new Set());
+    setSelectedReviewIds(new Set());
+    setSelectedProductId(null);
+    setCustomerForm({ kakaoNick: '', phoneNumber: '', proofImage: '', orderNumber: '' });
+    setShowSuccess(false);
+    setCustomerView('landing');
+    setSalesUndoStack([]);
+    setSalesRedoStack([]);
+    setVendorEditModal(null);
+    setPendingExpenses(null);
+    setPendingUpload(null);
+    setLastUploadInfo(null);
+    setColorPicker(null);
+    setUndoStack([]);
+    setRedoStack([]);
+  }, [selectedBiz]);
 
   const renderDatePicker = (
     selected: string, onSelect: (d: string) => void,
@@ -2029,7 +2100,7 @@ const App: React.FC = () => {
   const selectedProduct = products.find(p => p.id === selectedProductId);
 
   return (
-    <div className="min-h-screen bg-[#FBFBFD] font-sans text-[#1D1D1F] antialiased">
+    <div className={`min-h-screen font-sans text-[#1D1D1F] antialiased ${selectedBiz === 'zoe' ? 'bg-[#FFF0F3]' : selectedBiz === 'angun' ? 'bg-[#EFF6FF]' : 'bg-[#FBFBFD]'}`}>
       {/* Lightbox Modal */}
       {previewImage && (
         <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setPreviewImage(null)}>
@@ -2039,17 +2110,36 @@ const App: React.FC = () => {
       )}
 
       {/* Nav */}
-      <nav className="bg-white border-b border-gray-100 sticky top-0 z-50">
+      <nav className={`border-b sticky top-0 z-50 ${selectedBiz === 'zoe' ? 'bg-[#FFF0F3] border-pink-200' : selectedBiz === 'angun' ? 'bg-[#EFF6FF] border-blue-200' : 'bg-white border-gray-100'}`}>
         <div className="max-w-[1500px] mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3 cursor-pointer" onClick={resetCustomerFlow}>
             <div className="w-8 h-8 bg-[#0071E3] rounded-lg flex items-center justify-center text-white font-black">M</div>
             <span className="font-bold text-xl tracking-tight uppercase">Mission Hub</span>
           </div>
-          <div className="flex bg-gray-100 p-1 rounded-xl">
-            <button onClick={() => setMode('customer')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${mode === 'customer' ? 'bg-white shadow-sm text-[#0071E3]' : 'text-gray-500'}`}>체험단</button>
-            <button onClick={() => setMode('admin')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${mode === 'admin' ? 'bg-white shadow-sm text-[#0071E3]' : 'text-gray-500'}`}>관리자</button>
+          <div className="flex items-center gap-3">
+            {mode === 'admin' && isAdminAuthenticated && selectedBiz && (
+              <div className="flex bg-white/80 p-1 rounded-xl border border-gray-200">
+                {Object.values(BUSINESSES).map(biz => (
+                  <button key={biz.id} onClick={() => setSelectedBiz(biz.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                      selectedBiz === biz.id
+                        ? biz.id === 'zoe' ? 'bg-pink-500 text-white shadow-sm' : 'bg-blue-500 text-white shadow-sm'
+                        : 'text-gray-400 hover:text-gray-600'
+                    }`}>{biz.name}</button>
+                ))}
+              </div>
+            )}
+            <div className="flex bg-gray-100 p-1 rounded-xl">
+              <button onClick={() => setMode('customer')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${mode === 'customer' ? 'bg-white shadow-sm text-[#0071E3]' : 'text-gray-500'}`}>체험단</button>
+              <button onClick={() => setMode('admin')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${mode === 'admin' ? 'bg-white shadow-sm text-[#0071E3]' : 'text-gray-500'}`}>관리자</button>
+            </div>
           </div>
         </div>
+        {selectedBiz && mode === 'admin' && isAdminAuthenticated && (
+          <div className={`text-center py-1.5 text-sm font-black ${selectedBiz === 'zoe' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'}`}>
+            여기는 {bizInfo?.name}입니다
+          </div>
+        )}
       </nav>
 
       <main className={`${mode === 'admin' && adminTab === 'manual' ? 'max-w-full px-4' : 'max-w-5xl'} mx-auto p-6 md:p-12`}>
@@ -2062,6 +2152,21 @@ const App: React.FC = () => {
                   <input type="password" placeholder="비밀번호" className="w-full p-4 bg-gray-50 rounded-xl font-bold border-2 border-transparent focus:border-blue-600 outline-none transition-all" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
                   <button type="submit" className="w-full py-4 bg-[#0071E3] text-white rounded-xl font-bold shadow-lg shadow-blue-100 hover:bg-blue-700">접속하기</button>
                 </form>
+              </div>
+            </div>
+          ) : !selectedBiz ? (
+            <div className="flex items-center justify-center pt-20">
+              <div className="bg-white p-10 rounded-[32px] shadow-xl border border-gray-100 w-full max-w-md space-y-8 text-center">
+                <h2 className="text-2xl font-black tracking-tighter">사업장 선택</h2>
+                <div className="grid grid-cols-1 gap-4">
+                  {Object.values(BUSINESSES).map(biz => (
+                    <button key={biz.id} onClick={() => setSelectedBiz(biz.id)}
+                      className="p-6 bg-gray-50 rounded-2xl hover:bg-blue-50 hover:border-blue-500 border-2 border-transparent transition-all text-left">
+                      <h3 className="text-xl font-black">{biz.name}</h3>
+                      {biz.phone && <p className="text-sm text-gray-400 mt-1">{biz.phone}</p>}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           ) : (
@@ -2157,7 +2262,7 @@ const App: React.FC = () => {
                         <button
                           onClick={async () => {
                             if (window.confirm(`${selectedReviewIds.size}건의 후기 인증 내역을 삭제하시겠습니까?`)) {
-                              const promises = Array.from(selectedReviewIds).map(id => deleteDoc(doc(db, 'reviewEntries', id)));
+                              const promises = Array.from(selectedReviewIds).map((id: string) => deleteDoc(doc(db, getCol('reviewEntries', colPrefix), id)));
                               await Promise.all(promises);
                               setSelectedReviewIds(new Set());
                             }
@@ -2182,7 +2287,7 @@ const App: React.FC = () => {
 
                             const promises = manualEntries
                               .filter(e => targetOrderNumbers.has((e.orderNumber || '').trim()))
-                              .map(e => updateDoc(doc(db, 'manualEntries', e.id), { beforeDeposit: true, afterDeposit: false }));
+                              .map(e => updateDoc(doc(db, getCol('manualEntries', colPrefix), e.id), { beforeDeposit: true, afterDeposit: false }));
 
                             await Promise.all(promises);
                             setSelectedReviewIds(new Set());
@@ -2579,7 +2684,7 @@ const App: React.FC = () => {
                                     <button
                                       onClick={async () => {
                                         if (!confirm(`${summary.date} 업체별정산 데이터를 삭제하시겠습니까?`)) return;
-                                        await deleteDoc(doc(db, 'vendorSummaries', summary.date));
+                                        await deleteDoc(doc(db, getCol('vendorSummaries', colPrefix), summary.date));
                                       }}
                                       className="px-3 py-1 rounded-lg text-[10px] font-bold text-red-500 bg-red-50 hover:bg-red-100 transition-colors"
                                     >삭제</button>
@@ -3150,7 +3255,7 @@ const App: React.FC = () => {
                                 const dateStr = (today.getFullYear() === salesMonth.year && today.getMonth() + 1 === salesMonth.month)
                                   ? today.toISOString().split('T')[0]
                                   : `${salesMonthStr}-01`;
-                                await addDoc(collection(db, 'dailyCosts'), { date: dateStr, name, amount, ...(description ? { description } : {}) });
+                                await addDoc(collection(db, getCol('dailyCosts', colPrefix)), { date: dateStr, name, amount, ...(description ? { description } : {}) });
                                 setNewCostName('');
                                 setNewCostAmount('');
                                 if (descEl) descEl.value = '';
@@ -3319,7 +3424,7 @@ const App: React.FC = () => {
                     <button
                       onClick={async () => {
                         if (!newProductPrice.name || !newProductPrice.price) return alert("품목명과 가격을 입력해주세요.");
-                        await addDoc(collection(db, 'productPrices'), { name: newProductPrice.name, price: newProductPrice.price });
+                        await addDoc(collection(db, getCol('productPrices', colPrefix)), { name: newProductPrice.name, price: newProductPrice.price });
                         setNewProductPrice({ name: '', price: 0 });
                       }}
                       className="px-6 py-3 bg-blue-600 text-white rounded-xl text-sm font-black hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
@@ -3351,7 +3456,7 @@ const App: React.FC = () => {
                                 defaultValue={price.name}
                                 key={`name-${price.id}-${price.name}`}
                                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                onBlur={(e) => { if (e.target.value !== price.name) updateDoc(doc(db, 'productPrices', price.id), { name: e.target.value }); }}
+                                onBlur={(e) => { if (e.target.value !== price.name) updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { name: e.target.value }); }}
                                 className="w-full bg-transparent outline-none font-bold text-gray-900 border-b border-transparent focus:border-blue-500 transition-colors"
                               />
                             </td>
@@ -3361,7 +3466,7 @@ const App: React.FC = () => {
                                 defaultValue={price.price || ''}
                                 key={`price-${price.id}-${price.price}`}
                                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                onBlur={(e) => updateDoc(doc(db, 'productPrices', price.id), { price: Number(e.target.value) || 0 })}
+                                onBlur={(e) => updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { price: Number(e.target.value) || 0 })}
                                 className="w-full bg-transparent outline-none text-blue-600 font-bold text-center border-b border-transparent focus:border-blue-500 transition-colors"
                               />
                             </td>
@@ -3371,7 +3476,7 @@ const App: React.FC = () => {
                                 defaultValue={price.supplyPrice || ''}
                                 key={`supply-${price.id}-${price.supplyPrice}`}
                                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                onBlur={(e) => updateDoc(doc(db, 'productPrices', price.id), { supplyPrice: Number(e.target.value) || 0 })}
+                                onBlur={(e) => updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { supplyPrice: Number(e.target.value) || 0 })}
                                 className="w-full bg-transparent outline-none text-gray-400 font-normal text-center border-b border-transparent focus:border-gray-400 transition-colors"
                                 placeholder="-"
                               />
@@ -3382,7 +3487,7 @@ const App: React.FC = () => {
                                 defaultValue={price.sellingPrice || ''}
                                 key={`selling-${price.id}-${price.sellingPrice}`}
                                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                onBlur={(e) => updateDoc(doc(db, 'productPrices', price.id), { sellingPrice: Number(e.target.value) || 0 })}
+                                onBlur={(e) => updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { sellingPrice: Number(e.target.value) || 0 })}
                                 className="w-full bg-transparent outline-none text-gray-400 font-normal text-center border-b border-transparent focus:border-gray-400 transition-colors"
                                 placeholder="-"
                               />
@@ -3393,7 +3498,7 @@ const App: React.FC = () => {
                                 defaultValue={price.margin || ''}
                                 key={`margin-${price.id}-${price.margin}`}
                                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                onBlur={(e) => updateDoc(doc(db, 'productPrices', price.id), { margin: Number(e.target.value) || 0 })}
+                                onBlur={(e) => updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { margin: Number(e.target.value) || 0 })}
                                 className="w-full bg-transparent outline-none text-gray-400 font-normal text-center border-b border-transparent focus:border-gray-400 transition-colors"
                                 placeholder="-"
                               />
@@ -3402,7 +3507,7 @@ const App: React.FC = () => {
                               <button
                                 onClick={async () => {
                                   if (window.confirm("삭제하시겠습니까?")) {
-                                    await deleteDoc(doc(db, 'productPrices', price.id));
+                                    await deleteDoc(doc(db, getCol('productPrices', colPrefix), price.id));
                                   }
                                 }}
                                 className="px-3 py-1.5 bg-red-50 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-100 transition-all"
@@ -3444,21 +3549,23 @@ const App: React.FC = () => {
                         <button onClick={deleteEmptyRows} className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg font-bold text-[11px] hover:bg-gray-200">빈행삭제</button>
                         <button onClick={() => multiImageInputRef.current?.click()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-bold text-[11px] hover:bg-blue-700">이미지등록</button>
                         <input ref={multiImageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleMultiImageUpload} />
+                        {bizInfo?.accountInfo && (
                         <button
                           onClick={async () => {
                             if (selectedManualIds.size === 0) { alert('행을 먼저 선택해주세요.'); return; }
-                            if (!window.confirm(`${selectedManualIds.size}건의 계좌번호를 김성아 계좌로 변경하시겠습니까?`)) return;
+                            if (!window.confirm(`${selectedManualIds.size}건의 계좌번호를 ${bizInfo.accountInfo}(으)로 변경하시겠습니까?`)) return;
                             try {
                               const batch = writeBatch(db);
                               selectedManualIds.forEach(id => {
-                                batch.update(doc(db, 'manualEntries', id), { accountNumber: '국민 228 002 04 129095 김성아' });
+                                batch.update(doc(db, getCol('manualEntries', colPrefix), id), { accountNumber: bizInfo.accountInfo });
                               });
                               await batch.commit();
                               alert('변경되었습니다.');
                             } catch (e) { console.error(e); alert('오류: ' + e); }
                           }}
                           className="px-3 py-1.5 bg-purple-500 text-white rounded-lg font-bold text-[11px] hover:bg-purple-600"
-                        >성아계좌</button>
+                        >계좌일괄</button>
+                        )}
                         <button onClick={() => { if (selectedManualIds.size === 0) { alert('행을 먼저 선택해주세요.'); return; } deleteSelectedManualEntries(); }} className="px-3 py-1.5 bg-red-500 text-white rounded-lg font-bold text-[11px] hover:bg-red-600">삭제</button>
                       </div>
                       <div className="hidden md:flex gap-1 items-center ml-auto">
@@ -3491,8 +3598,8 @@ const App: React.FC = () => {
                             const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
                             const headers = ['주문번호','보내는사람(지정)','전화번호1(지정)','전화번호2(지정)','우편번호(지정)','주소(지정)','받는사람','전화번호1','전화번호2','우편번호','주소','상품명1','상품상세1','수량(A타입)','배송메시지','운임구분','운임','운송장번호'];
                             const rows = selected.map(e => [
-                              e.orderNumber || '', '안군농원', '01050447749', '', '',
-                              '인천시 연수구 송도동 214, D동 2206-1호',
+                              e.orderNumber || '', bizInfo?.name || '', bizInfo?.phone || '', '', '',
+                              bizInfo?.address || '',
                               e.name2 || '', (e.emergencyContact || '').replace(/-/g, ''),
                               '', '', e.address || '', '완구류', '', '', '', '', '', '',
                             ]);
@@ -3888,6 +3995,21 @@ const App: React.FC = () => {
                 </div>
 
                 <button onClick={resetCustomerFlow} className="w-full py-6 bg-black text-white rounded-[24px] text-2xl font-black shadow-xl hover:bg-gray-800 transition-all">메인으로</button>
+              </div>
+            ) : !selectedBiz ? (
+              <div className="space-y-16 pt-16 flex flex-col items-center">
+                <header className="text-center space-y-4">
+                  <h1 className="text-7xl font-black tracking-tighter text-[#1D1D1F]">Mission Hub</h1>
+                  <p className="text-gray-400 text-2xl font-bold tracking-tight">사업장을 선택하세요.</p>
+                </header>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full">
+                  {Object.values(BUSINESSES).map(biz => (
+                    <button key={biz.id} onClick={() => setSelectedBiz(biz.id)}
+                      className="group bg-white p-14 rounded-[48px] border border-gray-100 shadow-2xl transition-all hover:-translate-y-3 text-center active:scale-95">
+                      <h3 className="text-3xl font-black tracking-tighter">{biz.name}</h3>
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : customerView === 'landing' ? (
               <div className="space-y-16 pt-16 flex flex-col items-center">
@@ -4394,7 +4516,7 @@ const App: React.FC = () => {
                   subtotal: v.items.reduce((s, it) => s + it.price, 0),
                   items: v.items.filter(it => it.product.trim()).map(it => ({ product: it.product.trim(), quantity: it.quantity, price: it.price })),
                 }));
-                await setDoc(doc(db, 'vendorSummaries', vendorEditModal.date), { date: vendorEditModal.date, vendors: cleanVendors });
+                await setDoc(doc(db, getCol('vendorSummaries', colPrefix), vendorEditModal.date), { date: vendorEditModal.date, vendors: cleanVendors });
                 setVendorEditModal(null);
               }}
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 transition-colors">
