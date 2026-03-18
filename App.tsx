@@ -822,6 +822,40 @@ const App: React.FC = () => {
     return () => document.removeEventListener('contextmenu', handler, true);
   }, []);
 
+  // 실배 자동 주문번호 매핑: 입금전/입금완료 목록에서 주문번호에 "실배"가 포함된 항목의 비고에서 숫자를 추출해 주문번호로 자동 업데이트
+  const silbaeProcessingRef = useRef(false);
+  useEffect(() => {
+    if (adminTab !== 'deposit' || silbaeProcessingRef.current) return;
+
+    const silbaeEntries = manualEntries.filter(e =>
+      (e.beforeDeposit || e.afterDeposit) &&
+      String(e.orderNumber || '').includes('실배') &&
+      e.memo
+    );
+
+    if (silbaeEntries.length === 0) return;
+
+    silbaeProcessingRef.current = true;
+
+    const batch = writeBatch(db);
+    let updateCount = 0;
+
+    for (const entry of silbaeEntries) {
+      const numbers = String(entry.memo).match(/\d+/g);
+      if (numbers && numbers.length > 0) {
+        const orderNum = numbers.reduce((a, b) => a.length >= b.length ? a : b);
+        batch.update(doc(db, getCol('manualEntries', colPrefix), entry.id), { orderNumber: orderNum });
+        updateCount++;
+      }
+    }
+
+    if (updateCount > 0) {
+      batch.commit().finally(() => { silbaeProcessingRef.current = false; });
+    } else {
+      silbaeProcessingRef.current = false;
+    }
+  }, [adminTab, depositSubTab, manualEntries, colPrefix]);
+
   const handleColorSelect = async (color: string) => {
     if (!colorPicker) return;
     if (colorPicker.type === 'cell' && colorPicker.entryId && colorPicker.cellField) {
