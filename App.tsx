@@ -27,6 +27,10 @@ function getCol(baseName: string, prefix: string): string {
   return prefix ? `${prefix}${baseName}` : baseName;
 }
 
+function toLocalDateStr(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('customer');
   const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
@@ -37,13 +41,11 @@ const App: React.FC = () => {
   const bizInfo = selectedBiz ? BUSINESSES[selectedBiz] : null;
   const colPrefix = bizInfo?.collectionPrefix ?? '';
 
-  // URL 파라미터로 사업자 자동 선택 (?biz=angun 또는 ?biz=zoe)
+  // URL 파라미터로 사업자 자동 선택 (?biz=angun 또는 ?biz=zoe), 없으면 기본값 angun
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const bizParam = params.get('biz');
-    if (bizParam && BUSINESSES[bizParam]) {
-      setSelectedBiz(bizParam);
-    }
+    setSelectedBiz(bizParam && BUSINESSES[bizParam] ? bizParam : 'angun');
   }, []);
 
   const [adminPassword, setAdminPassword] = useState('1234');
@@ -72,7 +74,7 @@ const App: React.FC = () => {
     proofImage: '',
     count: 0,
     product: '',
-    date: date || new Date().toISOString().split('T')[0],
+    date: date || toLocalDateStr(),
     name1: '',
     name2: '',
     ordererName: '',
@@ -561,7 +563,7 @@ const App: React.FC = () => {
     const today = new Date();
     const uploadDate = dateMatch ? dateMatch[1]
       : (today.getFullYear() === salesMonth.year && today.getMonth() + 1 === salesMonth.month)
-        ? today.toISOString().split('T')[0]
+        ? toLocalDateStr(today)
         : `${salesMonthStr}-01`;
 
     // 판매 항목 합산 (A열 있는 행)
@@ -773,12 +775,12 @@ const App: React.FC = () => {
   const [selectedDepositIds, setSelectedDepositIds] = useState<Set<string>>(new Set());
   const [selectedReviewIds, setSelectedReviewIds] = useState<Set<string>>(new Set());
   // manualViewDate kept for backward compat but no longer used directly (replaced by range)
-  const [manualViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [manualViewDate] = useState<string>(toLocalDateStr());
   const [selectedManualIds, setSelectedManualIds] = useState<Set<string>>(new Set());
 
   const [depositBeforeDate, setDepositBeforeDate] = useState<string>('all');
-  const [depositAfterDate, setDepositAfterDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [depositActionDate, setDepositActionDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [depositAfterDate, setDepositAfterDate] = useState<string>(toLocalDateStr());
+  const [depositActionDate, setDepositActionDate] = useState<string>(toLocalDateStr());
 
   const [manualSearch, setManualSearch] = useState('');
 
@@ -791,10 +793,10 @@ const App: React.FC = () => {
 
   // Date range for purchase list
   const [manualViewDateStart, setManualViewDateStart] = useState<string>(() => {
-    const d = new Date(); d.setDate(d.getDate() - 4); return d.toISOString().split('T')[0];
+    const d = new Date(); d.setDate(d.getDate() - 4); return toLocalDateStr(d);
   });
   const [manualViewDateEnd, setManualViewDateEnd] = useState<string>(() => {
-    return new Date().toISOString().split('T')[0];
+    return toLocalDateStr();
   });
 
   // Color picker state (폰트색 / 행색상 / 셀색상)
@@ -1453,7 +1455,7 @@ const App: React.FC = () => {
   };
 
   const addMoreRows = async (count: number) => {
-    const dateToUse = manualViewDateStart !== 'all' ? manualViewDateEnd : new Date().toISOString().split('T')[0];
+    const dateToUse = manualViewDateStart !== 'all' ? manualViewDateEnd : toLocalDateStr();
     const newIds: string[] = [];
     const promises = Array.from({ length: count }).map(() => {
       const newRow = createEmptyRow(dateToUse);
@@ -1578,7 +1580,7 @@ const App: React.FC = () => {
     // 빈 행이 부족하면 추가 생성
     if (available.length < fileArr.length) {
       const needed = fileArr.length - available.length;
-      const dateToUse = dateStart !== 'all' ? dateStart : new Date().toISOString().split('T')[0];
+      const dateToUse = dateStart !== 'all' ? dateStart : toLocalDateStr();
       const newIds: string[] = [];
       const promises = Array.from({ length: needed }).map(() => {
         const newRow = createEmptyRow(dateToUse);
@@ -1742,7 +1744,7 @@ const App: React.FC = () => {
 
     const XLSX = await import('xlsx');
     const chunkSize = 15;
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalDateStr();
 
     // 은행명 (긴 이름 우선 매칭)
     const BANKS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일','새마을','우체국','농협','국민','신한','하나','우리','기업','수협','신협','대구','부산','경남','광주','전북','제주','IBK','KB','NH'];
@@ -1807,7 +1809,7 @@ const App: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `Mission_Export_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `Mission_Export_${toLocalDateStr()}.csv`;
     link.click();
   };
 
@@ -1825,7 +1827,7 @@ const App: React.FC = () => {
         product: selectedProduct?.name || '',
         name1: customerForm.kakaoNick,
         emergencyContact: customerForm.phoneNumber,
-        date: new Date().toISOString().split('T')[0],
+        date: toLocalDateStr(),
         paymentAmount: selectedProduct?.price || 0,
       };
 
@@ -1875,7 +1877,7 @@ const App: React.FC = () => {
           orderNumber: extractedOrderNumber || '',
           ordererName: ordererName || '',
           bankInfo: customerForm.orderNumber || '',
-          date: new Date().toISOString().split('T')[0],
+          date: toLocalDateStr(),
         };
         await addDoc(collection(db, getCol('reviewEntries', colPrefix)), reviewEntry);
 
@@ -1936,7 +1938,7 @@ const App: React.FC = () => {
     const days: (number | null)[] = [];
     for (let i = 0; i < firstDay; i++) days.push(null);
     for (let i = 1; i <= daysInMonth; i++) days.push(i);
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = toLocalDateStr();
     return (
       <div className="relative inline-block">
         <div className="flex gap-2 items-center">
@@ -2008,7 +2010,7 @@ const App: React.FC = () => {
     const days: (number | null)[] = [];
     for (let i = 0; i < firstDay; i++) days.push(null);
     for (let i = 1; i <= daysInMonth; i++) days.push(i);
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = toLocalDateStr();
     const isAll = startDate === 'all';
     const displayText = isAll ? '전체' : (startDate === endDate ? startDate : `${startDate} ~ ${endDate}`);
 
@@ -2465,7 +2467,7 @@ const App: React.FC = () => {
                         // 3개월 제한 (검색 시)
                         const limitDate = new Date();
                         limitDate.setMonth(limitDate.getMonth() - 3);
-                        const limitDateStr = limitDate.toISOString().split('T')[0];
+                        const limitDateStr = toLocalDateStr(limitDate);
 
                         if (debouncedDepositSearch) {
                           // 검색 시 'all'이면 3개월 제한
@@ -2546,7 +2548,7 @@ const App: React.FC = () => {
                         // 3개월 제한 (검색 시)
                         const limitDate = new Date();
                         limitDate.setMonth(limitDate.getMonth() - 3);
-                        const limitDateStr = limitDate.toISOString().split('T')[0];
+                        const limitDateStr = toLocalDateStr(limitDate);
 
                         if (debouncedDepositSearch) {
                           // 검색 시 'all'이면 3개월 제한
@@ -2646,7 +2648,7 @@ const App: React.FC = () => {
                       <div className="space-y-3">
                         <div className="flex justify-end">
                           <button
-                            onClick={() => setVendorEditModal({ date: new Date().toISOString().split('T')[0], vendors: [{ name: '', totalCount: 0, subtotal: 0, items: [{ product: '', quantity: 0, price: 0 }] }] })}
+                            onClick={() => setVendorEditModal({ date: toLocalDateStr(), vendors: [{ name: '', totalCount: 0, subtotal: 0, items: [{ product: '', quantity: 0, price: 0 }] }] })}
                             className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-500 hover:bg-blue-600 transition-colors"
                           >+ 수동 입력</button>
                         </div>
@@ -3253,7 +3255,7 @@ const App: React.FC = () => {
                                 const description = descEl?.value?.trim() || '';
                                 const today = new Date();
                                 const dateStr = (today.getFullYear() === salesMonth.year && today.getMonth() + 1 === salesMonth.month)
-                                  ? today.toISOString().split('T')[0]
+                                  ? toLocalDateStr(today)
                                   : `${salesMonthStr}-01`;
                                 await addDoc(collection(db, getCol('dailyCosts', colPrefix)), { date: dateStr, name, amount, ...(description ? { description } : {}) });
                                 setNewCostName('');
@@ -3606,7 +3608,7 @@ const App: React.FC = () => {
                             const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
                             const wb = XLSX.utils.book_new();
                             XLSX.utils.book_append_sheet(wb, ws, '롯데예약');
-                            XLSX.writeFile(wb, `롯데예약_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.xlsx`);
+                            XLSX.writeFile(wb, `롯데예약_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
                           }}
                           className="px-2.5 py-1 bg-red-500 text-white rounded-lg font-bold text-[11px] hover:bg-red-600"
                         >롯데예약</button>
@@ -3747,7 +3749,7 @@ const App: React.FC = () => {
                           // 3개월 전 날짜 계산 (검색 최적화)
                           const limitDate = new Date();
                           limitDate.setMonth(limitDate.getMonth() - 3);
-                          const limitDateStr = limitDate.toISOString().split('T')[0];
+                          const limitDateStr = toLocalDateStr(limitDate);
 
                           const filtered = manualEntries.filter(entry => {
                             if (!entry) return false;
@@ -3995,21 +3997,6 @@ const App: React.FC = () => {
                 </div>
 
                 <button onClick={resetCustomerFlow} className="w-full py-6 bg-black text-white rounded-[24px] text-2xl font-black shadow-xl hover:bg-gray-800 transition-all">메인으로</button>
-              </div>
-            ) : !selectedBiz ? (
-              <div className="space-y-16 pt-16 flex flex-col items-center">
-                <header className="text-center space-y-4">
-                  <h1 className="text-7xl font-black tracking-tighter text-[#1D1D1F]">Mission Hub</h1>
-                  <p className="text-gray-400 text-2xl font-bold tracking-tight">사업장을 선택하세요.</p>
-                </header>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full">
-                  {Object.values(BUSINESSES).map(biz => (
-                    <button key={biz.id} onClick={() => setSelectedBiz(biz.id)}
-                      className="group bg-white p-14 rounded-[48px] border border-gray-100 shadow-2xl transition-all hover:-translate-y-3 text-center active:scale-95">
-                      <h3 className="text-3xl font-black tracking-tighter">{biz.name}</h3>
-                    </button>
-                  ))}
-                </div>
               </div>
             ) : customerView === 'landing' ? (
               <div className="space-y-16 pt-16 flex flex-col items-center">

@@ -21,12 +21,15 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // Excel Date Converter
+function toLocalDateStr(d = new Date()) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 function excelDateToJSDate(serial) {
-    if (!serial) return new Date().toISOString().split('T')[0]; // Default today
+    if (!serial) return toLocalDateStr(); // Default today
     const utc_days = Math.floor(serial - 25569);
     const utc_value = utc_days * 86400;
     const date_info = new Date(utc_value * 1000);
-    return date_info.toISOString().split('T')[0];
+    return toLocalDateStr(date_info);
 }
 
 async function importExcel() {
