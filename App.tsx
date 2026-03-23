@@ -1506,21 +1506,51 @@ const App: React.FC = () => {
   };
 
   const insertRowAfterSelected = async () => {
-    if (selectedManualIds.size === 0) { alert('행을 먼저 선택해주세요.'); return; }
-    const selectedEntries = manualEntries.filter(e => selectedManualIds.has(e.id));
-    // 선택된 항목 중 createdAt이 가장 큰 것(화면상 마지막) 찾기
-    const lastSelected = selectedEntries.reduce((a, b) => {
-      if (a.date !== b.date) return a.date > b.date ? b : a; // date desc이므로 작은 date가 아래
-      return (a.createdAt || 0) > (b.createdAt || 0) ? a : b;
-    });
-    const newRow = createEmptyRow(lastSelected.date);
-    newRow.createdAt = (lastSelected.createdAt || Date.now()) + 1;
-    await setDoc(doc(db, getCol('manualEntries', colPrefix), newRow.id), newRow);
-    pushUndo({
-      type: 'add',
-      entries: [{ id: newRow.id, data: {} }],
-      description: '행 삽입'
-    });
+    if (selectedManualIds.size === 0) {
+      alert('행을 먼저 선택해주세요.');
+      return;
+    }
+
+    try {
+      const selectedEntries = manualEntries.filter(e => selectedManualIds.has(e.id));
+
+      if (selectedEntries.length === 0) {
+        alert('선택된 항목을 찾을 수 없습니다.');
+        return;
+      }
+
+      // 정렬: date 내림차순, 같은 date면 createdAt 오름차순
+      // 따라서 "화면상 가장 아래" = date가 가장 작거나, 같은 date면 createdAt이 가장 큼
+      const lastSelected = selectedEntries.reduce((a, b) => {
+        const dateCmp = (b.date || '').localeCompare(a.date || '');
+        if (dateCmp !== 0) {
+          // date가 다름: 작은 date가 아래 (내림차순이므로)
+          return dateCmp > 0 ? a : b;  // b.date > a.date이면 a가 아래
+        }
+        // date 같음: 큰 createdAt이 아래 (오름차순이므로)
+        return (a.createdAt || 0) > (b.createdAt || 0) ? a : b;
+      });
+
+      // 선택한 행의 바로 아래에 삽입하려면:
+      // - 같은 date 사용
+      // - createdAt을 선택한 행보다 크게 설정 (오름차순이므로 아래로 감)
+      const newRow = createEmptyRow(lastSelected.date);
+      newRow.createdAt = (lastSelected.createdAt || Date.now()) + 1;
+
+      await setDoc(doc(db, getCol('manualEntries', colPrefix), newRow.id), newRow);
+
+      pushUndo({
+        type: 'add',
+        entries: [{ id: newRow.id, data: {} }],
+        description: '행 삽입'
+      });
+
+      // 선택 해제
+      setSelectedManualIds(new Set());
+    } catch (error) {
+      console.error('행 삽입 오류:', error);
+      alert('행 삽입 중 오류가 발생했습니다: ' + error);
+    }
   };
 
   const updateManualEntry = async (id: string, field: keyof ManualEntry, value: any) => {
@@ -3602,6 +3632,7 @@ const App: React.FC = () => {
                           className="px-3 py-1.5 bg-purple-500 text-white rounded-lg font-bold text-[11px] hover:bg-purple-600"
                         >계좌일괄</button>
                         )}
+                        <button onClick={insertRowAfterSelected} className="px-3 py-1.5 bg-green-500 text-white rounded-lg font-bold text-[11px] hover:bg-green-600">행삽입</button>
                         <button onClick={() => { if (selectedManualIds.size === 0) { alert('행을 먼저 선택해주세요.'); return; } deleteSelectedManualEntries(); }} className="px-3 py-1.5 bg-red-500 text-white rounded-lg font-bold text-[11px] hover:bg-red-600">삭제</button>
                       </div>
                       <div className="hidden md:flex gap-1 items-center ml-auto">
@@ -3735,18 +3766,48 @@ const App: React.FC = () => {
                             <input type="checkbox" className="w-3 h-3 accent-blue-600"
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  const visibleIds = manualEntries.filter(entry => {
+                                  // 3개월 전 날짜 계산 (검색 최적화) - tbody 로직과 동일하게
+                                  const limitDate = new Date();
+                                  limitDate.setMonth(limitDate.getMonth() - 3);
+                                  const limitDateStr = toLocalDateStr(limitDate);
+
+                                  const filtered = manualEntries.filter(entry => {
                                     if (!entry) return false;
+
+                                    // 검색 시 동작: 날짜 필터 무시하고 3개월 이내 데이터 전체 검색
+                                    if (debouncedManualSearch) {
+                                      if (entry.date < limitDateStr) return false;
+
+                                      const queries = debouncedManualSearch.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
+                                      const fields = [String(entry.name1 || ''), String(entry.name2 || ''), String(entry.orderNumber || ''), String(entry.product || ''), String(entry.accountNumber || '')].map(f => f.toLowerCase());
+                                      return queries.some(q => fields.some(f => f.includes(q)));
+                                    }
+
+                                    // 일반 조회 시: 날짜 범위로 필터링
                                     if (manualViewDateStart !== 'all') {
                                       if (entry.date < manualViewDateStart || entry.date > manualViewDateEnd) return false;
                                     }
-                                    if (debouncedManualSearch) {
-                                      const queries = debouncedManualSearch.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-                                      const fields = [(entry.name1 || ''), (entry.name2 || ''), (entry.orderNumber || ''), (entry.product || ''), (entry.accountNumber || '')].map(f => f.toLowerCase());
-                                      return queries.some(q => fields.some(f => f.includes(q)));
-                                    }
+
                                     return true;
-                                  }).slice(0, 200).map(e => e.id);
+                                  });
+
+                                  // 정렬 적용 - tbody 로직과 동일하게
+                                  if (sortConfig) {
+                                    filtered.sort((a, b) => {
+                                      const aVal = a[sortConfig.key] ?? '';
+                                      const bVal = b[sortConfig.key] ?? '';
+                                      if (typeof aVal === 'number' && typeof bVal === 'number') {
+                                        return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+                                      }
+                                      const aStr = String(aVal).toLowerCase();
+                                      const bStr = String(bVal).toLowerCase();
+                                      if (aStr < bStr) return sortConfig.direction === 'asc' ? -1 : 1;
+                                      if (aStr > bStr) return sortConfig.direction === 'asc' ? 1 : -1;
+                                      return 0;
+                                    });
+                                  }
+
+                                  const visibleIds = filtered.slice(0, 200).map(e => e.id);
                                   setSelectedManualIds(new Set(visibleIds));
                                 } else {
                                   setSelectedManualIds(new Set());
