@@ -3658,6 +3658,16 @@ const App: React.FC = () => {
                         <span className="w-px h-4 bg-blue-200 mx-0.5"></span>
                         <button onClick={(e) => { e.stopPropagation(); setColorPicker({ type: 'text', x: e.clientX, y: e.clientY }); }} className="px-2.5 py-1 bg-white text-purple-600 rounded-lg font-bold text-[11px] hover:bg-purple-50 border border-purple-200">폰트색</button>
                         <button onClick={(e) => { e.stopPropagation(); setColorPicker({ type: 'bg', x: e.clientX, y: e.clientY }); }} className="px-2.5 py-1 bg-white text-yellow-700 rounded-lg font-bold text-[11px] hover:bg-yellow-50 border border-yellow-200">행색상</button>
+                        <button onClick={async () => {
+                          if (selectedManualIds.size === 0) return;
+                          const batch = writeBatch(db);
+                          const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                          const hasAnyBorder = selected.some(e => e.bottomBorder);
+                          selectedManualIds.forEach(id => {
+                            batch.update(doc(db, getCol('manualEntries', colPrefix), id), { bottomBorder: !hasAnyBorder });
+                          });
+                          await batch.commit();
+                        }} className="px-2.5 py-1 bg-white text-gray-700 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300">경계선</button>
                         <span className="w-px h-4 bg-blue-200 mx-0.5"></span>
                         <button
                           onClick={async () => {
@@ -3889,7 +3899,11 @@ const App: React.FC = () => {
                               const rowColor = isBlue ? 'text-blue-600' : '';
                               const isPink = entry.reservationComplete;
                               const textStyle = isBlue ? { color: '#2563eb' } : entry.textColor ? { color: entry.textColor } : {};
-                              const rowStyle = { ...textStyle, ...(entry.rowBgColor ? { backgroundColor: entry.rowBgColor } : {}) };
+                              const rowStyle = {
+                                ...textStyle,
+                                ...(entry.rowBgColor ? { backgroundColor: entry.rowBgColor } : {}),
+                                ...(entry.bottomBorder ? { borderBottom: '3px solid #000' } : {})
+                              };
                               return (
                                 <tr key={entry.id}
                                   style={rowStyle}

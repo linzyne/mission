@@ -51,6 +51,7 @@ export interface ManualEntry {
   textColor?: string;
   rowBgColor?: string;
   cellColors?: Record<string, string>;
+  bottomBorder?: boolean;
   createdAt?: number;
 }
 
