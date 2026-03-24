@@ -3760,7 +3760,7 @@ const App: React.FC = () => {
                       return <style>{s.join(',') + `{background:rgba(0,113,227,0.15)!important;border-color:#0071E3!important}`}</style>;
                     })()}
                     <table className="excel-table w-full border-collapse md:min-w-[1100px] table-fixed text-center text-[12px]">
-                      <thead className="sticky top-0 z-20">
+                      <thead className="sticky top-0 z-20 bg-white shadow-sm">
                         <tr className="text-[10px] font-semibold text-black bg-white">
                           <th className="py-0 px-0.5 w-8 sticky left-0 bg-white z-30 overflow-hidden">
                             <input type="checkbox" className="w-3 h-3 accent-blue-600"
