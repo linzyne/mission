@@ -3687,6 +3687,27 @@ const App: React.FC = () => {
                           }}
                           className="px-2.5 py-1 bg-red-500 text-white rounded-lg font-bold text-[11px] hover:bg-red-600"
                         >롯데예약</button>
+                        <button
+                          onClick={async () => {
+                            const XLSX = await import('xlsx');
+                            const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                            const headers = ['주문번호','받는사람','전화번호1','주소','상품명1','보내는사람','전화번호'];
+                            const rows = selected.map(e => [
+                              e.orderNumber || '',
+                              e.name2 || '',
+                              (e.emergencyContact || '').replace(/-/g, ''),
+                              e.address || '',
+                              '완구류',
+                              '주노엘',
+                              '01050447749',
+                            ]);
+                            const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+                            const wb = XLSX.utils.book_new();
+                            XLSX.utils.book_append_sheet(wb, ws, '택배대행');
+                            XLSX.writeFile(wb, `택배대행_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
+                          }}
+                          className="px-2.5 py-1 bg-orange-500 text-white rounded-lg font-bold text-[11px] hover:bg-orange-600"
+                        >택배대행</button>
                         <button onClick={() => setSelectedManualIds(new Set())} className="ml-auto px-2 py-1 text-gray-400 hover:text-gray-600 text-[11px]">✕ 해제</button>
                       </div>
                     <div>
