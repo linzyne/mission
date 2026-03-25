@@ -3691,15 +3691,18 @@ const App: React.FC = () => {
                           onClick={async () => {
                             const XLSX = await import('xlsx');
                             const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
-                            const headers = ['주문번호','받는사람','전화번호1','주소','상품명1','보내는사람','전화번호'];
+                            const headers = ['주문번호','받는사람','전화번호1','전화번호2','우편번호','주소','상품명1','상품상세1','수량(A타입)','배송메시지','불필요항목','불필요항목','불필요항목','보내는사람(지정)','전화번호1(지정)','송장번호'];
                             const rows = selected.map(e => [
                               e.orderNumber || '',
                               e.name2 || '',
                               (e.emergencyContact || '').replace(/-/g, ''),
+                              '', '',
                               e.address || '',
                               '완구류',
+                              '', '', '', '', '', '',
                               '주노엘',
                               '01050447749',
+                              '',
                             ]);
                             const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
                             const wb = XLSX.utils.book_new();
