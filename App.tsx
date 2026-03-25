@@ -2469,8 +2469,48 @@ const App: React.FC = () => {
                       </div>
                       {depositSubTab === 'before' && manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit).length > 0 && (
                         <div className="flex gap-2">
-                          <button onClick={downloadBeforeDepositCsv} className="px-5 py-2 rounded-xl text-sm font-black bg-green-600 text-white hover:bg-green-700 transition-all">
-                            엑셀 다운 📥
+                          <button onClick={downloadBeforeDepositCsv} className="px-3 py-2 rounded-xl text-sm font-black bg-green-600 text-white hover:bg-green-700 transition-all">
+                            안군
+                          </button>
+                          <button onClick={async () => {
+                            const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
+                            if (beforeItems.length === 0) return alert("다운로드할 데이터가 없습니다.");
+                            const XLSX = await import('xlsx');
+                            const BANKS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일','새마을','우체국','농협','국민','신한','하나','우리','기업','수협','신협','대구','부산','경남','광주','전북','제주','IBK','KB','NH'];
+                            const parseAccount = (raw: string): [string, string, string] => {
+                              if (!raw || !raw.trim()) return ['', '', ''];
+                              const str = raw.trim();
+                              let bank = '';
+                              for (const b of BANKS) { if (str.includes(b)) { bank = b; break; } }
+                              const m = str.match(/\d[\d\-\s]*\d|\d+/);
+                              const account = m ? m[0].trim() : '';
+                              let remaining = str;
+                              if (bank) remaining = remaining.replace(bank, '');
+                              if (account) remaining = remaining.replace(account, '');
+                              remaining = remaining.replace(/[\d\-\s]/g, '');
+                              const BANK_WORDS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일은행','새마을금고','우체국','카카오','토스','은행','뱅크','금고','NH','IBK','KB','SC'];
+                              for (const w of BANK_WORDS) { remaining = remaining.split(w).join(''); }
+                              return [bank, account, remaining.trim()];
+                            };
+                            const allRows = beforeItems.map(e => {
+                              const [bank, account] = parseAccount(e.accountNumber);
+                              return [bank, account, e.paymentAmount || '', e.name1 || e.name2 || '', '조에농원환불'];
+                            });
+                            const chunkSize = 15;
+                            const today = toLocalDateStr();
+                            for (let i = 0; i < allRows.length; i += chunkSize) {
+                              const chunk = allRows.slice(i, i + chunkSize);
+                              const ws = XLSX.utils.aoa_to_sheet(chunk);
+                              const wb = XLSX.utils.book_new();
+                              XLSX.utils.book_append_sheet(wb, ws, '조에환불');
+                              XLSX.writeFile(wb, `${today} 조에환불_${(i / chunkSize) + 1}.xlsx`);
+                            }
+                            const wsAll = XLSX.utils.aoa_to_sheet(allRows);
+                            const wbAll = XLSX.utils.book_new();
+                            XLSX.utils.book_append_sheet(wbAll, wsAll, '조에환불');
+                            XLSX.writeFile(wbAll, `${today} 조에환불_통합.xlsx`);
+                          }} className="px-3 py-2 rounded-xl text-sm font-black bg-purple-600 text-white hover:bg-purple-700 transition-all">
+                            조에
                           </button>
                           <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl">
                             <input type="date" value={depositActionDate} onChange={e => setDepositActionDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none px-2 text-gray-600" />
