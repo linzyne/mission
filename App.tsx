@@ -2469,10 +2469,10 @@ const App: React.FC = () => {
                       </div>
                       {depositSubTab === 'before' && manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit).length > 0 && (
                         <div className="flex gap-2">
-                          <button onClick={downloadBeforeDepositCsv} className="px-3 py-2 rounded-xl text-sm font-black bg-green-600 text-white hover:bg-green-700 transition-all">
+                          {selectedBiz === 'angun' && <button onClick={downloadBeforeDepositCsv} className="px-3 py-2 rounded-xl text-sm font-black bg-green-600 text-white hover:bg-green-700 transition-all">
                             안군
-                          </button>
-                          <button onClick={async () => {
+                          </button>}
+                          {selectedBiz === 'zoe' && <button onClick={async () => {
                             const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
                             if (beforeItems.length === 0) return alert("다운로드할 데이터가 없습니다.");
                             const XLSX = await import('xlsx');
@@ -2511,7 +2511,7 @@ const App: React.FC = () => {
                             XLSX.writeFile(wbAll, `${today} 조에환불_통합.xlsx`);
                           }} className="px-3 py-2 rounded-xl text-sm font-black bg-purple-600 text-white hover:bg-purple-700 transition-all">
                             조에
-                          </button>
+                          </button>}
                           <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl">
                             <input type="date" value={depositActionDate} onChange={e => setDepositActionDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none px-2 text-gray-600" />
                             <button
