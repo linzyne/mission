@@ -2590,7 +2590,7 @@ const App: React.FC = () => {
                         <table className="w-full text-xs text-center">
                           <thead className="bg-gray-100 text-gray-500 font-bold">
                             <tr>
-                              <th className="py-1 px-2 w-8">
+                              <th className="py-0.5 px-2 w-8">
                                 <input type="checkbox" className="w-3 h-3 accent-blue-600" checked={allSelected} onChange={() => {
                                   if (allSelected) {
                                     setSelectedDepositIds(new Set());
@@ -2599,42 +2599,61 @@ const App: React.FC = () => {
                                   }
                                 }} />
                               </th>
-                              <th className="py-1 px-2">날짜</th>
-                              <th className="py-1 px-2">이름1</th>
-                              <th className="py-1 px-2">이름2</th>
-                              <th className="py-1 px-2 hidden md:table-cell">주문번호</th>
-                              <th className="py-1 px-2">결제금액</th>
-                              <th className="py-1 px-2">계좌번호</th>
-                              <th className="py-1 px-2 w-14 hidden md:table-cell">해제</th>
+                              <th className="py-0.5 px-2">날짜</th>
+                              <th className="py-0.5 px-2">이름1</th>
+                              <th className="py-0.5 px-2">이름2</th>
+                              <th className="py-0.5 px-2 hidden md:table-cell">주문번호</th>
+                              <th className="py-0.5 px-2">결제금액</th>
+                              <th className="py-0.5 px-2">계좌번호</th>
+                              <th className="py-0.5 px-2 w-14 hidden md:table-cell">해제</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {beforeItems.map((entry) => (
+                            {beforeItems.flatMap((entry, idx) => {
+                              const rows = [];
+                              rows.push(
                               <tr key={entry.id}
                                 className={`border-t ${selectedDepositIds.has(entry.id) ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                               >
-                                <td className="py-0.5 px-2">
+                                <td className="py-0 px-2">
                                   <input type="checkbox" className="w-3 h-3 accent-blue-600" checked={selectedDepositIds.has(entry.id)} onChange={() => {
                                     const next = new Set(selectedDepositIds);
                                     next.has(entry.id) ? next.delete(entry.id) : next.add(entry.id);
                                     setSelectedDepositIds(next);
                                   }} />
                                 </td>
-                                <td className="py-0.5 px-2">
+                                <td className="py-0 px-2">
                                   {entry.isManualCheck && <span className="inline-block px-1 rounded bg-orange-100 text-orange-600 text-[8px] font-black mr-0.5">수동</span>}
                                   {entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''}
                                 </td>
-                                <td className="py-0.5 px-2">{entry.name1}</td>
-                                <td className="py-0.5 px-2">{entry.name2}</td>
-                                <td className="py-0.5 px-2 text-blue-600 font-black hidden md:table-cell">{entry.orderNumber}</td>
-                                <td className="py-0.5 px-2">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
-                                <td className="py-0.5 px-2 text-blue-600">{entry.accountNumber}</td>
-                                <td className="py-0.5 px-2 hidden md:table-cell">
+                                <td className="py-0 px-2">{entry.name1}</td>
+                                <td className="py-0 px-2">{entry.name2}</td>
+                                <td className="py-0 px-2 text-blue-600 font-black hidden md:table-cell">{entry.orderNumber}</td>
+                                <td className="py-0 px-2">{entry.paymentAmount ? entry.paymentAmount.toLocaleString() + '원' : ''}</td>
+                                <td className="py-0 px-2 text-blue-600">{entry.accountNumber}</td>
+                                <td className="py-0 px-2 hidden md:table-cell">
                                   <button onClick={() => handleDepositRelease(entry.id, 'before')} className="px-1 py-0 bg-red-50 text-red-500 rounded text-[8px] font-black hover:bg-red-100 transition-all mr-0.5">해제</button>
                                   <button onClick={() => handleDepositDelete(entry.id)} className="px-1 py-0 bg-gray-100 text-gray-400 rounded text-[8px] font-black hover:bg-gray-200 transition-all">삭제</button>
                                 </td>
                               </tr>
-                            ))}
+                              );
+                              if ((idx + 1) % 15 === 0 || idx === beforeItems.length - 1) {
+                                const start = Math.floor(idx / 15) * 15;
+                                const groupItems = beforeItems.slice(start, idx + 1);
+                                const subtotal = groupItems.reduce((sum, e) => sum + (e.paymentAmount || 0), 0);
+                                rows.push(
+                                  <tr key={`subtotal-${idx}`} className="border-t-2 border-yellow-400 bg-yellow-50">
+                                    <td colSpan={5} className="py-0.5 px-2 text-right text-[10px] font-black text-yellow-700">
+                                      소계 ({start + 1}~{idx + 1})
+                                    </td>
+                                    <td colSpan={3} className="py-0.5 px-2 text-left text-[10px] font-black text-yellow-700">
+                                      {subtotal.toLocaleString()}원
+                                    </td>
+                                  </tr>
+                                );
+                              }
+                              return rows;
+                            })}
                             {beforeItems.length === 0 && (
                               <tr><td colSpan={8} className="p-16 text-gray-300 font-bold">
                                 {debouncedDepositSearch ? `"${debouncedDepositSearch}" 검색 결과가 없습니다.` : '입금 대기 항목이 없습니다.'}
