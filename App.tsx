@@ -676,9 +676,9 @@ const App: React.FC = () => {
           currentVendor.items.push({ product: col1, quantity: qty, price });
         }
 
-        // 소계 (E열)
+        // 소계 (E열) - 같은 업체 내 여러 E열 값 합산
         if (col4) {
-          currentVendor.subtotal = parseNum(col4);
+          currentVendor.subtotal += parseNum(col4);
         }
       }
       if (currentVendor) vendorSummaryData.push(currentVendor);
