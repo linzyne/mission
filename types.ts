@@ -80,6 +80,7 @@ export interface SalesDailyEntry {
   adCost: number;
   housePurchase: number;
   solution: number;
+  hpManual?: boolean;
 }
 export type CustomerView = 'landing' | 'apply' | 'review';
 

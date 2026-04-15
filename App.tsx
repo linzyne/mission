@@ -27,6 +27,10 @@ function getCol(baseName: string, prefix: string): string {
   return prefix ? `${prefix}${baseName}` : baseName;
 }
 
+function normProductName(s: string | undefined | null): string {
+  return (s || '').normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim().replace(/\s+/g, ' ');
+}
+
 function toLocalDateStr(d: Date = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -387,16 +391,17 @@ const App: React.FC = () => {
       const batch = writeBatch(db);
       let hasUpdate = false;
 
-      // 1) 기존 salesDaily 항목 업데이트
+      // 1) 기존 salesDaily 항목 업데이트 (품목명 정규화 매칭)
       const sdMap = new Map<string, SalesDailyEntry>();
       for (const sd of salesDaily) {
-        sdMap.set(`${sd.date}|||${sd.product}`, sd);
+        sdMap.set(`${sd.date}|||${normProductName(sd.product)}`, sd);
         if (isProtectedMonth(sd.date.substring(0, 7))) continue;
         if ((sd as any).hpManual) continue;
-        const count = manualEntries.filter(e => e.product === sd.product && e.date === sd.date).length;
+        const sdNorm = normProductName(sd.product);
+        const count = manualEntries.filter(e => normProductName(e.product) === sdNorm && e.date === sd.date).length;
         let hp = 0;
         if (count > 0) {
-          const pp = productPrices.find(p => p.name === sd.product);
+          const pp = productPrices.find(p => normProductName(p.name) === sdNorm);
           const supPrice = pp?.supplyPrice || ((pp?.sellingPrice || pp?.price || 0) - 1000);
           if (supPrice > 0) {
             hp = -(count * Math.round(1000 + supPrice * 0.1166 + 2300));
@@ -408,24 +413,26 @@ const App: React.FC = () => {
         }
       }
 
-      // 2) salesDaily에 없는 날짜+품목 조합은 새로 생성
-      const combos = new Map<string, number>();
+      // 2) salesDaily에 없는 날짜+품목 조합은 새로 생성 (정규화 키 기준)
+      const combos = new Map<string, { date: string; product: string; count: number }>();
       for (const me of manualEntries) {
         if (!me.product || !me.date || isProtectedMonth(me.date.substring(0, 7))) continue;
-        const key = `${me.date}|||${me.product}`;
-        combos.set(key, (combos.get(key) || 0) + 1);
+        const key = `${me.date}|||${normProductName(me.product)}`;
+        const prev = combos.get(key);
+        if (prev) prev.count += 1;
+        else combos.set(key, { date: me.date, product: me.product, count: 1 });
       }
-      for (const [key, count] of combos) {
+      for (const [key, { date, product, count }] of combos) {
         if (sdMap.has(key)) continue; // 이미 위에서 처리됨
-        const date = key.split('|||')[0];
-        const product = key.split('|||')[1];
-        const pp = productPrices.find(p => p.name === product);
+        const pNorm = normProductName(product);
+        const pp = productPrices.find(p => normProductName(p.name) === pNorm);
         const supPrice = pp?.supplyPrice || ((pp?.sellingPrice || pp?.price || 0) - 1000);
         if (supPrice <= 0) continue;
+        const cleanProduct = pp?.name || pNorm;
         const hp = -(count * Math.round(1000 + supPrice * 0.1166 + 2300));
-        const docId = `${date}_${product}`;
+        const docId = `${date}_${cleanProduct}`;
         batch.set(doc(db, getCol('salesDaily', colPrefix), docId), {
-          date, product, productDetail: '', quantity: 0, sellingPrice: 0,
+          date, product: cleanProduct, productDetail: '', quantity: 0, sellingPrice: 0,
           supplyPrice: 0, marginPerUnit: 0, totalMargin: 0,
           adCost: 0, housePurchase: hp, solution: 0,
         });
@@ -463,7 +470,8 @@ const App: React.FC = () => {
 
   const handleSalesDeleteProduct = async (product: string) => {
     if (!confirm(`"${product}" 품목의 ${salesMonth.year}.${salesMonth.month}월 데이터를 모두 삭제할까요?`)) return;
-    const targets = salesDaily.filter(e => e.product === product && e.date.startsWith(salesMonthStr));
+    const normTarget = normProductName(product);
+    const targets = salesDaily.filter(e => normProductName(e.product) === normTarget && e.date.startsWith(salesMonthStr));
     if (targets.length === 0) return;
     const batch = writeBatch(db);
     const undoEntries: { id: string, data: any }[] = [];
@@ -2910,9 +2918,9 @@ const App: React.FC = () => {
                     });
                     const months = Array.from(monthSet).sort();
 
-                    // 품목 목록 수집 (품목별판매 페이지와 동일하게 원본 이름 사용)
+                    // 품목 목록 수집 (품목별판매 페이지와 동일하게 정규화 이름으로 묶음)
                     const productSet = new Set<string>();
-                    salesDaily.forEach(e => { if (e.product) productSet.add(e.product); });
+                    salesDaily.forEach(e => { if (e.product) productSet.add(normProductName(e.product)); });
                     const products = Array.from(productSet).sort();
 
                     // 월별 품목별 집계
@@ -2928,7 +2936,7 @@ const App: React.FC = () => {
                     salesDaily.forEach(e => {
                       const m = e.date?.substring(0, 7);
                       if (!m || !data[m]) return;
-                      const pName = e.product;
+                      const pName = normProductName(e.product);
                       if (!data[m][pName]) data[m][pName] = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, net: 0 };
                       const d = data[m][pName];
                       d.supply += e.supplyPrice || 0;
@@ -3466,8 +3474,9 @@ const App: React.FC = () => {
                         const filtered = salesDaily.filter(e => e.date.startsWith(salesMonthStr));
                         const byProduct: Record<string, SalesDailyEntry[]> = {};
                         filtered.forEach(e => {
-                          if (!byProduct[e.product]) byProduct[e.product] = [];
-                          byProduct[e.product].push(e);
+                          const key = normProductName(e.product);
+                          if (!byProduct[key]) byProduct[key] = [];
+                          byProduct[key].push(e);
                         });
                         const productNames = Object.keys(byProduct).sort();
 
@@ -3492,7 +3501,6 @@ const App: React.FC = () => {
                                   <div className="bg-gray-50 p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-6">
                                     <div className="flex items-center gap-2">
                                       <span className="text-base sm:text-lg font-black">{product}</span>
-                                      <span className="text-xs text-gray-400">({entries[0]?.productDetail})</span>
                                       <button onClick={() => handleSalesDeleteProduct(product)} className="text-xs text-red-400 hover:text-red-600 ml-1" title="품목 삭제">&times;</button>
                                     </div>
                                     <span className="sm:ml-auto text-base sm:text-lg font-black" style={{color: profit >= 0 ? '#16a34a' : '#dc2626'}}>{profit.toLocaleString()}</span>
