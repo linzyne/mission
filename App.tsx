@@ -3486,6 +3486,12 @@ const App: React.FC = () => {
                           <div className="space-y-8">
                             {productNames.map(product => {
                               const entries = byProduct[product].sort((a, b) => a.date.localeCompare(b.date));
+                              const hpCountByDate: Record<string, number> = {};
+                              manualEntries.forEach(me => {
+                                if (normProductName(me.product) !== product) return;
+                                hpCountByDate[me.date] = (hpCountByDate[me.date] || 0) + 1;
+                              });
+                              const hpCountTotal = Object.values(hpCountByDate).reduce((s, n) => s + n, 0);
                               const totals = {
                                 supplyPrice: entries.reduce((s, e) => s + e.supplyPrice, 0),
                                 totalMargin: entries.reduce((s, e) => s + e.totalMargin, 0),
@@ -3510,7 +3516,7 @@ const App: React.FC = () => {
                                     <span>마진 {totals.totalMargin.toLocaleString()}</span>
                                     <span>수량 {totals.quantity}</span>
                                     <span>광고비 {totals.adCost.toLocaleString()}</span>
-                                    <span>가구매 {totals.housePurchase.toLocaleString()}</span>
+                                    <span>가구매 {totals.housePurchase.toLocaleString()}{hpCountTotal ? ` (${hpCountTotal}건)` : ''}</span>
                                     <span>솔룻 {totals.solution.toLocaleString()}</span>
                                   </div>
                                   <div className="overflow-x-auto">
@@ -3554,8 +3560,11 @@ const App: React.FC = () => {
                                                 defaultValue={entry.adCost || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'adCost', Number(e.target.value) || 0)} />
                                             </td>
                                             <td className="py-1 px-3">
-                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                                defaultValue={entry.housePurchase || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
+                                              <div className="flex items-center justify-center gap-1">
+                                                <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                                  defaultValue={entry.housePurchase || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
+                                                {hpCountByDate[entry.date] ? <span className="text-[10px] text-gray-400">×{hpCountByDate[entry.date]}</span> : null}
+                                              </div>
                                             </td>
                                             <td className="py-1 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
