@@ -3638,7 +3638,7 @@ const App: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody className="font-bold divide-y divide-gray-100">
-                        {productPrices.map((price, idx) => (
+                        {[...productPrices].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko')).map((price, idx) => (
                           <tr key={price.id} className="hover:bg-gray-50 transition-colors">
                             <td className="py-1 px-3 text-gray-300">{idx + 1}</td>
                             <td className="py-1 px-3 text-left">
