@@ -283,9 +283,15 @@ const App: React.FC = () => {
     if (!entry) return;
     const oldVal = (entry as any)[field];
     if (oldVal === value) return;
-    setSalesUndoStack(prev => [...prev, { type: 'update', entries: [{ id: entryId, data: { [field]: oldVal } }] }]);
+    const undoData: any = { [field]: oldVal };
+    const updateData: any = { [field]: value };
+    if (field === 'housePurchase') {
+      undoData.hpManual = (entry as any).hpManual ?? false;
+      updateData.hpManual = true;
+    }
+    setSalesUndoStack(prev => [...prev, { type: 'update', entries: [{ id: entryId, data: undoData }] }]);
     setSalesRedoStack([]);
-    await updateDoc(doc(db, getCol('salesDaily', colPrefix), entryId), { [field]: value });
+    await updateDoc(doc(db, getCol('salesDaily', colPrefix), entryId), updateData);
   };
 
   const handleSalesUndo = async () => {
@@ -386,6 +392,7 @@ const App: React.FC = () => {
       for (const sd of salesDaily) {
         sdMap.set(`${sd.date}|||${sd.product}`, sd);
         if (isProtectedMonth(sd.date.substring(0, 7))) continue;
+        if ((sd as any).hpManual) continue;
         const count = manualEntries.filter(e => e.product === sd.product && e.date === sd.date).length;
         let hp = 0;
         if (count > 0) {
@@ -497,7 +504,7 @@ const App: React.FC = () => {
   // 업무일지 업로드 미리보기 상태
   const [pendingUpload, setPendingUpload] = useState<{
     uploadDate: string;
-    salesItems: { docId: string; product: string; productDetail: string; quantity: number; sellingPrice: number; supplyPrice: number; marginPerUnit: number; totalMargin: number; adCost: number; housePurchase: number; solution: number }[];
+    salesItems: { docId: string; product: string; productDetail: string; quantity: number; sellingPrice: number; supplyPrice: number; marginPerUnit: number; totalMargin: number; adCost: number; housePurchase: number; solution: number; hpManual: boolean }[];
     expenseItems: { name: string; amount: number; description: string }[];
     vendorSummaryData?: VendorSettlement[];
   } | null>(null);
@@ -630,6 +637,7 @@ const App: React.FC = () => {
         adCost: existingSD?.adCost || 0,
         housePurchase: existingSD?.housePurchase || 0,
         solution: existingSD?.solution || 0,
+        hpManual: existingSD?.hpManual || false,
       };
     });
 
@@ -710,6 +718,7 @@ const App: React.FC = () => {
         adCost: item.adCost,
         housePurchase: item.housePurchase,
         solution: item.solution,
+        hpManual: item.hpManual,
       });
       savedSalesIds.push(item.docId);
     }
@@ -801,6 +810,49 @@ const App: React.FC = () => {
 
   // Color picker state (폰트색 / 행색상 / 셀색상)
   const [colorPicker, setColorPicker] = useState<{ type: 'text' | 'bg' | 'cell'; x: number; y: number; entryId?: string; cellField?: string } | null>(null);
+
+  // 품목 일괄변경 팝오버
+  const [productPicker, setProductPicker] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!productPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('.product-picker-popup')) setProductPicker(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [productPicker]);
+
+  const applyBulkProduct = async (productName: string) => {
+    if (selectedManualIds.size === 0) { setProductPicker(null); return; }
+    const ids: string[] = Array.from(selectedManualIds);
+    const matchedPrice = productPrices.find(p => p.name === productName);
+    try {
+      const batch = writeBatch(db);
+      const undoEntries: { id: string; data: Partial<ManualEntry> }[] = [];
+      ids.forEach(id => {
+        const entry = manualEntries.find(e => e.id === id);
+        if (!entry) return;
+        const updates: Partial<ManualEntry> = { product: productName };
+        if (matchedPrice) {
+          let finalPrice = matchedPrice.price;
+          if ((entry.orderNumber || '').includes('실배')) finalPrice -= 1000;
+          updates.paymentAmount = finalPrice;
+        }
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), updates);
+        undoEntries.push({
+          id,
+          data: {
+            product: entry.product,
+            ...(matchedPrice ? { paymentAmount: entry.paymentAmount } : {}),
+          },
+        });
+      });
+      pushUndo({ type: 'update', entries: undoEntries, description: '품목 일괄변경' });
+      await batch.commit();
+      setProductPicker(null);
+    } catch (e) { console.error(e); alert('오류: ' + e); }
+  };
 
   useEffect(() => {
     if (!colorPicker) return;
@@ -2851,9 +2903,6 @@ const App: React.FC = () => {
                       </div>
                     );
                   })() : salesSubTab === 'summary' ? (() => {
-                    // 품목명 정규화: "은갈치 (1월)", "순살 갈치 (1월 합계)" → "은갈치", "순살 갈치"
-                    const normProduct = (name: string) => name.replace(/\s*\(.*?\)\s*$/, '').trim();
-
                     // 모든 월 데이터 수집
                     const monthSet = new Set<string>();
                     salesDaily.forEach(e => {
@@ -2861,9 +2910,9 @@ const App: React.FC = () => {
                     });
                     const months = Array.from(monthSet).sort();
 
-                    // 품목 목록 수집 (정규화된 이름)
+                    // 품목 목록 수집 (품목별판매 페이지와 동일하게 원본 이름 사용)
                     const productSet = new Set<string>();
-                    salesDaily.forEach(e => { if (e.product) productSet.add(normProduct(e.product)); });
+                    salesDaily.forEach(e => { if (e.product) productSet.add(e.product); });
                     const products = Array.from(productSet).sort();
 
                     // 월별 품목별 집계
@@ -2879,7 +2928,7 @@ const App: React.FC = () => {
                     salesDaily.forEach(e => {
                       const m = e.date?.substring(0, 7);
                       if (!m || !data[m]) return;
-                      const pName = normProduct(e.product);
+                      const pName = e.product;
                       if (!data[m][pName]) data[m][pName] = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, net: 0 };
                       const d = data[m][pName];
                       d.supply += e.supplyPrice || 0;
@@ -3711,6 +3760,7 @@ const App: React.FC = () => {
                           navigator.clipboard.writeText(text).then(() => alert(`${selected.length}건 복사 완료`));
                         }} className="px-2.5 py-1 bg-white text-blue-600 rounded-lg font-bold text-[11px] hover:bg-blue-100 border border-blue-200">복사</button>
                         <button onClick={insertRowAfterSelected} className="px-2.5 py-1 bg-white text-gray-700 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300">행삽입</button>
+                        <button onClick={(e) => { e.stopPropagation(); setProductPicker({ x: e.clientX, y: e.clientY }); }} className="px-2.5 py-1 bg-white text-indigo-600 rounded-lg font-bold text-[11px] hover:bg-indigo-50 border border-indigo-200">품목일괄</button>
                         <button onClick={handleReservationComplete} className="px-2.5 py-1 bg-pink-500 text-white rounded-lg font-bold text-[11px] hover:bg-pink-600">예약완료</button>
                         <button onClick={handleReservationCancel} className="px-2.5 py-1 bg-white text-pink-500 rounded-lg font-bold text-[11px] hover:bg-pink-50 border border-pink-200">예약취소</button>
                         <button onClick={downloadManualCsv} className="px-2.5 py-1 bg-white text-green-600 rounded-lg font-bold text-[11px] hover:bg-green-50 border border-green-200">엑셀</button>
@@ -3788,6 +3838,27 @@ const App: React.FC = () => {
                   {selectedManualIds.size > 0 && (
                     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-blue-600 text-white px-5 py-2.5 rounded-full shadow-lg shadow-blue-600/30 text-sm font-bold animate-bounce-in pointer-events-none">
                       {selectedManualIds.size}개 선택됨
+                    </div>
+                  )}
+                  {productPicker && (
+                    <div className="product-picker-popup fixed z-[9999] bg-white rounded-2xl shadow-2xl border border-gray-200 p-3" style={{ left: Math.min(productPicker.x, window.innerWidth - 240), top: productPicker.y + 8, width: 220 }}>
+                      <div className="text-[11px] font-bold text-gray-500 mb-2">품목 일괄변경 ({selectedManualIds.size}건)</div>
+                      <div className="max-h-64 overflow-y-auto flex flex-col gap-1">
+                        <button onClick={() => applyBulkProduct('')} className="text-left px-2 py-1.5 rounded-lg text-[11px] font-bold text-gray-400 hover:bg-gray-100 border border-gray-200">(비우기)</button>
+                        {productPrices.map(p => (
+                          <button
+                            key={p.id}
+                            onClick={() => applyBulkProduct(p.name)}
+                            className="text-left px-2 py-1.5 rounded-lg text-[11px] font-bold text-gray-700 hover:bg-indigo-50 hover:text-indigo-600 border border-gray-200"
+                          >
+                            {p.name}
+                            {p.price > 0 && <span className="ml-1 text-gray-400 font-normal">{p.price.toLocaleString()}원</span>}
+                          </button>
+                        ))}
+                        {productPrices.length === 0 && (
+                          <div className="text-[11px] text-gray-400 px-2 py-3 text-center">등록된 품목이 없습니다.</div>
+                        )}
+                      </div>
                     </div>
                   )}
                   {colorPicker && (
