@@ -435,7 +435,7 @@ const App: React.FC = () => {
           date, product: cleanProduct, productDetail: '', quantity: 0, sellingPrice: 0,
           supplyPrice: 0, marginPerUnit: 0, totalMargin: 0,
           adCost: 0, housePurchase: hp, solution: 0,
-        });
+        }, { merge: true });
         hasUpdate = true;
       }
 
