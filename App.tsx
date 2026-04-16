@@ -632,9 +632,9 @@ const App: React.FC = () => {
 
     // 미리보기 데이터 세팅 (아직 저장 안 함)
     const salesItems = Object.values(merged).map(m => {
-      const existingSD = salesDaily.find(entry => entry.date === uploadDate && entry.product === m.product);
+      const existingSD = salesDaily.find(entry => entry.date === uploadDate && normProductName(entry.product) === normProductName(m.product));
       return {
-        docId: `${uploadDate}_${m.product}`,
+        docId: existingSD?.id || `${uploadDate}_${m.product}`,
         product: m.product,
         productDetail: m.details.join(', '),
         quantity: m.quantity,
