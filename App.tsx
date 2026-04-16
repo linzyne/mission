@@ -3871,6 +3871,7 @@ const App: React.FC = () => {
                         )}
                         <button onClick={insertRowAfterSelected} className="px-3 py-1.5 bg-green-500 text-white rounded-lg font-bold text-[11px] hover:bg-green-600">행삽입</button>
                         <button onClick={() => { if (selectedManualIds.size === 0) { alert('행을 먼저 선택해주세요.'); return; } deleteSelectedManualEntries(); }} className="px-3 py-1.5 bg-red-500 text-white rounded-lg font-bold text-[11px] hover:bg-red-600">삭제</button>
+                        <button onClick={() => setTemplateListModal(true)} className="px-3 py-1.5 bg-white text-gray-500 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300" title="양식설정">⚙ 양식</button>
                       </div>
                       <div className="hidden md:flex gap-1 items-center ml-auto">
                         {undoStack.length > 0 && (
