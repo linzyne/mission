@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Product, Submission, AppMode, CustomerView, AppSettings, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, DailyCostItem, SalesSubTab, VendorSettlement, VendorSummaryDoc, BusinessInfo } from './types';
+import { Product, Submission, AppMode, CustomerView, AppSettings, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, DailyCostItem, SalesSubTab, VendorSettlement, VendorSummaryDoc, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource } from './types';
 import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch } from 'firebase/firestore';
@@ -34,6 +34,69 @@ function normProductName(s: string | undefined | null): string {
 function toLocalDateStr(d: Date = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+
+const FIELD_SOURCE_LABELS: Record<ExportFieldSource, string> = {
+  orderNumber: '주문번호', name1: '이름1', name2: '이름2/받는사람', ordererName: '주문자명',
+  address: '주소', emergencyContact: '전화번호', product: '품목', memo: '비고',
+  trackingNumber: '운송장번호', accountNumber: '계좌번호', paymentAmount: '결제금액',
+  count: '갯수', date: '날짜', bizName: '업체명', bizPhone: '업체전화', bizAddress: '업체주소',
+  fixed: '고정값', empty: '빈칸',
+};
+
+const DEFAULT_EXPORT_TEMPLATES: ExportTemplate[] = [
+  {
+    id: 'lotte',
+    name: '롯데예약',
+    sheetName: '롯데예약',
+    filePrefix: '롯데예약',
+    color: 'red',
+    columns: [
+      { header: '주문번호', source: 'orderNumber' },
+      { header: '보내는사람(지정)', source: 'bizName' },
+      { header: '전화번호1(지정)', source: 'bizPhone' },
+      { header: '전화번호2(지정)', source: 'empty' },
+      { header: '우편번호(지정)', source: 'empty' },
+      { header: '주소(지정)', source: 'bizAddress' },
+      { header: '받는사람', source: 'name2' },
+      { header: '전화번호1', source: 'emergencyContact', stripDash: true },
+      { header: '전화번호2', source: 'empty' },
+      { header: '우편번호', source: 'empty' },
+      { header: '주소', source: 'address' },
+      { header: '상품명1', source: 'fixed', fixedValue: '완구류' },
+      { header: '상품상세1', source: 'empty' },
+      { header: '수량(A타입)', source: 'empty' },
+      { header: '배송메시지', source: 'empty' },
+      { header: '운임구분', source: 'empty' },
+      { header: '운임', source: 'empty' },
+      { header: '운송장번호', source: 'empty' },
+    ],
+  },
+  {
+    id: 'delivery',
+    name: '택배대행',
+    sheetName: '택배대행',
+    filePrefix: '택배대행',
+    color: 'orange',
+    columns: [
+      { header: '주문번호', source: 'orderNumber' },
+      { header: '받는사람', source: 'name2' },
+      { header: '전화번호1', source: 'emergencyContact', stripDash: true },
+      { header: '전화번호2', source: 'empty' },
+      { header: '우편번호', source: 'empty' },
+      { header: '주소', source: 'address' },
+      { header: '상품명1', source: 'fixed', fixedValue: '완구류' },
+      { header: '상품상세1', source: 'empty' },
+      { header: '수량(A타입)', source: 'empty' },
+      { header: '배송메시지', source: 'empty' },
+      { header: '불필요항목', source: 'empty' },
+      { header: '불필요항목', source: 'empty' },
+      { header: '불필요항목', source: 'empty' },
+      { header: '보내는사람(지정)', source: 'fixed', fixedValue: '주노엘' },
+      { header: '전화번호1(지정)', source: 'fixed', fixedValue: '01050447749' },
+      { header: '송장번호', source: 'empty' },
+    ],
+  },
+];
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('customer');
@@ -71,6 +134,55 @@ const App: React.FC = () => {
 
   const updateSettings = async (newSettings: AppSettings) => {
     await setDoc(doc(db, getCol('settings', colPrefix), 'global'), newSettings, { merge: true });
+  };
+
+  // Firestore Sync: Export Templates
+  const [exportTemplates, setExportTemplates] = useState<ExportTemplate[]>(DEFAULT_EXPORT_TEMPLATES);
+  const [templateEditModal, setTemplateEditModal] = useState<ExportTemplate | null>(null);
+  const [templateListModal, setTemplateListModal] = useState(false);
+
+  useEffect(() => {
+    if (!selectedBiz) { setExportTemplates(DEFAULT_EXPORT_TEMPLATES); return; }
+    const unsub = onSnapshot(doc(db, getCol('settings', colPrefix), 'exportTemplates'), (d) => {
+      if (d.exists()) {
+        const data = d.data();
+        setExportTemplates(data.templates as ExportTemplate[] || DEFAULT_EXPORT_TEMPLATES);
+      } else {
+        setExportTemplates(DEFAULT_EXPORT_TEMPLATES);
+      }
+    });
+    return () => unsub();
+  }, [selectedBiz]);
+
+  const saveExportTemplates = async (templates: ExportTemplate[]) => {
+    await setDoc(doc(db, getCol('settings', colPrefix), 'exportTemplates'), { templates });
+  };
+
+  const getExportCellValue = (entry: ManualEntry, col: ExportColumn): string => {
+    switch (col.source) {
+      case 'orderNumber': return entry.orderNumber || '';
+      case 'name1': return entry.name1 || '';
+      case 'name2': return entry.name2 || '';
+      case 'ordererName': return entry.ordererName || '';
+      case 'address': return entry.address || '';
+      case 'emergencyContact': {
+        const v = entry.emergencyContact || '';
+        return col.stripDash ? v.replace(/-/g, '') : v;
+      }
+      case 'product': return entry.product || '';
+      case 'memo': return entry.memo || '';
+      case 'trackingNumber': return entry.trackingNumber || '';
+      case 'accountNumber': return entry.accountNumber || '';
+      case 'paymentAmount': return entry.paymentAmount ? String(entry.paymentAmount) : '';
+      case 'count': return entry.count ? String(entry.count) : '';
+      case 'date': return entry.date || '';
+      case 'bizName': return bizInfo?.name || '';
+      case 'bizPhone': return bizInfo?.phone || '';
+      case 'bizAddress': return bizInfo?.address || '';
+      case 'fixed': return col.fixedValue || '';
+      case 'empty': return '';
+      default: return '';
+    }
   };
 
   const createEmptyRow = (date?: string): ManualEntry => ({
@@ -3795,48 +3907,26 @@ const App: React.FC = () => {
                           await batch.commit();
                         }} className="px-2.5 py-1 bg-white text-gray-700 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300">경계선</button>
                         <span className="w-px h-4 bg-blue-200 mx-0.5"></span>
-                        <button
-                          onClick={async () => {
-                            const XLSX = await import('xlsx');
-                            const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
-                            const headers = ['주문번호','보내는사람(지정)','전화번호1(지정)','전화번호2(지정)','우편번호(지정)','주소(지정)','받는사람','전화번호1','전화번호2','우편번호','주소','상품명1','상품상세1','수량(A타입)','배송메시지','운임구분','운임','운송장번호'];
-                            const rows = selected.map(e => [
-                              e.orderNumber || '', bizInfo?.name || '', bizInfo?.phone || '', '', '',
-                              bizInfo?.address || '',
-                              e.name2 || '', (e.emergencyContact || '').replace(/-/g, ''),
-                              '', '', e.address || '', '완구류', '', '', '', '', '', '',
-                            ]);
-                            const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-                            const wb = XLSX.utils.book_new();
-                            XLSX.utils.book_append_sheet(wb, ws, '롯데예약');
-                            XLSX.writeFile(wb, `롯데예약_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
-                          }}
-                          className="px-2.5 py-1 bg-red-500 text-white rounded-lg font-bold text-[11px] hover:bg-red-600"
-                        >롯데예약</button>
-                        <button
-                          onClick={async () => {
-                            const XLSX = await import('xlsx');
-                            const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
-                            const headers = ['주문번호','받는사람','전화번호1','전화번호2','우편번호','주소','상품명1','상품상세1','수량(A타입)','배송메시지','불필요항목','불필요항목','불필요항목','보내는사람(지정)','전화번호1(지정)','송장번호'];
-                            const rows = selected.map(e => [
-                              e.orderNumber || '',
-                              e.name2 || '',
-                              (e.emergencyContact || '').replace(/-/g, ''),
-                              '', '',
-                              e.address || '',
-                              '완구류',
-                              '', '', '', '', '', '',
-                              '주노엘',
-                              '01050447749',
-                              '',
-                            ]);
-                            const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-                            const wb = XLSX.utils.book_new();
-                            XLSX.utils.book_append_sheet(wb, ws, '택배대행');
-                            XLSX.writeFile(wb, `택배대행_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
-                          }}
-                          className="px-2.5 py-1 bg-orange-500 text-white rounded-lg font-bold text-[11px] hover:bg-orange-600"
-                        >택배대행</button>
+                        {exportTemplates.map(tpl => {
+                          const colorMap: Record<string, string> = { red: 'bg-red-500 hover:bg-red-600', orange: 'bg-orange-500 hover:bg-orange-600', blue: 'bg-blue-500 hover:bg-blue-600', green: 'bg-green-500 hover:bg-green-600', purple: 'bg-purple-500 hover:bg-purple-600', pink: 'bg-pink-500 hover:bg-pink-600', gray: 'bg-gray-500 hover:bg-gray-600' };
+                          return (
+                            <button
+                              key={tpl.id}
+                              onClick={async () => {
+                                const XLSX = await import('xlsx');
+                                const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                                const headers = tpl.columns.map(c => c.header);
+                                const rows = selected.map(e => tpl.columns.map(c => getExportCellValue(e, c)));
+                                const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+                                const wb = XLSX.utils.book_new();
+                                XLSX.utils.book_append_sheet(wb, ws, tpl.sheetName);
+                                XLSX.writeFile(wb, `${tpl.filePrefix}_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
+                              }}
+                              className={`px-2.5 py-1 text-white rounded-lg font-bold text-[11px] ${colorMap[tpl.color] || 'bg-gray-500 hover:bg-gray-600'}`}
+                            >{tpl.name}</button>
+                          );
+                        })}
+                        <button onClick={() => setTemplateListModal(true)} className="px-2 py-1 bg-white text-gray-500 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300" title="양식설정">⚙</button>
                         <button onClick={() => setSelectedManualIds(new Set())} className="ml-auto px-2 py-1 text-gray-400 hover:text-gray-600 text-[11px]">✕ 해제</button>
                       </div>
                     <div>
@@ -4789,6 +4879,173 @@ const App: React.FC = () => {
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 transition-colors">
                 저장
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 운송장 양식 목록 모달 */}
+      {templateListModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setTemplateListModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-gray-800">운송장 파일 양식 설정</h3>
+              <button onClick={() => setTemplateListModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+            </div>
+            <div className="p-4 space-y-2">
+              {exportTemplates.map((tpl, idx) => {
+                const colorMap: Record<string, string> = { red: 'bg-red-100 text-red-700', orange: 'bg-orange-100 text-orange-700', blue: 'bg-blue-100 text-blue-700', green: 'bg-green-100 text-green-700', purple: 'bg-purple-100 text-purple-700', pink: 'bg-pink-100 text-pink-700', gray: 'bg-gray-100 text-gray-700' };
+                return (
+                  <div key={tpl.id} className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:bg-gray-50">
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${colorMap[tpl.color] || 'bg-gray-100 text-gray-700'}`}>{tpl.name}</span>
+                    <span className="text-xs text-gray-400">{tpl.columns.length}열</span>
+                    <div className="ml-auto flex gap-1">
+                      <button onClick={() => { setTemplateListModal(false); setTemplateEditModal(JSON.parse(JSON.stringify(tpl))); }} className="px-2.5 py-1 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg">편집</button>
+                      <button onClick={async () => {
+                        if (!window.confirm(`"${tpl.name}" 양식을 삭제하시겠습니까?`)) return;
+                        const updated = exportTemplates.filter((_, i) => i !== idx);
+                        await saveExportTemplates(updated);
+                      }} className="px-2.5 py-1 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg">삭제</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="p-4 border-t border-gray-100">
+              <button onClick={() => {
+                setTemplateListModal(false);
+                setTemplateEditModal({
+                  id: Math.random().toString(36).substr(2, 9),
+                  name: '새 양식',
+                  sheetName: 'Sheet1',
+                  filePrefix: '내보내기',
+                  color: 'blue',
+                  columns: [{ header: '주문번호', source: 'orderNumber' }],
+                });
+              }} className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600">+ 새 양식 추가</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 운송장 양식 편집 모달 */}
+      {templateEditModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setTemplateEditModal(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100">
+              <h3 className="text-lg font-bold text-gray-800">양식 편집: {templateEditModal.name}</h3>
+            </div>
+            <div className="p-4 space-y-4 overflow-y-auto flex-1">
+              {/* 기본 정보 */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-gray-500 mb-1 block">양식 이름</label>
+                  <input value={templateEditModal.name} onChange={e => setTemplateEditModal({ ...templateEditModal, name: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-500 mb-1 block">시트 이름</label>
+                  <input value={templateEditModal.sheetName} onChange={e => setTemplateEditModal({ ...templateEditModal, sheetName: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-500 mb-1 block">파일명 접두사</label>
+                  <input value={templateEditModal.filePrefix} onChange={e => setTemplateEditModal({ ...templateEditModal, filePrefix: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-500 mb-1 block">버튼 색상</label>
+                  <select value={templateEditModal.color} onChange={e => setTemplateEditModal({ ...templateEditModal, color: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm">
+                    {['red','orange','blue','green','purple','pink','gray'].map(c => <option key={c} value={c}>{c === 'red' ? '빨강' : c === 'orange' ? '주황' : c === 'blue' ? '파랑' : c === 'green' ? '초록' : c === 'purple' ? '보라' : c === 'pink' ? '분홍' : '회색'}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* 열 설정 */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-bold text-gray-500">열 설정 ({templateEditModal.columns.length}열)</label>
+                  <button onClick={() => setTemplateEditModal({ ...templateEditModal, columns: [...templateEditModal.columns, { header: '', source: 'empty' }] })} className="px-2 py-1 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg">+ 열 추가</button>
+                </div>
+                <div className="space-y-1.5 max-h-[40vh] overflow-y-auto">
+                  {templateEditModal.columns.map((col, idx) => (
+                    <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg text-sm">
+                      <span className="text-[10px] text-gray-400 font-mono w-5 text-center">{idx + 1}</span>
+                      <input
+                        value={col.header}
+                        onChange={e => {
+                          const cols = [...templateEditModal.columns];
+                          cols[idx] = { ...cols[idx], header: e.target.value };
+                          setTemplateEditModal({ ...templateEditModal, columns: cols });
+                        }}
+                        placeholder="헤더명"
+                        className="flex-1 px-2 py-1.5 border rounded text-xs min-w-0"
+                      />
+                      <select
+                        value={col.source}
+                        onChange={e => {
+                          const cols = [...templateEditModal.columns];
+                          cols[idx] = { ...cols[idx], source: e.target.value as ExportFieldSource };
+                          setTemplateEditModal({ ...templateEditModal, columns: cols });
+                        }}
+                        className="px-2 py-1.5 border rounded text-xs w-28"
+                      >
+                        {(Object.keys(FIELD_SOURCE_LABELS) as ExportFieldSource[]).map(k => (
+                          <option key={k} value={k}>{FIELD_SOURCE_LABELS[k]}</option>
+                        ))}
+                      </select>
+                      {col.source === 'fixed' && (
+                        <input
+                          value={col.fixedValue || ''}
+                          onChange={e => {
+                            const cols = [...templateEditModal.columns];
+                            cols[idx] = { ...cols[idx], fixedValue: e.target.value };
+                            setTemplateEditModal({ ...templateEditModal, columns: cols });
+                          }}
+                          placeholder="고정값"
+                          className="px-2 py-1.5 border rounded text-xs w-20"
+                        />
+                      )}
+                      {col.source === 'emergencyContact' && (
+                        <label className="flex items-center gap-1 text-[10px] text-gray-500 whitespace-nowrap">
+                          <input type="checkbox" checked={col.stripDash || false} onChange={e => {
+                            const cols = [...templateEditModal.columns];
+                            cols[idx] = { ...cols[idx], stripDash: e.target.checked };
+                            setTemplateEditModal({ ...templateEditModal, columns: cols });
+                          }} className="w-3 h-3" />
+                          -제거
+                        </label>
+                      )}
+                      <div className="flex gap-0.5">
+                        <button disabled={idx === 0} onClick={() => {
+                          const cols = [...templateEditModal.columns];
+                          [cols[idx - 1], cols[idx]] = [cols[idx], cols[idx - 1]];
+                          setTemplateEditModal({ ...templateEditModal, columns: cols });
+                        }} className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30" title="위로">▲</button>
+                        <button disabled={idx === templateEditModal.columns.length - 1} onClick={() => {
+                          const cols = [...templateEditModal.columns];
+                          [cols[idx], cols[idx + 1]] = [cols[idx + 1], cols[idx]];
+                          setTemplateEditModal({ ...templateEditModal, columns: cols });
+                        }} className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30" title="아래로">▼</button>
+                      </div>
+                      <button onClick={() => {
+                        const cols = templateEditModal.columns.filter((_, i) => i !== idx);
+                        setTemplateEditModal({ ...templateEditModal, columns: cols });
+                      }} className="p-1 text-red-400 hover:text-red-600 text-xs">✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="p-4 border-t border-gray-100 flex gap-2">
+              <button onClick={() => setTemplateEditModal(null)} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-500 bg-gray-100 hover:bg-gray-200">취소</button>
+              <button onClick={async () => {
+                if (!templateEditModal.name.trim()) { alert('양식 이름을 입력해주세요.'); return; }
+                if (templateEditModal.columns.length === 0) { alert('열이 최소 1개 이상 필요합니다.'); return; }
+                const existing = exportTemplates.findIndex(t => t.id === templateEditModal.id);
+                const updated = existing >= 0
+                  ? exportTemplates.map((t, i) => i === existing ? templateEditModal : t)
+                  : [...exportTemplates, templateEditModal];
+                await saveExportTemplates(updated);
+                setTemplateEditModal(null);
+              }} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600">저장</button>
             </div>
           </div>
         </div>

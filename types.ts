@@ -167,3 +167,26 @@ export interface BusinessInfo {
   accountInfo: string;
   collectionPrefix: string;
 }
+
+export type ExportFieldSource =
+  | 'orderNumber' | 'name1' | 'name2' | 'ordererName' | 'address'
+  | 'emergencyContact' | 'product' | 'memo' | 'trackingNumber' | 'accountNumber'
+  | 'paymentAmount' | 'count' | 'date'
+  | 'bizName' | 'bizPhone' | 'bizAddress'
+  | 'fixed' | 'empty';
+
+export interface ExportColumn {
+  header: string;
+  source: ExportFieldSource;
+  fixedValue?: string;
+  stripDash?: boolean;
+}
+
+export interface ExportTemplate {
+  id: string;
+  name: string;
+  sheetName: string;
+  filePrefix: string;
+  columns: ExportColumn[];
+  color: string;
+}
