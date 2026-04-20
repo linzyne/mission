@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Product, Submission, AppMode, CustomerView, AppSettings, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, DailyCostItem, SalesSubTab, VendorSettlement, VendorSummaryDoc, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource } from './types';
 import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
-import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField } from 'firebase/firestore';
 
 const BUSINESSES: Record<string, BusinessInfo> = {
   angun: {
@@ -279,6 +279,17 @@ const App: React.FC = () => {
       });
       setManualEntries(list);
       setManualEntriesLoaded(true);
+
+      // 7일 지난 proofImage 자동 정리
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - 7);
+      const cutoffStr = toLocalDateStr(cutoff);
+      const oldImages = list.filter(e => e.proofImage && e.date && e.date < cutoffStr);
+      if (oldImages.length > 0) {
+        const cleanBatch = writeBatch(db);
+        oldImages.forEach(e => cleanBatch.update(doc(db, colName, e.id), { proofImage: deleteField() }));
+        cleanBatch.commit().catch(err => console.error('[Cleanup] 이미지 정리 실패:', err));
+      }
     });
     return () => unsub();
   }, [selectedBiz]);
