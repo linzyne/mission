@@ -4038,18 +4038,11 @@ const App: React.FC = () => {
                             <input type="checkbox" className="w-3 h-3 accent-blue-600"
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  // 3개월 전 날짜 계산 (검색 최적화) - tbody 로직과 동일하게
-                                  const limitDate = new Date();
-                                  limitDate.setMonth(limitDate.getMonth() - 3);
-                                  const limitDateStr = toLocalDateStr(limitDate);
-
                                   const filtered = manualEntries.filter(entry => {
                                     if (!entry) return false;
 
-                                    // 검색 시 동작: 날짜 필터 무시하고 3개월 이내 데이터 전체 검색
+                                    // 검색 시 동작: 날짜 필터 무시하고 전체 데이터 검색
                                     if (debouncedManualSearch) {
-                                      if (entry.date < limitDateStr) return false;
-
                                       const queries = debouncedManualSearch.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
                                       const fields = [String(entry.name1 || ''), String(entry.name2 || ''), String(entry.orderNumber || ''), String(entry.product || ''), String(entry.accountNumber || '')].map(f => f.toLowerCase());
                                       return queries.some(q => fields.some(f => f.includes(q)));
@@ -4113,18 +4106,11 @@ const App: React.FC = () => {
                             </td>
                           </tr>
                         ) : (() => {
-                          // 3개월 전 날짜 계산 (검색 최적화)
-                          const limitDate = new Date();
-                          limitDate.setMonth(limitDate.getMonth() - 3);
-                          const limitDateStr = toLocalDateStr(limitDate);
-
                           const filtered = manualEntries.filter(entry => {
                             if (!entry) return false;
 
-                            // 검색 시 동작: 날짜 필터 무시하고 3개월 이내 데이터 전체 검색
+                            // 검색 시 동작: 날짜 필터 무시하고 전체 데이터 검색
                             if (debouncedManualSearch) {
-                              if (entry.date < limitDateStr) return false;
-
                               const queries = debouncedManualSearch.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
                               const fields = [String(entry.name1 || ''), String(entry.name2 || ''), String(entry.orderNumber || ''), String(entry.product || ''), String(entry.accountNumber || '')].map(f => f.toLowerCase());
                               return queries.some(q => fields.some(f => f.includes(q)));
