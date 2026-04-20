@@ -1502,7 +1502,7 @@ const App: React.FC = () => {
     try {
       const batch = writeBatch(db);
       selectedDepositIds.forEach(id => {
-        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { afterDeposit: true, depositDate: depositActionDate });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { afterDeposit: true, depositDate: toLocalDateStr() });
       });
       await batch.commit();
       setSelectedDepositIds(new Set());
