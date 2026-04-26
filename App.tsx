@@ -3745,6 +3745,109 @@ const App: React.FC = () => {
                 <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl p-8 animate-in slide-in-from-right-10 duration-500">
                   <h2 className="text-xl font-black text-gray-900 mb-6">품목금액</h2>
 
+                  {/* ===== 가구매비용계산기 ===== */}
+                  <div className="mb-8">
+                    <h3 className="text-base font-black text-gray-900 mb-4">가구매비용계산기</h3>
+                    <div className="bg-gray-50 rounded-2xl p-5 space-y-4">
+
+                      {/* 공식 편집 */}
+                      <div className="flex flex-wrap gap-3 items-end">
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 mb-1">기본 수수료</label>
+                          <input
+                            type="number"
+                            value={hpFormulaEdit.baseFee}
+                            onChange={e => setHpFormulaEdit(f => ({ ...f, baseFee: Number(e.target.value) || 0 }))}
+                            className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 mb-1">공급가 비율 (%)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={Math.round(hpFormulaEdit.supplyPriceRate * 10000) / 100}
+                            onChange={e => setHpFormulaEdit(f => ({ ...f, supplyPriceRate: (Number(e.target.value) || 0) / 100 }))}
+                            className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 mb-1">기타 비용</label>
+                          <input
+                            type="number"
+                            value={hpFormulaEdit.extraFee}
+                            onChange={e => setHpFormulaEdit(f => ({ ...f, extraFee: Number(e.target.value) || 0 }))}
+                            className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] font-bold text-gray-400">실배 시 공급가 추가</label>
+                          <div
+                            onClick={() => setHpFormulaEdit(f => ({ ...f, silbaeAddSupply: !f.silbaeAddSupply }))}
+                            className={`relative w-12 h-7 rounded-full transition-colors cursor-pointer ${hpFormulaEdit.silbaeAddSupply ? 'bg-blue-600' : 'bg-gray-300'}`}
+                          >
+                            <div className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full transition-transform shadow-sm ${hpFormulaEdit.silbaeAddSupply ? 'translate-x-5' : 'translate-x-0'}`} />
+                          </div>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            setHpFormulaSaving(true);
+                            await updateSettings({ ...settings, hpFormula: hpFormulaEdit });
+                            setHpFormulaSaving(false);
+                          }}
+                          className="px-5 py-2 bg-blue-600 text-white rounded-xl text-sm font-black hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
+                        >
+                          {hpFormulaSaving ? '저장 중...' : '저장'}
+                        </button>
+                      </div>
+
+                      {/* 공식 미리보기 */}
+                      <p className="text-[11px] text-gray-400 font-bold">
+                        단위비용 = round({hpFormulaEdit.baseFee.toLocaleString()} + 공급가 × {(hpFormulaEdit.supplyPriceRate * 100).toFixed(2)}% + {hpFormulaEdit.extraFee.toLocaleString()})
+                        {hpFormulaEdit.silbaeAddSupply && <span className="text-orange-400">　／　실배 = 단위비용 + 공급가</span>}
+                      </p>
+
+                      {/* 품목별 단위비용 미리보기 */}
+                      {productPrices.length > 0 && (() => {
+                        const rows = [...productPrices]
+                          .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'))
+                          .map(p => {
+                            const supPrice = p.supplyPrice || ((p.sellingPrice || p.price || 0) - 1000);
+                            if (supPrice <= 0) return null;
+                            const base = Math.round(hpFormulaEdit.baseFee + supPrice * hpFormulaEdit.supplyPriceRate + hpFormulaEdit.extraFee);
+                            const silbae = hpFormulaEdit.silbaeAddSupply ? base + supPrice : null;
+                            return { name: p.name, supPrice, base, silbae };
+                          })
+                          .filter(Boolean) as { name: string; supPrice: number; base: number; silbae: number | null }[];
+                        if (rows.length === 0) return null;
+                        return (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs text-center mt-2">
+                              <thead className="bg-white text-gray-400 font-bold">
+                                <tr>
+                                  <th className="py-1.5 px-3 text-left rounded-tl-xl">품목명</th>
+                                  <th className="py-1.5 px-3">공급가</th>
+                                  <th className="py-1.5 px-3">빈박 단위비용</th>
+                                  {hpFormulaEdit.silbaeAddSupply && <th className="py-1.5 px-3 text-orange-400 rounded-tr-xl">실배 단위비용</th>}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-100 font-bold">
+                                {rows.map(r => (
+                                  <tr key={r.name} className="bg-white hover:bg-gray-50">
+                                    <td className="py-1.5 px-3 text-left text-gray-700">{r.name}</td>
+                                    <td className="py-1.5 px-3 text-gray-400">{r.supPrice.toLocaleString()}</td>
+                                    <td className="py-1.5 px-3 text-gray-700">{r.base.toLocaleString()}</td>
+                                    {hpFormulaEdit.silbaeAddSupply && <td className="py-1.5 px-3 text-orange-500">{r.silbae!.toLocaleString()}</td>}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
                   <div className="flex gap-2 mb-8 items-end bg-gray-50 p-6 rounded-2xl">
                     <div className="flex-1">
                       <label className="block text-xs font-bold text-gray-400 mb-1">품목명</label>
@@ -3869,108 +3972,6 @@ const App: React.FC = () => {
                     </table>
                   </div>
 
-                  {/* ===== 가구매비용계산기 ===== */}
-                  <div className="mt-10">
-                    <h3 className="text-base font-black text-gray-900 mb-4">가구매비용계산기</h3>
-                    <div className="bg-gray-50 rounded-2xl p-5 space-y-4">
-
-                      {/* 공식 편집 */}
-                      <div className="flex flex-wrap gap-3 items-end">
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 mb-1">기본 수수료</label>
-                          <input
-                            type="number"
-                            value={hpFormulaEdit.baseFee}
-                            onChange={e => setHpFormulaEdit(f => ({ ...f, baseFee: Number(e.target.value) || 0 }))}
-                            className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 mb-1">공급가 비율 (%)</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={Math.round(hpFormulaEdit.supplyPriceRate * 10000) / 100}
-                            onChange={e => setHpFormulaEdit(f => ({ ...f, supplyPriceRate: (Number(e.target.value) || 0) / 100 }))}
-                            className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 mb-1">기타 비용</label>
-                          <input
-                            type="number"
-                            value={hpFormulaEdit.extraFee}
-                            onChange={e => setHpFormulaEdit(f => ({ ...f, extraFee: Number(e.target.value) || 0 }))}
-                            className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-gray-400">실배 시 공급가 추가</label>
-                          <div
-                            onClick={() => setHpFormulaEdit(f => ({ ...f, silbaeAddSupply: !f.silbaeAddSupply }))}
-                            className={`relative w-12 h-7 rounded-full transition-colors cursor-pointer ${hpFormulaEdit.silbaeAddSupply ? 'bg-blue-600' : 'bg-gray-300'}`}
-                          >
-                            <div className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full transition-transform shadow-sm ${hpFormulaEdit.silbaeAddSupply ? 'translate-x-5' : 'translate-x-0'}`} />
-                          </div>
-                        </div>
-                        <button
-                          onClick={async () => {
-                            setHpFormulaSaving(true);
-                            await updateSettings({ ...settings, hpFormula: hpFormulaEdit });
-                            setHpFormulaSaving(false);
-                          }}
-                          className="px-5 py-2 bg-blue-600 text-white rounded-xl text-sm font-black hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
-                        >
-                          {hpFormulaSaving ? '저장 중...' : '저장'}
-                        </button>
-                      </div>
-
-                      {/* 공식 미리보기 */}
-                      <p className="text-[11px] text-gray-400 font-bold">
-                        단위비용 = round({hpFormulaEdit.baseFee.toLocaleString()} + 공급가 × {(hpFormulaEdit.supplyPriceRate * 100).toFixed(2)}% + {hpFormulaEdit.extraFee.toLocaleString()})
-                        {hpFormulaEdit.silbaeAddSupply && <span className="text-orange-400">　／　실배 = 단위비용 + 공급가</span>}
-                      </p>
-
-                      {/* 품목별 단위비용 미리보기 */}
-                      {productPrices.length > 0 && (() => {
-                        const rows = [...productPrices]
-                          .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'))
-                          .map(p => {
-                            const supPrice = p.supplyPrice || ((p.sellingPrice || p.price || 0) - 1000);
-                            if (supPrice <= 0) return null;
-                            const base = Math.round(hpFormulaEdit.baseFee + supPrice * hpFormulaEdit.supplyPriceRate + hpFormulaEdit.extraFee);
-                            const silbae = hpFormulaEdit.silbaeAddSupply ? base + supPrice : null;
-                            return { name: p.name, supPrice, base, silbae };
-                          })
-                          .filter(Boolean) as { name: string; supPrice: number; base: number; silbae: number | null }[];
-                        if (rows.length === 0) return null;
-                        return (
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-xs text-center mt-2">
-                              <thead className="bg-white text-gray-400 font-bold">
-                                <tr>
-                                  <th className="py-1.5 px-3 text-left rounded-tl-xl">품목명</th>
-                                  <th className="py-1.5 px-3">공급가</th>
-                                  <th className="py-1.5 px-3">빈박 단위비용</th>
-                                  {hpFormulaEdit.silbaeAddSupply && <th className="py-1.5 px-3 text-orange-400 rounded-tr-xl">실배 단위비용</th>}
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-100 font-bold">
-                                {rows.map(r => (
-                                  <tr key={r.name} className="bg-white hover:bg-gray-50">
-                                    <td className="py-1.5 px-3 text-left text-gray-700">{r.name}</td>
-                                    <td className="py-1.5 px-3 text-gray-400">{r.supPrice.toLocaleString()}</td>
-                                    <td className="py-1.5 px-3 text-gray-700">{r.base.toLocaleString()}</td>
-                                    {hpFormulaEdit.silbaeAddSupply && <td className="py-1.5 px-3 text-orange-500">{r.silbae!.toLocaleString()}</td>}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  </div>
                 </section>
               ) : (
                 <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl animate-in slide-in-from-right-10 duration-500">
