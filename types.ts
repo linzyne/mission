@@ -84,9 +84,17 @@ export interface SalesDailyEntry {
 }
 export type CustomerView = 'landing' | 'apply' | 'review';
 
+export interface HpFormula {
+  baseFee: number;        // 기본 수수료 (기본값: 1000)
+  supplyPriceRate: number; // 공급가 비율 (기본값: 0.1166 = 11.66%)
+  extraFee: number;       // 기타 비용 (기본값: 2300)
+  silbaeAddSupply: boolean; // 실배 시 공급가 추가 여부 (기본값: true)
+}
+
 export interface AppSettings {
   isApplyActive: boolean;
   globalReviewGuide?: string;
+  hpFormula?: HpFormula;
 }
 
 // Added MissionStatus, Mission, and UserSubmission to fix missing export errors in components/
