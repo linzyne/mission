@@ -495,16 +495,21 @@ const App: React.FC = () => {
   };
 
   // 가구매 자동계산: 구매목록 수량 × (1000 + 공급가*11.66% + 2300)
+  // 주문번호에 "실배" 포함 시 단위비용에 공급가 추가
   const calcHousePurchase = (product: string, date: string) => {
     // 1월·2월은 수동 입력 데이터 - 자동계산 하지 않음
     if (isProtectedMonth(date.substring(0, 7))) return 0;
-    const count = manualEntries.filter(e => e.product === product && e.date === date).length;
-    if (count === 0) return 0;
+    const entries = manualEntries.filter(e => e.product === product && e.date === date);
+    if (entries.length === 0) return 0;
     const pp = productPrices.find(p => p.name === product);
     const supPrice = pp?.supplyPrice || ((pp?.sellingPrice || pp?.price || 0) - 1000);
     if (supPrice <= 0) return 0;
-    const unitCost = Math.round(1000 + supPrice * 0.1166 + 2300);
-    return -(count * unitCost);
+    const baseUnitCost = Math.round(1000 + supPrice * 0.1166 + 2300);
+    const total = entries.reduce((sum, e) => {
+      const unitCost = e.orderNumber?.includes('실배') ? baseUnitCost + supPrice : baseUnitCost;
+      return sum + unitCost;
+    }, 0);
+    return -total;
   };
 
   // 구매목록 변경 시 가구매 자동 재계산 (1월·2월 보호)
@@ -521,13 +526,17 @@ const App: React.FC = () => {
         if (isProtectedMonth(sd.date.substring(0, 7))) continue;
         if ((sd as any).hpManual) continue;
         const sdNorm = normProductName(sd.product);
-        const count = manualEntries.filter(e => normProductName(e.product) === sdNorm && e.date === sd.date).length;
+        const matchedEntries = manualEntries.filter(e => normProductName(e.product) === sdNorm && e.date === sd.date);
         let hp = 0;
-        if (count > 0) {
+        if (matchedEntries.length > 0) {
           const pp = productPrices.find(p => normProductName(p.name) === sdNorm);
           const supPrice = pp?.supplyPrice || ((pp?.sellingPrice || pp?.price || 0) - 1000);
           if (supPrice > 0) {
-            hp = -(count * Math.round(1000 + supPrice * 0.1166 + 2300));
+            const baseUnitCost = Math.round(1000 + supPrice * 0.1166 + 2300);
+            hp = -matchedEntries.reduce((sum, e) => {
+              const unitCost = e.orderNumber?.includes('실배') ? baseUnitCost + supPrice : baseUnitCost;
+              return sum + unitCost;
+            }, 0);
           }
         }
         if (sd.housePurchase !== hp) {
@@ -545,14 +554,19 @@ const App: React.FC = () => {
         if (prev) prev.count += 1;
         else combos.set(key, { date: me.date, product: me.product, count: 1 });
       }
-      for (const [key, { date, product, count }] of combos) {
+      for (const [key, { date, product }] of combos) {
         if (sdMap.has(key)) continue; // 이미 위에서 처리됨
         const pNorm = normProductName(product);
         const pp = productPrices.find(p => normProductName(p.name) === pNorm);
         const supPrice = pp?.supplyPrice || ((pp?.sellingPrice || pp?.price || 0) - 1000);
         if (supPrice <= 0) continue;
         const cleanProduct = pp?.name || pNorm;
-        const hp = -(count * Math.round(1000 + supPrice * 0.1166 + 2300));
+        const baseUnitCost = Math.round(1000 + supPrice * 0.1166 + 2300);
+        const entriesForCombo = manualEntries.filter(e => normProductName(e.product) === pNorm && e.date === date);
+        const hp = -entriesForCombo.reduce((sum, e) => {
+          const unitCost = e.orderNumber?.includes('실배') ? baseUnitCost + supPrice : baseUnitCost;
+          return sum + unitCost;
+        }, 0);
         const docId = `${date}_${cleanProduct}`;
         batch.set(doc(db, getCol('salesDaily', colPrefix), docId), {
           date, product: cleanProduct, productDetail: '', quantity: 0, sellingPrice: 0,
@@ -3609,12 +3623,14 @@ const App: React.FC = () => {
                           <div className="space-y-8">
                             {productNames.map(product => {
                               const entries = byProduct[product].sort((a, b) => a.date.localeCompare(b.date));
-                              const hpCountByDate: Record<string, number> = {};
+                              const hpCountByDate: Record<string, { 빈박: number; 실배: number }> = {};
                               manualEntries.forEach(me => {
                                 if (normProductName(me.product) !== product) return;
-                                hpCountByDate[me.date] = (hpCountByDate[me.date] || 0) + 1;
+                                if (!hpCountByDate[me.date]) hpCountByDate[me.date] = { 빈박: 0, 실배: 0 };
+                                if (me.orderNumber?.includes('실배')) hpCountByDate[me.date].실배 += 1;
+                                else hpCountByDate[me.date].빈박 += 1;
                               });
-                              const hpCountTotal = Object.values(hpCountByDate).reduce((s, n) => s + n, 0);
+                              const hpCountTotal = Object.values(hpCountByDate).reduce((s, n) => ({ 빈박: s.빈박 + n.빈박, 실배: s.실배 + n.실배 }), { 빈박: 0, 실배: 0 });
                               const totals = {
                                 supplyPrice: entries.reduce((s, e) => s + e.supplyPrice, 0),
                                 totalMargin: entries.reduce((s, e) => s + e.totalMargin, 0),
@@ -3639,7 +3655,7 @@ const App: React.FC = () => {
                                     <span>마진 {totals.totalMargin.toLocaleString()}</span>
                                     <span>수량 {totals.quantity}</span>
                                     <span>광고비 {totals.adCost.toLocaleString()}</span>
-                                    <span>가구매 {totals.housePurchase.toLocaleString()}{hpCountTotal ? ` (${hpCountTotal}건)` : ''}</span>
+                                    <span>가구매 {totals.housePurchase.toLocaleString()}{(hpCountTotal.빈박 + hpCountTotal.실배) > 0 ? ` (빈박${hpCountTotal.빈박}개/실배${hpCountTotal.실배}개)` : ''}</span>
                                     <span>솔룻 {totals.solution.toLocaleString()}</span>
                                   </div>
                                   <div className="overflow-x-auto">
@@ -3686,7 +3702,11 @@ const App: React.FC = () => {
                                               <div className="flex items-center justify-center gap-1">
                                                 <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                   defaultValue={entry.housePurchase || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
-                                                {hpCountByDate[entry.date] ? <span className="text-[10px] text-gray-400">×{hpCountByDate[entry.date]}</span> : null}
+                                                {hpCountByDate[entry.date] && (hpCountByDate[entry.date].빈박 + hpCountByDate[entry.date].실배) > 0 ? (
+                                                  <span className="text-[10px] text-gray-400">
+                                                    {[hpCountByDate[entry.date].빈박 > 0 && `빈박${hpCountByDate[entry.date].빈박}`, hpCountByDate[entry.date].실배 > 0 && `실배${hpCountByDate[entry.date].실배}`].filter(Boolean).join('/')}
+                                                  </span>
+                                                ) : null}
                                               </div>
                                             </td>
                                             <td className="py-1 px-3">
