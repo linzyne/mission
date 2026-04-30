@@ -4082,8 +4082,6 @@ const App: React.FC = () => {
                       <div className="hidden md:flex gap-1.5 items-center">
                         <button onClick={() => addMoreRows(10)} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg font-bold text-[11px]">+10줄</button>
                         <button onClick={deleteEmptyRows} className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg font-bold text-[11px] hover:bg-gray-200">빈행삭제</button>
-                        <button onClick={() => multiImageInputRef.current?.click()} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-bold text-[11px] hover:bg-blue-700">이미지등록</button>
-                        <input ref={multiImageInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleMultiImageUpload} />
                         {bizInfo?.accountInfo && (
                         <button
                           onClick={async () => {
@@ -4103,7 +4101,6 @@ const App: React.FC = () => {
                         )}
                         <button onClick={insertRowAfterSelected} className="px-3 py-1.5 bg-green-500 text-white rounded-lg font-bold text-[11px] hover:bg-green-600">행삽입</button>
                         <button onClick={() => { if (selectedManualIds.size === 0) { alert('행을 먼저 선택해주세요.'); return; } deleteSelectedManualEntries(); }} className="px-3 py-1.5 bg-red-500 text-white rounded-lg font-bold text-[11px] hover:bg-red-600">삭제</button>
-                        <button onClick={() => setTemplateListModal(true)} className="px-3 py-1.5 bg-white text-gray-500 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300" title="양식설정">⚙ 양식</button>
                       </div>
                       <div className="hidden md:flex gap-1 items-center ml-auto">
                         {undoStack.length > 0 && (
@@ -4121,7 +4118,6 @@ const App: React.FC = () => {
                           const text = selected.map(e => `${e.name2 || ''}\t${e.orderNumber || ''}`).join('\n');
                           navigator.clipboard.writeText(text).then(() => alert(`${selected.length}건 복사 완료`));
                         }} className="px-2.5 py-1 bg-white text-blue-600 rounded-lg font-bold text-[11px] hover:bg-blue-100 border border-blue-200">복사</button>
-                        <button onClick={insertRowAfterSelected} className="px-2.5 py-1 bg-white text-gray-700 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300">행삽입</button>
                         <button onClick={(e) => { e.stopPropagation(); setProductPicker({ x: e.clientX, y: e.clientY }); }} className="px-2.5 py-1 bg-white text-indigo-600 rounded-lg font-bold text-[11px] hover:bg-indigo-50 border border-indigo-200">품목일괄</button>
                         <button onClick={handleReservationComplete} className="px-2.5 py-1 bg-pink-500 text-white rounded-lg font-bold text-[11px] hover:bg-pink-600">예약완료</button>
                         <button onClick={handleReservationCancel} className="px-2.5 py-1 bg-white text-pink-500 rounded-lg font-bold text-[11px] hover:bg-pink-50 border border-pink-200">예약취소</button>
@@ -4139,36 +4135,6 @@ const App: React.FC = () => {
                           });
                           await batch.commit();
                         }} className="px-2.5 py-1 bg-white text-gray-700 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300">경계선</button>
-                        <span className="w-px h-4 bg-blue-200 mx-0.5"></span>
-                        {exportTemplates.map(tpl => {
-                          const colorMap: Record<string, string> = { red: 'bg-red-500 hover:bg-red-600', orange: 'bg-orange-500 hover:bg-orange-600', blue: 'bg-blue-500 hover:bg-blue-600', green: 'bg-green-500 hover:bg-green-600', purple: 'bg-purple-500 hover:bg-purple-600', pink: 'bg-pink-500 hover:bg-pink-600', gray: 'bg-gray-500 hover:bg-gray-600' };
-                          return (
-                            <button
-                              key={tpl.id}
-                              onClick={async () => {
-                                const XLSX = await import('xlsx');
-                                const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
-                                const toDownload = masterSheetData
-                                  ? selected.filter(e => masterSheetData.orderMap.has(e.orderNumber))
-                                  : selected;
-                                if (toDownload.length === 0) {
-                                  alert(masterSheetData ? '선택한 항목 중 마스터 주문서와 매칭된 항목이 없습니다.' : '다운로드할 항목이 없습니다.');
-                                  return;
-                                }
-                                const headers = tpl.columns.map(c => c.header);
-                                const rows = toDownload.map(e => {
-                                  const masterRow = masterSheetData?.orderMap.get(e.orderNumber);
-                                  return tpl.columns.map(c => getExportCellValue(e, c, masterRow));
-                                });
-                                const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-                                const wb = XLSX.utils.book_new();
-                                XLSX.utils.book_append_sheet(wb, ws, tpl.sheetName);
-                                XLSX.writeFile(wb, `${tpl.filePrefix}_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
-                              }}
-                              className={`px-2.5 py-1 text-white rounded-lg font-bold text-[11px] ${colorMap[tpl.color] || 'bg-gray-500 hover:bg-gray-600'}`}
-                            >{tpl.name}{masterSheetData && <span className="ml-1 opacity-75">📋</span>}</button>
-                          );
-                        })}
                         <span className="w-px h-4 bg-blue-200 mx-0.5"></span>
                         <button onClick={() => setPlatformConfigModal(true)} className="px-2 py-1 bg-white text-teal-600 rounded-lg font-bold text-[11px] hover:bg-teal-50 border border-teal-200" title="플랫폼 설정">🏷</button>
                         <button onClick={() => setTemplateListModal(true)} className="px-2 py-1 bg-white text-gray-500 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300" title="양식설정">⚙</button>
@@ -4203,6 +4169,23 @@ const App: React.FC = () => {
                               e.target.value = '';
                             }} />
                           </label>
+                          {exportTemplates.map(tpl => {
+                            const colorMap: Record<string, string> = { red: 'bg-red-500 hover:bg-red-600', orange: 'bg-orange-500 hover:bg-orange-600', blue: 'bg-blue-500 hover:bg-blue-600', green: 'bg-green-500 hover:bg-green-600', purple: 'bg-purple-500 hover:bg-purple-600', pink: 'bg-pink-500 hover:bg-pink-600', gray: 'bg-gray-500 hover:bg-gray-600' };
+                            return (
+                              <button key={tpl.id} onClick={async () => {
+                                const XLSX = await import('xlsx');
+                                const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                                const toDownload = selected.length > 0 ? selected : manualEntries;
+                                if (toDownload.length === 0) { alert('다운로드할 항목이 없습니다.'); return; }
+                                const headers = tpl.columns.map(c => c.header);
+                                const rows = toDownload.map(e => tpl.columns.map(c => getExportCellValue(e, c, undefined)));
+                                const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+                                const wb = XLSX.utils.book_new();
+                                XLSX.utils.book_append_sheet(wb, ws, tpl.sheetName);
+                                XLSX.writeFile(wb, `${tpl.filePrefix}_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
+                              }} className={`px-2.5 py-1 text-white rounded-lg font-bold text-[11px] ${colorMap[tpl.color] || 'bg-gray-500 hover:bg-gray-600'}`}>{tpl.name}</button>
+                            );
+                          })}
                           {allPlatformConfigs.length === 0 && <span className="text-gray-400">플랫폼 설정(🏷)을 먼저 해주세요</span>}
                         </div>
                       ) : (() => {
@@ -4225,6 +4208,27 @@ const App: React.FC = () => {
                             ) : (
                               <span className="text-green-600 font-bold">전체 매칭!</span>
                             )}
+                            {exportTemplates.map(tpl => {
+                              const colorMap: Record<string, string> = { red: 'bg-red-500 hover:bg-red-600', orange: 'bg-orange-500 hover:bg-orange-600', blue: 'bg-blue-500 hover:bg-blue-600', green: 'bg-green-500 hover:bg-green-600', purple: 'bg-purple-500 hover:bg-purple-600', pink: 'bg-pink-500 hover:bg-pink-600', gray: 'bg-gray-500 hover:bg-gray-600' };
+                              return (
+                                <button key={tpl.id} onClick={async () => {
+                                  const XLSX = await import('xlsx');
+                                  const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                                  const base = selected.length > 0 ? selected : manualEntries;
+                                  const toDownload = base.filter(e => masterSheetData.orderMap.has(e.orderNumber));
+                                  if (toDownload.length === 0) { alert('마스터 주문서와 매칭된 항목이 없습니다.'); return; }
+                                  const headers = tpl.columns.map(c => c.header);
+                                  const rows = toDownload.map(e => {
+                                    const masterRow = masterSheetData.orderMap.get(e.orderNumber);
+                                    return tpl.columns.map(c => getExportCellValue(e, c, masterRow));
+                                  });
+                                  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+                                  const wb = XLSX.utils.book_new();
+                                  XLSX.utils.book_append_sheet(wb, ws, tpl.sheetName);
+                                  XLSX.writeFile(wb, `${tpl.filePrefix}_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
+                                }} className={`px-2.5 py-1 text-white rounded-lg font-bold text-[11px] ${colorMap[tpl.color] || 'bg-gray-500 hover:bg-gray-600'}`}>{tpl.name} 📋</button>
+                              );
+                            })}
                             <button onClick={() => { setMasterSheetData(null); setMasterUnmatchedExpanded(false); }} className="ml-auto text-teal-500 hover:text-red-500 font-bold">해제</button>
                           </div>
                           {masterUnmatchedExpanded && unmatchedItems.length > 0 && (
