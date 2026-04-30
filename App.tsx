@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, DailyCostItem, SalesSubTab, VendorSettlement, VendorSummaryDoc, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource } from './types';
+import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, DailyCostItem, SalesSubTab, VendorSettlement, VendorSummaryDoc, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource, PlatformConfig } from './types';
 import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField } from 'firebase/firestore';
@@ -40,7 +40,7 @@ const FIELD_SOURCE_LABELS: Record<ExportFieldSource, string> = {
   address: '주소', emergencyContact: '전화번호', product: '품목', memo: '비고',
   trackingNumber: '운송장번호', accountNumber: '계좌번호', paymentAmount: '결제금액',
   count: '갯수', date: '날짜', bizName: '업체명', bizPhone: '업체전화', bizAddress: '업체주소',
-  fixed: '고정값', empty: '빈칸',
+  fixed: '고정값', empty: '빈칸', masterCol: '마스터시트',
 };
 
 const DEFAULT_EXPORT_TEMPLATES: ExportTemplate[] = [
@@ -166,7 +166,42 @@ const App: React.FC = () => {
     await setDoc(doc(db, getCol('settings', colPrefix), 'exportTemplates'), { templates });
   };
 
-  const getExportCellValue = (entry: ManualEntry, col: ExportColumn): string => {
+  // Firestore Sync: Platform Configs
+  const [platformConfigs, setPlatformConfigs] = useState<PlatformConfig[]>([]);
+  const [platformConfigModal, setPlatformConfigModal] = useState(false);
+  const [platformEditItem, setPlatformEditItem] = useState<PlatformConfig | null>(null);
+
+  useEffect(() => {
+    if (!selectedBiz) { setPlatformConfigs([]); return; }
+    const unsub = onSnapshot(doc(db, getCol('settings', colPrefix), 'platformConfigs'), (d) => {
+      setPlatformConfigs(d.exists() ? (d.data().configs as PlatformConfig[] || []) : []);
+    });
+    return () => unsub();
+  }, [selectedBiz]);
+
+  const savePlatformConfigs = async (configs: PlatformConfig[]) => {
+    await setDoc(doc(db, getCol('settings', colPrefix), 'platformConfigs'), { configs });
+  };
+
+  // Master sheet state (세션 내 유지, Firebase 저장 안 함)
+  const [masterSheetData, setMasterSheetData] = useState<{
+    platformId: string;
+    platformName: string;
+    orderMap: Map<string, Record<string, string>>;
+    total: number;
+  } | null>(null);
+  const [masterUploadPlatformId, setMasterUploadPlatformId] = useState<string>('');
+  const [masterUnmatchedExpanded, setMasterUnmatchedExpanded] = useState(false);
+
+  const getExportCellValue = (entry: ManualEntry, col: ExportColumn, masterRow?: Record<string, string>): string => {
+    if (masterRow && masterSheetData && col.source !== 'fixed' && col.source !== 'empty' && col.source !== 'bizName' && col.source !== 'bizPhone' && col.source !== 'bizAddress' && col.source !== 'masterCol') {
+      const platform = platformConfigs.find(p => p.id === masterSheetData.platformId);
+      const mappedCol = platform?.fieldMapping?.[col.source];
+      if (mappedCol && mappedCol.trim()) {
+        const val = masterRow[mappedCol] ?? '';
+        return col.stripDash ? val.replace(/-/g, '') : val;
+      }
+    }
     switch (col.source) {
       case 'orderNumber': return entry.orderNumber || '';
       case 'name1': return entry.name1 || '';
@@ -188,9 +223,37 @@ const App: React.FC = () => {
       case 'bizPhone': return bizInfo?.phone || '';
       case 'bizAddress': return bizInfo?.address || '';
       case 'fixed': return col.fixedValue || '';
+      case 'masterCol': return col.masterColName ? (masterRow?.[col.masterColName] ?? '') : '';
       case 'empty': return '';
       default: return '';
     }
+  };
+
+  const parseMasterSheet = async (file: File, platformConfig: PlatformConfig): Promise<{ orderMap: Map<string, Record<string, string>>; total: number }> => {
+    const XLSX = await import('xlsx');
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const allRows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) as string[][];
+    const headerRow = (allRows[platformConfig.headerRow] || []).map(String);
+    const orderMap = new Map<string, Record<string, string>>();
+    for (let i = platformConfig.headerRow + 1; i < allRows.length; i++) {
+      const row = allRows[i];
+      const rowObj: Record<string, string> = {};
+      headerRow.forEach((h, idx) => { if (h) rowObj[h] = String(row[idx] ?? ''); });
+      const orderNum = rowObj[platformConfig.orderNumColName]?.trim();
+      if (orderNum) orderMap.set(orderNum, rowObj);
+    }
+    return { orderMap, total: orderMap.size };
+  };
+
+  const parseSampleColumns = async (file: File, headerRow: number): Promise<string[]> => {
+    const XLSX = await import('xlsx');
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const allRows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) as string[][];
+    return ((allRows[headerRow] || []).map(String).filter(h => h.trim()));
   };
 
   const createEmptyRow = (date?: string): ManualEntry => ({
@@ -4062,20 +4125,112 @@ const App: React.FC = () => {
                               onClick={async () => {
                                 const XLSX = await import('xlsx');
                                 const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
+                                const toDownload = masterSheetData
+                                  ? selected.filter(e => masterSheetData.orderMap.has(e.orderNumber))
+                                  : selected;
+                                if (toDownload.length === 0) {
+                                  alert(masterSheetData ? '선택한 항목 중 마스터 주문서와 매칭된 항목이 없습니다.' : '다운로드할 항목이 없습니다.');
+                                  return;
+                                }
                                 const headers = tpl.columns.map(c => c.header);
-                                const rows = selected.map(e => tpl.columns.map(c => getExportCellValue(e, c)));
+                                const rows = toDownload.map(e => {
+                                  const masterRow = masterSheetData?.orderMap.get(e.orderNumber);
+                                  return tpl.columns.map(c => getExportCellValue(e, c, masterRow));
+                                });
                                 const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
                                 const wb = XLSX.utils.book_new();
                                 XLSX.utils.book_append_sheet(wb, ws, tpl.sheetName);
                                 XLSX.writeFile(wb, `${tpl.filePrefix}_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
                               }}
                               className={`px-2.5 py-1 text-white rounded-lg font-bold text-[11px] ${colorMap[tpl.color] || 'bg-gray-500 hover:bg-gray-600'}`}
-                            >{tpl.name}</button>
+                            >{tpl.name}{masterSheetData && <span className="ml-1 opacity-75">📋</span>}</button>
                           );
                         })}
+                        <span className="w-px h-4 bg-blue-200 mx-0.5"></span>
+                        <button onClick={() => setPlatformConfigModal(true)} className="px-2 py-1 bg-white text-teal-600 rounded-lg font-bold text-[11px] hover:bg-teal-50 border border-teal-200" title="플랫폼 설정">🏷</button>
                         <button onClick={() => setTemplateListModal(true)} className="px-2 py-1 bg-white text-gray-500 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300" title="양식설정">⚙</button>
                         <button onClick={() => setSelectedManualIds(new Set())} className="ml-auto px-2 py-1 text-gray-400 hover:text-gray-600 text-[11px]">✕ 해제</button>
                       </div>
+                    {/* 마스터 주문서 업로드 & 매칭 현황 패널 */}
+                    <div className={`rounded-xl border text-xs ${masterSheetData ? 'bg-teal-50 border-teal-200' : 'bg-gray-50 border-gray-200'}`}>
+                      {!masterSheetData ? (
+                        <div className="flex items-center gap-2 px-3 py-2">
+                          <span className="font-bold text-gray-500">📋 마스터 주문서</span>
+                          <select
+                            value={masterUploadPlatformId}
+                            onChange={e => setMasterUploadPlatformId(e.target.value)}
+                            className="px-2 py-1 border border-gray-300 rounded text-[11px] text-gray-600 bg-white"
+                          >
+                            <option value="">플랫폼 선택</option>
+                            {platformConfigs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                          <label className="px-2.5 py-1 bg-teal-500 text-white rounded-lg font-bold text-[11px] hover:bg-teal-600 cursor-pointer">
+                            업로드
+                            <input type="file" accept=".xlsx,.xls" className="hidden" onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              if (!masterUploadPlatformId) { alert('플랫폼을 먼저 선택해주세요.'); e.target.value = ''; return; }
+                              const platform = platformConfigs.find(p => p.id === masterUploadPlatformId);
+                              if (!platform) { e.target.value = ''; return; }
+                              try {
+                                const result = await parseMasterSheet(file, platform);
+                                setMasterSheetData({ platformId: platform.id, platformName: platform.name, orderMap: result.orderMap, total: result.total });
+                                setMasterUnmatchedExpanded(false);
+                              } catch { alert('파일 파싱 중 오류가 발생했습니다.'); }
+                              e.target.value = '';
+                            }} />
+                          </label>
+                          {platformConfigs.length === 0 && <span className="text-gray-400">플랫폼 설정(🏷)을 먼저 해주세요</span>}
+                        </div>
+                      ) : (() => {
+                        const matchTargets = selectedManualIds.size > 0
+                          ? manualEntries.filter(e => selectedManualIds.has(e.id))
+                          : manualEntries;
+                        const unmatchedItems = matchTargets.filter(e => !masterSheetData.orderMap.has(e.orderNumber));
+                        const matchedCount = matchTargets.length - unmatchedItems.length;
+                        return (
+                        <div>
+                          <div className="flex items-center gap-3 px-3 py-2 flex-wrap">
+                            <span className="font-bold text-teal-700">📋 {masterSheetData.platformName}</span>
+                            <span className="text-teal-600">주문서 {masterSheetData.total}건</span>
+                            <span className="text-gray-400">{selectedManualIds.size > 0 ? `선택 ${matchTargets.length}건 기준` : `전체 기준`}</span>
+                            <span className="text-green-700 font-bold">✅ 매칭 {matchedCount}건</span>
+                            {unmatchedItems.length > 0 ? (
+                              <button onClick={() => setMasterUnmatchedExpanded(v => !v)} className="text-red-500 font-bold hover:underline">
+                                ❌ 미매칭 {unmatchedItems.length}건 {masterUnmatchedExpanded ? '▲' : '▼'}
+                              </button>
+                            ) : (
+                              <span className="text-green-600 font-bold">전체 매칭!</span>
+                            )}
+                            <button onClick={() => { setMasterSheetData(null); setMasterUnmatchedExpanded(false); }} className="ml-auto text-teal-500 hover:text-red-500 font-bold">해제</button>
+                          </div>
+                          {masterUnmatchedExpanded && unmatchedItems.length > 0 && (
+                            <div className="border-t border-teal-200 max-h-40 overflow-y-auto">
+                              <table className="w-full">
+                                <thead className="bg-teal-100 sticky top-0">
+                                  <tr>
+                                    <th className="px-3 py-1.5 text-left text-teal-700 font-bold">주문번호</th>
+                                    <th className="px-3 py-1.5 text-left text-teal-700 font-bold">이름1</th>
+                                    <th className="px-3 py-1.5 text-left text-teal-700 font-bold">받는사람</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-teal-100">
+                                  {unmatchedItems.map((item, i) => (
+                                    <tr key={i} className="bg-white hover:bg-teal-50">
+                                      <td className="px-3 py-1 font-mono text-gray-700">{item.orderNumber || '(없음)'}</td>
+                                      <td className="px-3 py-1 text-gray-600">{item.name1 || '-'}</td>
+                                      <td className="px-3 py-1 text-gray-600">{item.name2 || '-'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                        );
+                      })()
+                      }
+                    </div>
                     <div>
                       {renderDateRangePicker(
                         manualViewDateStart, manualViewDateEnd,
@@ -5136,6 +5291,18 @@ const App: React.FC = () => {
                           className="px-2 py-1.5 border rounded text-xs w-20"
                         />
                       )}
+                      {col.source === 'masterCol' && (
+                        <input
+                          value={col.masterColName || ''}
+                          onChange={e => {
+                            const cols = [...templateEditModal.columns];
+                            cols[idx] = { ...cols[idx], masterColName: e.target.value };
+                            setTemplateEditModal({ ...templateEditModal, columns: cols });
+                          }}
+                          placeholder="마스터 컬럼명"
+                          className="px-2 py-1.5 border rounded text-xs w-28 border-teal-300"
+                        />
+                      )}
                       {col.source === 'emergencyContact' && (
                         <label className="flex items-center gap-1 text-[10px] text-gray-500 whitespace-nowrap">
                           <input type="checkbox" checked={col.stripDash || false} onChange={e => {
@@ -5180,6 +5347,117 @@ const App: React.FC = () => {
                 setTemplateEditModal(null);
               }} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600">저장</button>
             </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* 플랫폼 설정 모달 */}
+      {platformConfigModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => { setPlatformConfigModal(false); setPlatformEditItem(null); }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-gray-800">플랫폼 설정</h3>
+              <button onClick={() => { setPlatformConfigModal(false); setPlatformEditItem(null); }} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+            </div>
+            <div className="p-4 space-y-2 overflow-y-auto flex-1">
+              {platformConfigs.length === 0 && (
+                <p className="text-center text-sm text-gray-400 py-6">등록된 플랫폼이 없습니다.</p>
+              )}
+              {platformConfigs.map((p, idx) => (
+                <div key={p.id} className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:bg-gray-50">
+                  <div className="flex-1 min-w-0">
+                    <span className="font-bold text-sm text-gray-800">{p.name}</span>
+                    <span className="ml-2 text-xs text-gray-400">헤더행 {p.headerRow + 1}행 · 주문번호 컬럼: "{p.orderNumColName}"</span>
+                  </div>
+                  <div className="flex gap-1">
+                    <button onClick={() => setPlatformEditItem(JSON.parse(JSON.stringify(p)))} className="px-2.5 py-1 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg">편집</button>
+                    <button onClick={async () => {
+                      if (!window.confirm(`"${p.name}" 플랫폼을 삭제하시겠습니까?`)) return;
+                      await savePlatformConfigs(platformConfigs.filter((_, i) => i !== idx));
+                    }} className="px-2.5 py-1 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg">삭제</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {platformEditItem ? (
+              <div className="p-4 border-t border-gray-100 space-y-3">
+                <p className="text-xs font-bold text-gray-500">{platformConfigs.find(p => p.id === platformEditItem.id) ? '편집' : '새 플랫폼 추가'}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-500 mb-1 block">플랫폼 이름</label>
+                    <input value={platformEditItem.name} onChange={e => setPlatformEditItem({ ...platformEditItem, name: e.target.value })} placeholder="예: 네이버" className="w-full px-3 py-2 border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-500 mb-1 block">헤더 행 위치</label>
+                    <div className="flex items-center gap-1">
+                      <input type="number" min={1} value={platformEditItem.headerRow + 1} onChange={e => setPlatformEditItem({ ...platformEditItem, headerRow: Math.max(0, Number(e.target.value) - 1) })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                      <span className="text-xs text-gray-400 whitespace-nowrap">행</span>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-gray-500 mb-1 block">주문번호 컬럼명</label>
+                  <input value={platformEditItem.orderNumColName} onChange={e => setPlatformEditItem({ ...platformEditItem, orderNumColName: e.target.value })} placeholder="예: 주문번호" className="w-full px-3 py-2 border rounded-lg text-sm" />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[11px] font-bold text-gray-500">컬럼 매핑</label>
+                    <label className="px-2 py-1 bg-teal-500 text-white rounded text-[11px] font-bold hover:bg-teal-600 cursor-pointer">
+                      📋 주문서 업로드해서 컬럼 불러오기
+                      <input type="file" accept=".xlsx,.xls" className="hidden" onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        try {
+                          const cols = await parseSampleColumns(file, platformEditItem.headerRow);
+                          setPlatformEditItem({ ...platformEditItem, sampleColumns: cols });
+                        } catch { alert('파일 파싱 중 오류가 발생했습니다.'); }
+                        e.target.value = '';
+                      }} />
+                    </label>
+                  </div>
+                  {(!platformEditItem.sampleColumns || platformEditItem.sampleColumns.length === 0) ? (
+                    <p className="text-[11px] text-gray-400 bg-gray-50 border border-gray-200 rounded-lg p-2">위 버튼으로 마스터 주문서를 업로드하면 컬럼 목록이 드롭박스로 표시됩니다.</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-52 overflow-y-auto border border-gray-200 rounded-lg p-2 bg-gray-50">
+                      {([['name2','받는사람'],['address','주소'],['emergencyContact','전화번호'],['ordererName','주문자명'],['name1','이름1'],['product','품목'],['memo','비고'],['count','수량'],['paymentAmount','결제금액']] as [string,string][]).map(([src, label]) => (
+                        <div key={src} className="flex items-center gap-2">
+                          <span className="text-[11px] text-gray-600 w-16 shrink-0">{label}</span>
+                          <span className="text-[11px] text-gray-400">←</span>
+                          <select
+                            value={platformEditItem.fieldMapping?.[src] || ''}
+                            onChange={e => setPlatformEditItem({ ...platformEditItem, fieldMapping: { ...platformEditItem.fieldMapping, [src]: e.target.value } })}
+                            className="flex-1 px-2 py-1 border rounded text-xs bg-white"
+                          >
+                            <option value="">(매핑 안함)</option>
+                            {platformEditItem.sampleColumns!.map(col => (
+                              <option key={col} value={col}>{col}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setPlatformEditItem(null)} className="flex-1 py-2 rounded-xl text-sm font-bold text-gray-500 bg-gray-100 hover:bg-gray-200">취소</button>
+                  <button onClick={async () => {
+                    if (!platformEditItem.name.trim()) { alert('플랫폼 이름을 입력해주세요.'); return; }
+                    if (!platformEditItem.orderNumColName.trim()) { alert('주문번호 컬럼명을 입력해주세요.'); return; }
+                    const existing = platformConfigs.findIndex(p => p.id === platformEditItem.id);
+                    const updated = existing >= 0
+                      ? platformConfigs.map((p, i) => i === existing ? platformEditItem : p)
+                      : [...platformConfigs, platformEditItem];
+                    await savePlatformConfigs(updated);
+                    setPlatformEditItem(null);
+                  }} className="flex-1 py-2 rounded-xl text-sm font-bold text-white bg-teal-500 hover:bg-teal-600">저장</button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 border-t border-gray-100">
+                <button onClick={() => setPlatformEditItem({ id: Math.random().toString(36).substr(2, 9), name: '', headerRow: 0, orderNumColName: '주문번호' })} className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-teal-500 hover:bg-teal-600">+ 새 플랫폼 추가</button>
+              </div>
+            )}
           </div>
         </div>
       )}

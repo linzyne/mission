@@ -181,13 +181,23 @@ export type ExportFieldSource =
   | 'emergencyContact' | 'product' | 'memo' | 'trackingNumber' | 'accountNumber'
   | 'paymentAmount' | 'count' | 'date'
   | 'bizName' | 'bizPhone' | 'bizAddress'
-  | 'fixed' | 'empty';
+  | 'fixed' | 'empty' | 'masterCol';
 
 export interface ExportColumn {
   header: string;
   source: ExportFieldSource;
   fixedValue?: string;
   stripDash?: boolean;
+  masterColName?: string;
+}
+
+export interface PlatformConfig {
+  id: string;
+  name: string;
+  headerRow: number;
+  orderNumColName: string;
+  fieldMapping?: Record<string, string>;
+  sampleColumns?: string[];
 }
 
 export interface ExportTemplate {
