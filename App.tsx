@@ -207,14 +207,24 @@ const App: React.FC = () => {
   };
 
   // Master sheet state (세션 내 유지, Firebase 저장 안 함)
-  const [masterSheetData, setMasterSheetData] = useState<{
+  const [masterSheets, setMasterSheets] = useState<Array<{
     platformId: string;
     platformName: string;
     orderMap: Map<string, Record<string, string>>;
     total: number;
-  } | null>(null);
+    allRows: string[][];
+    headerRowIndex: number;
+    trackingColIndex: number;
+    originalFileName: string;
+  }>>([]);
+  const masterSheetData = masterSheets.length > 0
+    ? { platformId: masterSheets[0].platformId, platformName: masterSheets[0].platformName, orderMap: (() => { const m = new Map<string, Record<string, string>>(); masterSheets.forEach(s => s.orderMap.forEach((v, k) => m.set(k, v))); return m; })(), total: masterSheets.reduce((a, s) => a + s.total, 0) }
+    : null;
   const [masterUploadPlatformId, setMasterUploadPlatformId] = useState<string>('');
   const [masterUnmatchedExpanded, setMasterUnmatchedExpanded] = useState(false);
+  // Waybill (운송장) state
+  const [waybillMap, setWaybillMap] = useState<Map<string, string>>(new Map());
+  const [waybillSources, setWaybillSources] = useState<{ name: string; count: number }[]>([]);
 
   const getExportCellValue = (entry: ManualEntry, col: ExportColumn, masterRow?: Record<string, string>): string => {
     if (masterRow && masterSheetData && col.source !== 'fixed' && col.source !== 'empty' && col.source !== 'bizName' && col.source !== 'bizPhone' && col.source !== 'bizAddress' && col.source !== 'masterCol') {
@@ -252,7 +262,13 @@ const App: React.FC = () => {
     }
   };
 
-  const parseMasterSheet = async (file: File, platformConfig: PlatformConfig): Promise<{ orderMap: Map<string, Record<string, string>>; total: number }> => {
+  const parseMasterSheet = async (file: File, platformConfig: PlatformConfig): Promise<{
+    orderMap: Map<string, Record<string, string>>;
+    total: number;
+    allRows: string[][];
+    headerRowIndex: number;
+    trackingColIndex: number;
+  }> => {
     const XLSX = await import('xlsx');
     const buffer = await file.arrayBuffer();
     const wb = XLSX.read(buffer, { type: 'array' });
@@ -267,7 +283,34 @@ const App: React.FC = () => {
       const orderNum = rowObj[platformConfig.orderNumColName]?.trim();
       if (orderNum) orderMap.set(orderNum, rowObj);
     }
-    return { orderMap, total: orderMap.size };
+    const trackingColIndex = headerRow.findIndex(h => h.includes('운송장') || h.includes('송장번호') || h.includes('트래킹'));
+    return { orderMap, total: orderMap.size, allRows, headerRowIndex: platformConfig.headerRow, trackingColIndex };
+  };
+
+  const parseWaybillFile = async (file: File): Promise<{ trackingMap: Map<string, string>; count: number }> => {
+    const XLSX = await import('xlsx');
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const allRows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) as string[][];
+    let headerIdx = 0;
+    for (let i = 0; i < Math.min(5, allRows.length); i++) {
+      if (allRows[i].some(c => String(c).trim())) { headerIdx = i; break; }
+    }
+    const headers = allRows[headerIdx].map(String);
+    const orderColIdx = headers.findIndex(h => h.includes('주문번호') || h.toLowerCase().includes('order'));
+    const trackColIdx = headers.findIndex(h => h.includes('운송장') || h.includes('송장') || h.includes('트래킹'));
+    if (orderColIdx === -1 || trackColIdx === -1) {
+      throw new Error(`주문번호 또는 운송장번호 컬럼을 찾을 수 없습니다.\n인식된 헤더: ${headers.join(', ')}`);
+    }
+    const trackingMap = new Map<string, string>();
+    for (let i = headerIdx + 1; i < allRows.length; i++) {
+      const row = allRows[i];
+      const orderNum = String(row[orderColIdx] ?? '').trim();
+      const trackingNum = String(row[trackColIdx] ?? '').trim();
+      if (orderNum && trackingNum) trackingMap.set(orderNum, trackingNum);
+    }
+    return { trackingMap, count: trackingMap.size };
   };
 
   const parseSampleColumns = async (file: File, headerRow: number): Promise<string[]> => {
@@ -4141,85 +4184,65 @@ const App: React.FC = () => {
                         <button onClick={() => setSelectedManualIds(new Set())} className="ml-auto px-2 py-1 text-gray-400 hover:text-gray-600 text-[11px]">✕ 해제</button>
                       </div>
                     {/* 마스터 주문서 업로드 & 매칭 현황 패널 */}
-                    <div className={`rounded-xl border text-xs ${masterSheetData ? 'bg-teal-50 border-teal-200' : 'bg-gray-50 border-gray-200'}`}>
-                      {!masterSheetData ? (
-                        <div className="flex items-center gap-2 px-3 py-2">
-                          <span className="font-bold text-gray-500">📋 마스터 주문서</span>
-                          <select
-                            value={masterUploadPlatformId}
-                            onChange={e => setMasterUploadPlatformId(e.target.value)}
-                            className="px-2 py-1 border border-gray-300 rounded text-[11px] text-gray-600 bg-white"
-                          >
-                            <option value="">플랫폼 선택</option>
-                            {allPlatformConfigs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                          </select>
-                          <label className="px-2.5 py-1 bg-teal-500 text-white rounded-lg font-bold text-[11px] hover:bg-teal-600 cursor-pointer">
-                            업로드
-                            <input type="file" accept=".xlsx,.xls" className="hidden" onChange={async (e) => {
-                              const file = e.target.files?.[0];
-                              if (!file) return;
-                              if (!masterUploadPlatformId) { alert('플랫폼을 먼저 선택해주세요.'); e.target.value = ''; return; }
-                              const platform = allPlatformConfigs.find(p => p.id === masterUploadPlatformId);
-                              if (!platform) { e.target.value = ''; return; }
-                              try {
-                                const result = await parseMasterSheet(file, platform);
-                                setMasterSheetData({ platformId: platform.id, platformName: platform.name, orderMap: result.orderMap, total: result.total });
-                                setMasterUnmatchedExpanded(false);
-                              } catch { alert('파일 파싱 중 오류가 발생했습니다.'); }
-                              e.target.value = '';
-                            }} />
-                          </label>
-                          {exportTemplates.map(tpl => {
-                            const colorMap: Record<string, string> = { red: 'bg-red-500 hover:bg-red-600', orange: 'bg-orange-500 hover:bg-orange-600', blue: 'bg-blue-500 hover:bg-blue-600', green: 'bg-green-500 hover:bg-green-600', purple: 'bg-purple-500 hover:bg-purple-600', pink: 'bg-pink-500 hover:bg-pink-600', gray: 'bg-gray-500 hover:bg-gray-600' };
-                            return (
-                              <button key={tpl.id} onClick={async () => {
-                                const XLSX = await import('xlsx');
-                                const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
-                                const toDownload = selected.length > 0 ? selected : manualEntries;
-                                if (toDownload.length === 0) { alert('다운로드할 항목이 없습니다.'); return; }
-                                const headers = tpl.columns.map(c => c.header);
-                                const rows = toDownload.map(e => tpl.columns.map(c => getExportCellValue(e, c, undefined)));
-                                const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-                                const wb = XLSX.utils.book_new();
-                                XLSX.utils.book_append_sheet(wb, ws, tpl.sheetName);
-                                XLSX.writeFile(wb, `${tpl.filePrefix}_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
-                              }} className={`px-2.5 py-1 text-white rounded-lg font-bold text-[11px] ${colorMap[tpl.color] || 'bg-gray-500 hover:bg-gray-600'}`}>{tpl.name}</button>
-                            );
-                          })}
-                          {allPlatformConfigs.length === 0 && <span className="text-gray-400">플랫폼 설정(🏷)을 먼저 해주세요</span>}
-                        </div>
-                      ) : (() => {
-                        const matchTargets = selectedManualIds.size > 0
-                          ? manualEntries.filter(e => selectedManualIds.has(e.id))
-                          : manualEntries;
-                        const unmatchedItems = matchTargets.filter(e => !masterSheetData.orderMap.has(e.orderNumber));
-                        const matchedCount = matchTargets.length - unmatchedItems.length;
-                        return (
-                        <div>
-                          <div className="flex items-center gap-3 px-3 py-2 flex-wrap">
-                            <span className="font-bold text-teal-700">📋 {masterSheetData.platformName}</span>
-                            <span className="text-teal-600">주문서 {masterSheetData.total}건</span>
-                            <span className="text-gray-400">{selectedManualIds.size > 0 ? `선택 ${matchTargets.length}건 기준` : `전체 기준`}</span>
-                            <span className="text-green-700 font-bold">✅ 매칭 {matchedCount}건</span>
-                            {unmatchedItems.length > 0 ? (
-                              <button onClick={() => setMasterUnmatchedExpanded(v => !v)} className="text-red-500 font-bold hover:underline">
-                                ❌ 미매칭 {unmatchedItems.length}건 {masterUnmatchedExpanded ? '▲' : '▼'}
-                              </button>
-                            ) : (
-                              <span className="text-green-600 font-bold">전체 매칭!</span>
-                            )}
+                    <div className={`rounded-xl border text-xs ${masterSheets.length > 0 ? 'bg-teal-50 border-teal-200' : 'bg-gray-50 border-gray-200'}`}>
+                      <div className="flex items-center gap-2 px-3 py-2 flex-wrap">
+                        <span className="font-bold text-gray-600">📋 마스터 주문서</span>
+                        {masterSheets.map((sheet, idx) => {
+                          const matchTargets = selectedManualIds.size > 0
+                            ? manualEntries.filter(e => selectedManualIds.has(e.id))
+                            : manualEntries;
+                          const matched = matchTargets.filter(e => sheet.orderMap.has(e.orderNumber)).length;
+                          return (
+                            <span key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-teal-100 text-teal-700 rounded-full font-bold">
+                              {sheet.platformName} ({sheet.total}건)
+                              <span className="text-green-600">✓{matched}</span>
+                              <button onClick={() => setMasterSheets(prev => prev.filter((_, i) => i !== idx))} className="ml-0.5 text-teal-400 hover:text-red-500 font-bold">✕</button>
+                            </span>
+                          );
+                        })}
+                        <select
+                          value={masterUploadPlatformId}
+                          onChange={e => setMasterUploadPlatformId(e.target.value)}
+                          className="px-2 py-0.5 border border-gray-300 rounded text-[11px] text-gray-600 bg-white"
+                        >
+                          <option value="">플랫폼 선택</option>
+                          {allPlatformConfigs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                        <label className="px-2.5 py-1 bg-teal-500 text-white rounded-lg font-bold text-[11px] hover:bg-teal-600 cursor-pointer">
+                          +업로드
+                          <input type="file" accept=".xlsx,.xls" className="hidden" onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            if (!masterUploadPlatformId) { alert('플랫폼을 먼저 선택해주세요.'); e.target.value = ''; return; }
+                            const platform = allPlatformConfigs.find(p => p.id === masterUploadPlatformId);
+                            if (!platform) { e.target.value = ''; return; }
+                            try {
+                              const result = await parseMasterSheet(file, platform);
+                              setMasterSheets(prev => {
+                                const filtered = prev.filter(s => s.platformId !== platform.id);
+                                return [...filtered, { platformId: platform.id, platformName: platform.name, orderMap: result.orderMap, total: result.total, allRows: result.allRows, headerRowIndex: result.headerRowIndex, trackingColIndex: result.trackingColIndex, originalFileName: file.name }];
+                              });
+                              setMasterUnmatchedExpanded(false);
+                            } catch { alert('파일 파싱 중 오류가 발생했습니다.'); }
+                            e.target.value = '';
+                          }} />
+                        </label>
+                        {masterSheets.length > 0 && (
+                          <>
                             {exportTemplates.map(tpl => {
                               const colorMap: Record<string, string> = { red: 'bg-red-500 hover:bg-red-600', orange: 'bg-orange-500 hover:bg-orange-600', blue: 'bg-blue-500 hover:bg-blue-600', green: 'bg-green-500 hover:bg-green-600', purple: 'bg-purple-500 hover:bg-purple-600', pink: 'bg-pink-500 hover:bg-pink-600', gray: 'bg-gray-500 hover:bg-gray-600' };
+                              const combinedMap = (() => { const m = new Map<string, Record<string, string>>(); masterSheets.forEach(s => s.orderMap.forEach((v, k) => m.set(k, v))); return m; })();
+                              const matchedSheet = masterSheets.find(s => s.platformId === tpl.id) ?? masterSheets[0];
                               return (
                                 <button key={tpl.id} onClick={async () => {
                                   const XLSX = await import('xlsx');
                                   const selected = manualEntries.filter(e => selectedManualIds.has(e.id));
                                   const base = selected.length > 0 ? selected : manualEntries;
-                                  const toDownload = base.filter(e => masterSheetData.orderMap.has(e.orderNumber));
+                                  const toDownload = base.filter(e => combinedMap.has(e.orderNumber));
                                   if (toDownload.length === 0) { alert('마스터 주문서와 매칭된 항목이 없습니다.'); return; }
                                   const headers = tpl.columns.map(c => c.header);
                                   const rows = toDownload.map(e => {
-                                    const masterRow = masterSheetData.orderMap.get(e.orderNumber);
+                                    const masterRow = matchedSheet.orderMap.get(e.orderNumber) ?? combinedMap.get(e.orderNumber);
                                     return tpl.columns.map(c => getExportCellValue(e, c, masterRow));
                                   });
                                   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -4229,35 +4252,106 @@ const App: React.FC = () => {
                                 }} className={`px-2.5 py-1 text-white rounded-lg font-bold text-[11px] ${colorMap[tpl.color] || 'bg-gray-500 hover:bg-gray-600'}`}>{tpl.name} 📋</button>
                               );
                             })}
-                            <button onClick={() => { setMasterSheetData(null); setMasterUnmatchedExpanded(false); }} className="ml-auto text-teal-500 hover:text-red-500 font-bold">해제</button>
-                          </div>
-                          {masterUnmatchedExpanded && unmatchedItems.length > 0 && (
-                            <div className="border-t border-teal-200 max-h-40 overflow-y-auto">
-                              <table className="w-full">
-                                <thead className="bg-teal-100 sticky top-0">
-                                  <tr>
-                                    <th className="px-3 py-1.5 text-left text-teal-700 font-bold">주문번호</th>
-                                    <th className="px-3 py-1.5 text-left text-teal-700 font-bold">이름1</th>
-                                    <th className="px-3 py-1.5 text-left text-teal-700 font-bold">받는사람</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-teal-100">
-                                  {unmatchedItems.map((item, i) => (
-                                    <tr key={i} className="bg-white hover:bg-teal-50">
-                                      <td className="px-3 py-1 font-mono text-gray-700">{item.orderNumber || '(없음)'}</td>
-                                      <td className="px-3 py-1 text-gray-600">{item.name1 || '-'}</td>
-                                      <td className="px-3 py-1 text-gray-600">{item.name2 || '-'}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
+                            <button onClick={() => { setMasterSheets([]); setMasterUnmatchedExpanded(false); }} className="ml-auto text-teal-500 hover:text-red-500 font-bold text-[11px]">전체해제</button>
+                          </>
+                        )}
+                        {allPlatformConfigs.length === 0 && <span className="text-gray-400">플랫폼 설정(🏷)을 먼저 해주세요</span>}
+                      </div>
+                    </div>
+                    {/* 운송장 입력 섹션 */}
+                    {masterSheets.length > 0 && (
+                      <div className="rounded-xl border bg-orange-50 border-orange-200 text-xs">
+                        <div className="flex items-center gap-2 px-3 py-2 flex-wrap">
+                          <span className="font-bold text-orange-700">📦 운송장 입력</span>
+                          {waybillSources.map((src, idx) => (
+                            <span key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full font-bold">
+                              {src.name} ({src.count}건)
+                              <button onClick={() => {
+                                const newSources = waybillSources.filter((_, i) => i !== idx);
+                                setWaybillSources(newSources);
+                                // rebuild waybillMap from remaining sources by re-upload is not feasible;
+                                // just clear all if removing any source
+                                setWaybillMap(new Map());
+                                setWaybillSources([]);
+                              }} className="ml-0.5 text-orange-400 hover:text-red-500 font-bold">✕</button>
+                            </span>
+                          ))}
+                          <label className="px-2.5 py-1 bg-orange-500 text-white rounded-lg font-bold text-[11px] hover:bg-orange-600 cursor-pointer">
+                            +운송장 파일
+                            <input type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={async (e) => {
+                              const files = Array.from(e.target.files ?? []);
+                              if (!files.length) return;
+                              const newMap = new Map(waybillMap);
+                              const newSources = [...waybillSources];
+                              for (const file of files) {
+                                try {
+                                  const result = await parseWaybillFile(file);
+                                  result.trackingMap.forEach((v, k) => newMap.set(k, v));
+                                  newSources.push({ name: file.name.replace(/\.[^.]+$/, ''), count: result.count });
+                                } catch (err) {
+                                  alert(`[${file.name}] ${err instanceof Error ? err.message : '파싱 오류'}`);
+                                }
+                              }
+                              setWaybillMap(newMap);
+                              setWaybillSources(newSources);
+                              e.target.value = '';
+                            }} />
+                          </label>
+                          {waybillSources.length > 0 && (
+                            <span className="text-orange-600 font-bold">합계 {waybillMap.size}건 매핑됨</span>
+                          )}
+                          {waybillSources.length > 0 && (
+                            <button onClick={() => { setWaybillMap(new Map()); setWaybillSources([]); }} className="ml-auto text-orange-400 hover:text-red-500 font-bold text-[11px]">초기화</button>
                           )}
                         </div>
-                        );
-                      })()
-                      }
-                    </div>
+                        {waybillMap.size > 0 && (
+                          <div className="border-t border-orange-200 px-3 py-2 flex items-center gap-2 flex-wrap">
+                            <span className="text-orange-600 font-bold text-[11px]">원본 주문서 다운로드:</span>
+                            {masterSheets.map((sheet, idx) => {
+                              const platform = allPlatformConfigs.find(p => p.id === sheet.platformId);
+                              const orderNumColName = platform?.orderNumColName ?? '';
+                              const headerRow = sheet.allRows[sheet.headerRowIndex] ?? [];
+                              const orderColIdx = headerRow.findIndex(h => String(h) === orderNumColName);
+                              let trackColIdx = sheet.trackingColIndex;
+                              const dataRows = sheet.allRows.slice(sheet.headerRowIndex + 1).filter(row => {
+                                const orderNum = String(row[orderColIdx] ?? '').trim();
+                                return orderNum && waybillMap.has(orderNum);
+                              });
+                              const filledCount = dataRows.length;
+                              return (
+                                <button key={idx} onClick={async () => {
+                                  if (filledCount === 0) { alert(`${sheet.platformName}: 운송장과 매칭된 주문이 없습니다.`); return; }
+                                  const XLSX = await import('xlsx');
+                                  const newRows: string[][] = [headerRow.map(String)];
+                                  let actualTrackColIdx = trackColIdx;
+                                  if (actualTrackColIdx === -1) {
+                                    newRows[0] = [...newRows[0], '운송장번호'];
+                                    actualTrackColIdx = newRows[0].length - 1;
+                                  }
+                                  sheet.allRows.slice(sheet.headerRowIndex + 1).forEach(row => {
+                                    const orderNum = String(row[orderColIdx] ?? '').trim();
+                                    if (!orderNum || !waybillMap.has(orderNum)) return;
+                                    const newRow = row.map(String);
+                                    if (actualTrackColIdx === newRows[0].length - 1 && trackColIdx === -1) {
+                                      newRow.push(waybillMap.get(orderNum) ?? '');
+                                    } else {
+                                      newRow[actualTrackColIdx] = waybillMap.get(orderNum) ?? '';
+                                    }
+                                    newRows.push(newRow);
+                                  });
+                                  const ws = XLSX.utils.aoa_to_sheet(newRows);
+                                  const wb = XLSX.utils.book_new();
+                                  XLSX.utils.book_append_sheet(wb, ws, sheet.platformName);
+                                  XLSX.writeFile(wb, `${sheet.platformName}_운송장_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
+                                }} className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-bold text-[11px]">
+                                  ⬇ {sheet.platformName} ({filledCount}건)
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div>
                       {renderDateRangePicker(
                         manualViewDateStart, manualViewDateEnd,
