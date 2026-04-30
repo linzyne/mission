@@ -167,20 +167,43 @@ const App: React.FC = () => {
   };
 
   // Firestore Sync: Platform Configs
+  // sharedPlatformConfigs = 안군농원에 설정된 공유 플랫폼 (모든 사업자 사용 가능)
+  const [sharedPlatformConfigs, setSharedPlatformConfigs] = useState<PlatformConfig[]>([]);
+  // platformConfigs = 현재 사업자 전용 플랫폼
   const [platformConfigs, setPlatformConfigs] = useState<PlatformConfig[]>([]);
   const [platformConfigModal, setPlatformConfigModal] = useState(false);
   const [platformEditItem, setPlatformEditItem] = useState<PlatformConfig | null>(null);
 
+  // 항상 안군농원의 공유 플랫폼 로드
   useEffect(() => {
-    if (!selectedBiz) { setPlatformConfigs([]); return; }
+    const unsub = onSnapshot(doc(db, 'settings', 'platformConfigs'), (d) => {
+      setSharedPlatformConfigs(d.exists() ? (d.data().configs as PlatformConfig[] || []) : []);
+    });
+    return () => unsub();
+  }, []);
+
+  // 현재 사업자 전용 플랫폼 로드 (안군농원은 공유=전용이므로 비움)
+  useEffect(() => {
+    if (!selectedBiz || colPrefix === '') { setPlatformConfigs([]); return; }
     const unsub = onSnapshot(doc(db, getCol('settings', colPrefix), 'platformConfigs'), (d) => {
       setPlatformConfigs(d.exists() ? (d.data().configs as PlatformConfig[] || []) : []);
     });
     return () => unsub();
   }, [selectedBiz]);
 
+  // 전체 플랫폼 = 공유 + 전용 (안군농원은 공유만)
+  const allPlatformConfigs: PlatformConfig[] = colPrefix === ''
+    ? sharedPlatformConfigs
+    : [...sharedPlatformConfigs, ...platformConfigs];
+
   const savePlatformConfigs = async (configs: PlatformConfig[]) => {
-    await setDoc(doc(db, getCol('settings', colPrefix), 'platformConfigs'), { configs });
+    if (colPrefix === '') {
+      // 안군농원: 공유 플랫폼 저장
+      await setDoc(doc(db, 'settings', 'platformConfigs'), { configs });
+    } else {
+      // 다른 사업자: 전용 플랫폼 저장
+      await setDoc(doc(db, getCol('settings', colPrefix), 'platformConfigs'), { configs });
+    }
   };
 
   // Master sheet state (세션 내 유지, Firebase 저장 안 함)
@@ -195,7 +218,7 @@ const App: React.FC = () => {
 
   const getExportCellValue = (entry: ManualEntry, col: ExportColumn, masterRow?: Record<string, string>): string => {
     if (masterRow && masterSheetData && col.source !== 'fixed' && col.source !== 'empty' && col.source !== 'bizName' && col.source !== 'bizPhone' && col.source !== 'bizAddress' && col.source !== 'masterCol') {
-      const platform = platformConfigs.find(p => p.id === masterSheetData.platformId);
+      const platform = allPlatformConfigs.find(p => p.id === masterSheetData.platformId);
       const mappedCol = platform?.fieldMapping?.[col.source];
       if (mappedCol && mappedCol.trim()) {
         const val = masterRow[mappedCol] ?? '';
@@ -4162,7 +4185,7 @@ const App: React.FC = () => {
                             className="px-2 py-1 border border-gray-300 rounded text-[11px] text-gray-600 bg-white"
                           >
                             <option value="">플랫폼 선택</option>
-                            {platformConfigs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            {allPlatformConfigs.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                           </select>
                           <label className="px-2.5 py-1 bg-teal-500 text-white rounded-lg font-bold text-[11px] hover:bg-teal-600 cursor-pointer">
                             업로드
@@ -4170,7 +4193,7 @@ const App: React.FC = () => {
                               const file = e.target.files?.[0];
                               if (!file) return;
                               if (!masterUploadPlatformId) { alert('플랫폼을 먼저 선택해주세요.'); e.target.value = ''; return; }
-                              const platform = platformConfigs.find(p => p.id === masterUploadPlatformId);
+                              const platform = allPlatformConfigs.find(p => p.id === masterUploadPlatformId);
                               if (!platform) { e.target.value = ''; return; }
                               try {
                                 const result = await parseMasterSheet(file, platform);
@@ -4180,7 +4203,7 @@ const App: React.FC = () => {
                               e.target.value = '';
                             }} />
                           </label>
-                          {platformConfigs.length === 0 && <span className="text-gray-400">플랫폼 설정(🏷)을 먼저 해주세요</span>}
+                          {allPlatformConfigs.length === 0 && <span className="text-gray-400">플랫폼 설정(🏷)을 먼저 해주세요</span>}
                         </div>
                       ) : (() => {
                         const matchTargets = selectedManualIds.size > 0
@@ -5353,36 +5376,80 @@ const App: React.FC = () => {
 
 
       {/* 플랫폼 설정 모달 */}
-      {platformConfigModal && (
+      {platformConfigModal && (() => {
+        const isAngun = colPrefix === '';
+        // 편집 중인 항목이 공유 플랫폼인지 전용 플랫폼인지
+        const editingShared = platformEditItem ? sharedPlatformConfigs.some(p => p.id === platformEditItem.id) : false;
+        const editingOwn = platformEditItem ? platformConfigs.some(p => p.id === platformEditItem.id) : false;
+        return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => { setPlatformConfigModal(false); setPlatformEditItem(null); }}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
               <h3 className="text-lg font-bold text-gray-800">플랫폼 설정</h3>
               <button onClick={() => { setPlatformConfigModal(false); setPlatformEditItem(null); }} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
-            <div className="p-4 space-y-2 overflow-y-auto flex-1">
-              {platformConfigs.length === 0 && (
-                <p className="text-center text-sm text-gray-400 py-6">등록된 플랫폼이 없습니다.</p>
-              )}
-              {platformConfigs.map((p, idx) => (
-                <div key={p.id} className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:bg-gray-50">
-                  <div className="flex-1 min-w-0">
-                    <span className="font-bold text-sm text-gray-800">{p.name}</span>
-                    <span className="ml-2 text-xs text-gray-400">헤더행 {p.headerRow + 1}행 · 주문번호 컬럼: "{p.orderNumColName}"</span>
+            <div className="p-4 space-y-3 overflow-y-auto flex-1">
+              {/* 공유 플랫폼 섹션 */}
+              <div>
+                <p className="text-[11px] font-bold text-teal-600 mb-1.5">공유 플랫폼 (안군농원 기준 · 모든 사업자 사용 가능)</p>
+                {sharedPlatformConfigs.length === 0 ? (
+                  <p className="text-center text-xs text-gray-400 py-3">등록된 공유 플랫폼이 없습니다.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {sharedPlatformConfigs.map((p, idx) => (
+                      <div key={p.id} className="flex items-center gap-3 p-3 rounded-xl border border-teal-100 bg-teal-50/40 hover:bg-teal-50">
+                        <div className="flex-1 min-w-0">
+                          <span className="font-bold text-sm text-gray-800">{p.name}</span>
+                          <span className="ml-2 text-xs text-gray-400">헤더행 {p.headerRow + 1}행 · 주문번호 컬럼: "{p.orderNumColName}"</span>
+                        </div>
+                        {isAngun && (
+                          <div className="flex gap-1">
+                            <button onClick={() => setPlatformEditItem(JSON.parse(JSON.stringify(p)))} className="px-2.5 py-1 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg">편집</button>
+                            <button onClick={async () => {
+                              if (!window.confirm(`"${p.name}" 공유 플랫폼을 삭제하시겠습니까?`)) return;
+                              await savePlatformConfigs(sharedPlatformConfigs.filter((_, i) => i !== idx));
+                            }} className="px-2.5 py-1 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg">삭제</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                  <div className="flex gap-1">
-                    <button onClick={() => setPlatformEditItem(JSON.parse(JSON.stringify(p)))} className="px-2.5 py-1 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg">편집</button>
-                    <button onClick={async () => {
-                      if (!window.confirm(`"${p.name}" 플랫폼을 삭제하시겠습니까?`)) return;
-                      await savePlatformConfigs(platformConfigs.filter((_, i) => i !== idx));
-                    }} className="px-2.5 py-1 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg">삭제</button>
-                  </div>
+                )}
+              </div>
+              {/* 전용 플랫폼 섹션 (안군농원이 아닌 경우만) */}
+              {!isAngun && (
+                <div>
+                  <p className="text-[11px] font-bold text-purple-600 mb-1.5">{bizInfo?.name} 전용 플랫폼</p>
+                  {platformConfigs.length === 0 ? (
+                    <p className="text-center text-xs text-gray-400 py-3">등록된 전용 플랫폼이 없습니다.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {platformConfigs.map((p, idx) => (
+                        <div key={p.id} className="flex items-center gap-3 p-3 rounded-xl border border-purple-100 bg-purple-50/40 hover:bg-purple-50">
+                          <div className="flex-1 min-w-0">
+                            <span className="font-bold text-sm text-gray-800">{p.name}</span>
+                            <span className="ml-2 text-xs text-gray-400">헤더행 {p.headerRow + 1}행 · 주문번호 컬럼: "{p.orderNumColName}"</span>
+                          </div>
+                          <div className="flex gap-1">
+                            <button onClick={() => setPlatformEditItem(JSON.parse(JSON.stringify(p)))} className="px-2.5 py-1 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg">편집</button>
+                            <button onClick={async () => {
+                              if (!window.confirm(`"${p.name}" 플랫폼을 삭제하시겠습니까?`)) return;
+                              await savePlatformConfigs(platformConfigs.filter((_, i) => i !== idx));
+                            }} className="px-2.5 py-1 text-xs font-bold text-red-500 hover:bg-red-50 rounded-lg">삭제</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
+              )}
             </div>
             {platformEditItem ? (
               <div className="p-4 border-t border-gray-100 space-y-3">
-                <p className="text-xs font-bold text-gray-500">{platformConfigs.find(p => p.id === platformEditItem.id) ? '편집' : '새 플랫폼 추가'}</p>
+                <p className="text-xs font-bold text-gray-500">
+                  {(editingShared || editingOwn) ? '편집' : '새 플랫폼 추가'}
+                  {!isAngun && !editingShared && <span className="ml-1 text-purple-500">({bizInfo?.name} 전용)</span>}
+                </p>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-[11px] font-bold text-gray-500 mb-1 block">플랫폼 이름</label>
@@ -5444,23 +5511,36 @@ const App: React.FC = () => {
                   <button onClick={async () => {
                     if (!platformEditItem.name.trim()) { alert('플랫폼 이름을 입력해주세요.'); return; }
                     if (!platformEditItem.orderNumColName.trim()) { alert('주문번호 컬럼명을 입력해주세요.'); return; }
-                    const existing = platformConfigs.findIndex(p => p.id === platformEditItem.id);
-                    const updated = existing >= 0
-                      ? platformConfigs.map((p, i) => i === existing ? platformEditItem : p)
-                      : [...platformConfigs, platformEditItem];
-                    await savePlatformConfigs(updated);
+                    if (isAngun || editingShared) {
+                      // 안군농원이거나 공유 플랫폼 편집: 공유 컬렉션에 저장
+                      const existing = sharedPlatformConfigs.findIndex(p => p.id === platformEditItem.id);
+                      const updated = existing >= 0
+                        ? sharedPlatformConfigs.map((p, i) => i === existing ? platformEditItem : p)
+                        : [...sharedPlatformConfigs, platformEditItem];
+                      await setDoc(doc(db, 'settings', 'platformConfigs'), { configs: updated });
+                    } else {
+                      // 다른 사업자: 전용 컬렉션에 저장
+                      const existing = platformConfigs.findIndex(p => p.id === platformEditItem.id);
+                      const updated = existing >= 0
+                        ? platformConfigs.map((p, i) => i === existing ? platformEditItem : p)
+                        : [...platformConfigs, platformEditItem];
+                      await savePlatformConfigs(updated);
+                    }
                     setPlatformEditItem(null);
                   }} className="flex-1 py-2 rounded-xl text-sm font-bold text-white bg-teal-500 hover:bg-teal-600">저장</button>
                 </div>
               </div>
             ) : (
               <div className="p-4 border-t border-gray-100">
-                <button onClick={() => setPlatformEditItem({ id: Math.random().toString(36).substr(2, 9), name: '', headerRow: 0, orderNumColName: '주문번호' })} className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-teal-500 hover:bg-teal-600">+ 새 플랫폼 추가</button>
+                <button onClick={() => setPlatformEditItem({ id: Math.random().toString(36).substr(2, 9), name: '', headerRow: 0, orderNumColName: '주문번호' })} className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-teal-500 hover:bg-teal-600">
+                  + {isAngun ? '새 플랫폼 추가 (공유)' : `새 플랫폼 추가 (${bizInfo?.name} 전용)`}
+                </button>
               </div>
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
 
     </div>
   );
