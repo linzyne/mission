@@ -136,7 +136,7 @@ const App: React.FC = () => {
     await setDoc(doc(db, getCol('settings', colPrefix), 'global'), newSettings, { merge: true });
   };
 
-  const DEFAULT_HP_FORMULA: HpFormula = { baseFee: 1000, supplyPriceRate: 0.1166, extraFee: 2300, silbaeAddSupply: true };
+  const DEFAULT_HP_FORMULA: HpFormula = { baseFee: 1000, supplyPriceRate: 0.12, extraFee: 2300, silbaeAddSupply: true, silbaeRate: 0.12 };
   const hpFormula: HpFormula = { ...DEFAULT_HP_FORMULA, ...settings.hpFormula };
 
   // 가구매비용계산기 편집용 로컬 state
@@ -639,12 +639,13 @@ const App: React.FC = () => {
     const entries = manualEntries.filter(e => e.product === product && e.date === date);
     if (entries.length === 0) return 0;
     const pp = productPrices.find(p => p.name === product);
-    const supPrice = pp?.supplyPrice || ((pp?.sellingPrice || pp?.price || 0) - 1000);
-    if (supPrice <= 0) return 0;
-    const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply } = hpFormula;
-    const baseUnitCost = Math.round(baseFee + supPrice * supplyPriceRate + extraFee);
+    const sellPrice = pp?.sellingPrice || pp?.price || 0;
+    const supPrice = pp?.supplyPrice || (sellPrice - 1000);
+    if (sellPrice <= 0) return 0;
+    const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply, silbaeRate } = hpFormula;
+    const baseUnitCost = Math.round(extraFee + sellPrice * supplyPriceRate + baseFee);
     const total = entries.reduce((sum, e) => {
-      const unitCost = (silbaeAddSupply && e.orderNumber?.includes('실배')) ? baseUnitCost + supPrice : baseUnitCost;
+      const unitCost = (silbaeAddSupply && e.orderNumber?.includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
       return sum + unitCost;
     }, 0);
     return -total;
@@ -668,12 +669,13 @@ const App: React.FC = () => {
         let hp = 0;
         if (matchedEntries.length > 0) {
           const pp = productPrices.find(p => normProductName(p.name) === sdNorm);
-          const supPrice = pp?.supplyPrice || ((pp?.sellingPrice || pp?.price || 0) - 1000);
-          if (supPrice > 0) {
-            const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply } = hpFormula;
-            const baseUnitCost = Math.round(baseFee + supPrice * supplyPriceRate + extraFee);
+          const sellPrice = pp?.sellingPrice || pp?.price || 0;
+          const supPrice = pp?.supplyPrice || (sellPrice - 1000);
+          if (sellPrice > 0) {
+            const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply, silbaeRate } = hpFormula;
+            const baseUnitCost = Math.round(extraFee + sellPrice * supplyPriceRate + baseFee);
             hp = -matchedEntries.reduce((sum, e) => {
-              const unitCost = (silbaeAddSupply && e.orderNumber?.includes('실배')) ? baseUnitCost + supPrice : baseUnitCost;
+              const unitCost = (silbaeAddSupply && e.orderNumber?.includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
               return sum + unitCost;
             }, 0);
           }
@@ -697,14 +699,15 @@ const App: React.FC = () => {
         if (sdMap.has(key)) continue; // 이미 위에서 처리됨
         const pNorm = normProductName(product);
         const pp = productPrices.find(p => normProductName(p.name) === pNorm);
-        const supPrice = pp?.supplyPrice || ((pp?.sellingPrice || pp?.price || 0) - 1000);
-        if (supPrice <= 0) continue;
+        const sellPrice = pp?.sellingPrice || pp?.price || 0;
+        const supPrice = pp?.supplyPrice || (sellPrice - 1000);
+        if (sellPrice <= 0) continue;
         const cleanProduct = pp?.name || pNorm;
-        const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply } = hpFormula;
-        const baseUnitCost = Math.round(baseFee + supPrice * supplyPriceRate + extraFee);
+        const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply, silbaeRate } = hpFormula;
+        const baseUnitCost = Math.round(extraFee + sellPrice * supplyPriceRate + baseFee);
         const entriesForCombo = manualEntries.filter(e => normProductName(e.product) === pNorm && e.date === date);
         const hp = -entriesForCombo.reduce((sum, e) => {
-          const unitCost = (silbaeAddSupply && e.orderNumber?.includes('실배')) ? baseUnitCost + supPrice : baseUnitCost;
+          const unitCost = (silbaeAddSupply && e.orderNumber?.includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
           return sum + unitCost;
         }, 0);
         const docId = `${date}_${cleanProduct}`;
@@ -3880,43 +3883,66 @@ const App: React.FC = () => {
                     <div className="bg-gray-50 rounded-2xl p-5 space-y-4">
 
                       {/* 공식 편집 */}
-                      <div className="flex flex-wrap gap-3 items-end">
+                      <div className="space-y-3">
+                        {/* 빈박 */}
                         <div>
-                          <label className="block text-[10px] font-bold text-gray-400 mb-1">기본 수수료</label>
-                          <input
-                            type="number"
-                            value={hpFormulaEdit.baseFee}
-                            onChange={e => setHpFormulaEdit(f => ({ ...f, baseFee: Number(e.target.value) || 0 }))}
-                            className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 mb-1">공급가 비율 (%)</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={Math.round(hpFormulaEdit.supplyPriceRate * 10000) / 100}
-                            onChange={e => setHpFormulaEdit(f => ({ ...f, supplyPriceRate: (Number(e.target.value) || 0) / 100 }))}
-                            className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 mb-1">기타 비용</label>
-                          <input
-                            type="number"
-                            value={hpFormulaEdit.extraFee}
-                            onChange={e => setHpFormulaEdit(f => ({ ...f, extraFee: Number(e.target.value) || 0 }))}
-                            className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
-                          />
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-gray-400">실배 시 공급가 추가</label>
-                          <div
-                            onClick={() => setHpFormulaEdit(f => ({ ...f, silbaeAddSupply: !f.silbaeAddSupply }))}
-                            className={`relative w-12 h-7 rounded-full transition-colors cursor-pointer ${hpFormulaEdit.silbaeAddSupply ? 'bg-blue-600' : 'bg-gray-300'}`}
-                          >
-                            <div className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full transition-transform shadow-sm ${hpFormulaEdit.silbaeAddSupply ? 'translate-x-5' : 'translate-x-0'}`} />
+                          <p className="text-[10px] font-black text-gray-400 mb-2">빈박 단위비용</p>
+                          <div className="flex flex-wrap gap-3 items-end">
+                            <div>
+                              <label className="block text-[10px] font-bold text-gray-400 mb-1">기본 수수료</label>
+                              <input
+                                type="number"
+                                value={hpFormulaEdit.baseFee}
+                                onChange={e => setHpFormulaEdit(f => ({ ...f, baseFee: Number(e.target.value) || 0 }))}
+                                className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-gray-400 mb-1">판매가 비율 (%)</label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={Math.round(hpFormulaEdit.supplyPriceRate * 10000) / 100}
+                                onChange={e => setHpFormulaEdit(f => ({ ...f, supplyPriceRate: (Number(e.target.value) || 0) / 100 }))}
+                                className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-gray-400 mb-1">기타 비용</label>
+                              <input
+                                type="number"
+                                value={hpFormulaEdit.extraFee}
+                                onChange={e => setHpFormulaEdit(f => ({ ...f, extraFee: Number(e.target.value) || 0 }))}
+                                className="w-24 px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm font-bold text-center outline-none focus:border-blue-500"
+                              />
+                            </div>
                           </div>
+                        </div>
+                        {/* 실배 */}
+                        <div>
+                          <div className="flex items-center gap-3 mb-2">
+                            <p className="text-[10px] font-black text-orange-400">실배 단위비용</p>
+                            <div
+                              onClick={() => setHpFormulaEdit(f => ({ ...f, silbaeAddSupply: !f.silbaeAddSupply }))}
+                              className={`relative w-10 h-6 rounded-full transition-colors cursor-pointer ${hpFormulaEdit.silbaeAddSupply ? 'bg-orange-400' : 'bg-gray-300'}`}
+                            >
+                              <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm ${hpFormulaEdit.silbaeAddSupply ? 'translate-x-4' : 'translate-x-0'}`} />
+                            </div>
+                          </div>
+                          {hpFormulaEdit.silbaeAddSupply && (
+                            <div className="flex flex-wrap gap-3 items-end">
+                              <div>
+                                <label className="block text-[10px] font-bold text-gray-400 mb-1">판매가 비율 (%)</label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={Math.round((hpFormulaEdit.silbaeRate ?? 0.12) * 10000) / 100}
+                                  onChange={e => setHpFormulaEdit(f => ({ ...f, silbaeRate: (Number(e.target.value) || 0) / 100 }))}
+                                  className="w-24 px-3 py-2 bg-white border border-orange-200 rounded-xl text-sm font-bold text-center outline-none focus:border-orange-400"
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <button
                           onClick={async () => {
@@ -3932,8 +3958,8 @@ const App: React.FC = () => {
 
                       {/* 공식 미리보기 */}
                       <p className="text-[11px] text-gray-400 font-bold">
-                        단위비용 = round({hpFormulaEdit.baseFee.toLocaleString()} + 공급가 × {(hpFormulaEdit.supplyPriceRate * 100).toFixed(2)}% + {hpFormulaEdit.extraFee.toLocaleString()})
-                        {hpFormulaEdit.silbaeAddSupply && <span className="text-orange-400">　／　실배 = 단위비용 + 공급가</span>}
+                        빈박 = round({hpFormulaEdit.extraFee.toLocaleString()} + 판매가 × {(hpFormulaEdit.supplyPriceRate * 100).toFixed(2)}% + {hpFormulaEdit.baseFee.toLocaleString()})
+                        {hpFormulaEdit.silbaeAddSupply && <span className="text-orange-400">　／　실배 = 공급가 + 판매가 × {((hpFormulaEdit.silbaeRate ?? 0.12) * 100).toFixed(2)}%</span>}
                       </p>
 
                       {/* 품목별 단위비용 미리보기 */}
@@ -3941,10 +3967,11 @@ const App: React.FC = () => {
                         const rows = [...productPrices]
                           .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'))
                           .map(p => {
-                            const supPrice = p.supplyPrice || ((p.sellingPrice || p.price || 0) - 1000);
-                            if (supPrice <= 0) return null;
-                            const base = Math.round(hpFormulaEdit.baseFee + supPrice * hpFormulaEdit.supplyPriceRate + hpFormulaEdit.extraFee);
-                            const silbae = hpFormulaEdit.silbaeAddSupply ? base + supPrice : null;
+                            const sellPrice = p.sellingPrice || p.price || 0;
+                            const supPrice = p.supplyPrice || (sellPrice - 1000);
+                            if (sellPrice <= 0) return null;
+                            const base = Math.round(hpFormulaEdit.extraFee + sellPrice * hpFormulaEdit.supplyPriceRate + hpFormulaEdit.baseFee);
+                            const silbae = hpFormulaEdit.silbaeAddSupply ? Math.round(supPrice + sellPrice * (hpFormulaEdit.silbaeRate ?? 0.12)) : null;
                             return { name: p.name, supPrice, base, silbae };
                           })
                           .filter(Boolean) as { name: string; supPrice: number; base: number; silbae: number | null }[];

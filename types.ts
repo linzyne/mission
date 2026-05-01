@@ -85,10 +85,11 @@ export interface SalesDailyEntry {
 export type CustomerView = 'landing' | 'apply' | 'review';
 
 export interface HpFormula {
-  baseFee: number;        // 기본 수수료 (기본값: 1000)
-  supplyPriceRate: number; // 공급가 비율 (기본값: 0.1166 = 11.66%)
-  extraFee: number;       // 기타 비용 (기본값: 2300)
-  silbaeAddSupply: boolean; // 실배 시 공급가 추가 여부 (기본값: true)
+  baseFee: number;        // 기본 수수료 (빈박, 기본값: 1000)
+  supplyPriceRate: number; // 빈박 판매가 비율 (기본값: 0.12 = 12%)
+  extraFee: number;       // 기타 비용 (빈박, 기본값: 2300)
+  silbaeAddSupply: boolean; // 실배 공식 사용 여부 (기본값: true)
+  silbaeRate: number;     // 실배 판매가 비율 (기본값: 0.12 = 12%)
 }
 
 export interface AppSettings {
