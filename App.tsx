@@ -108,6 +108,20 @@ const App: React.FC = () => {
   const bizInfo = selectedBiz ? BUSINESSES[selectedBiz] : null;
   const colPrefix = bizInfo?.collectionPrefix ?? '';
 
+  // proofImage는 localStorage에만 저장 (Firestore 데이터 전송 비용 절감)
+  const proofKey = (id: string) => `proof_${colPrefix || 'angun'}_${id}`;
+  const loadProofImage = (id: string): string => localStorage.getItem(proofKey(id)) || '';
+  const saveProofImage = (id: string, base64: string) => {
+    if (base64) localStorage.setItem(proofKey(id), base64);
+    else localStorage.removeItem(proofKey(id));
+  };
+  const applyProofToEntries = (entries: ManualEntry[]): ManualEntry[] =>
+    entries.map(e => ({ ...e, proofImage: loadProofImage(e.id) }));
+  const updateProofInState = (id: string, base64: string) => {
+    saveProofImage(id, base64);
+    setManualEntries(prev => prev.map(e => e.id === id ? { ...e, proofImage: base64 } : e));
+  };
+
   // URL 파라미터로 사업자 자동 선택 (?biz=angun 또는 ?biz=zoe), 없으면 기본값 angun
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -367,6 +381,11 @@ const App: React.FC = () => {
       const defaults = createEmptyRow();
       const list = snapshot.docs.map(d => {
         const data = d.data();
+        // proofImage는 localStorage에서 읽음 (Firestore에 남아있는 기존 데이터는 마이그레이션)
+        if (data.proofImage) {
+          const existing = localStorage.getItem(proofKey(d.id));
+          if (!existing) localStorage.setItem(proofKey(d.id), data.proofImage);
+        }
         return {
           ...defaults,
           ...data,
@@ -375,7 +394,7 @@ const App: React.FC = () => {
           paymentAmount: data.paymentAmount ?? 0,
           beforeDeposit: data.beforeDeposit ?? false,
           afterDeposit: data.afterDeposit ?? false,
-          proofImage: data.proofImage ?? '',
+          proofImage: loadProofImage(d.id),
           product: data.product ?? '',
           date: data.date ?? '',
           name1: data.name1 ?? '',
@@ -409,6 +428,14 @@ const App: React.FC = () => {
         batch.commit().catch(err => console.error('[Migration] createdAt 부여 실패:', err));
       }
 
+      // Firestore에 남아있는 proofImage 필드 일괄 삭제 (기존 데이터 정리 - 비용 절감)
+      const withFirestoreImage = snapshot.docs.filter(d => d.data().proofImage);
+      if (withFirestoreImage.length > 0) {
+        const cleanBatch = writeBatch(db);
+        withFirestoreImage.forEach(d => cleanBatch.update(doc(db, colName, d.id), { proofImage: deleteField() }));
+        cleanBatch.commit().catch(err => console.error('[Migration] proofImage 정리 실패:', err));
+      }
+
       list.sort((a, b) => {
         const dateCmp = (b.date || '').localeCompare(a.date || '');
         if (dateCmp !== 0) return dateCmp;
@@ -416,17 +443,6 @@ const App: React.FC = () => {
       });
       setManualEntries(list);
       setManualEntriesLoaded(true);
-
-      // 7일 지난 proofImage 자동 정리
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - 7);
-      const cutoffStr = toLocalDateStr(cutoff);
-      const oldImages = list.filter(e => e.proofImage && e.date && e.date < cutoffStr);
-      if (oldImages.length > 0) {
-        const cleanBatch = writeBatch(db);
-        oldImages.forEach(e => cleanBatch.update(doc(db, colName, e.id), { proofImage: deleteField() }));
-        cleanBatch.commit().catch(err => console.error('[Cleanup] 이미지 정리 실패:', err));
-      }
     });
     return () => unsub();
   }, [selectedBiz]);
@@ -1466,7 +1482,7 @@ const App: React.FC = () => {
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64Image = reader.result as string;
-      await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), { proofImage: base64Image });
+      updateProofInState(id, base64Image);
       setOcrLoadingIds(prev => new Set(prev).add(id));
 
       try {
@@ -1505,7 +1521,7 @@ const App: React.FC = () => {
         const reader = new FileReader();
         reader.onloadend = async () => {
           const base64Image = reader.result as string;
-          await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), { proofImage: base64Image });
+          updateProofInState(id, base64Image);
           setOcrLoadingIds(prev => new Set(prev).add(id));
           try {
             const { extractOrderInfo } = await import('./services/geminiService');
@@ -1549,7 +1565,7 @@ const App: React.FC = () => {
           const reader = new FileReader();
           reader.onloadend = async () => {
             const base64Image = reader.result as string;
-            await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), { proofImage: base64Image });
+            updateProofInState(id, base64Image);
             setOcrLoadingIds(prev => new Set(prev).add(id));
             try {
               const { extractOrderInfo } = await import('./services/geminiService');
@@ -1897,6 +1913,13 @@ const App: React.FC = () => {
     const entry = manualEntries.find(e => e.id === id);
     if (!entry) return;
 
+    // proofImage는 localStorage에만 저장
+    if (field === 'proofImage') {
+      pushUndo({ type: 'update', entries: [{ id, data: { proofImage: entry.proofImage } }], description: 'proofImage 수정' });
+      updateProofInState(id, value);
+      return;
+    }
+
     const updates: Partial<ManualEntry> = { [field]: value };
 
     // Undo: Save previous value
@@ -1930,7 +1953,7 @@ const App: React.FC = () => {
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64Image = reader.result as string;
-      updateManualEntry(id, 'proofImage', base64Image);
+      updateProofInState(id, base64Image);
       setOcrLoadingIds(prev => new Set(prev).add(id));
 
       try {
@@ -2011,7 +2034,7 @@ const App: React.FC = () => {
     for (let i = 0; i < fileArr.length && i < available.length; i++) {
       const targetEntry = available[i];
       const base64Image = await readFileAsDataURL(fileArr[i]);
-      await updateDoc(doc(db, getCol('manualEntries', colPrefix), targetEntry.id), { proofImage: base64Image });
+      updateProofInState(targetEntry.id, base64Image);
       setOcrLoadingIds(prev => new Set(prev).add(targetEntry.id));
 
       try {
