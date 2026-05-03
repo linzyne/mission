@@ -110,10 +110,12 @@ const App: React.FC = () => {
 
   // proofImage는 localStorage에만 저장 (Firestore 데이터 전송 비용 절감)
   const proofKey = (id: string) => `proof_${colPrefix || 'angun'}_${id}`;
-  const loadProofImage = (id: string): string => localStorage.getItem(proofKey(id)) || '';
+  const loadProofImage = (id: string): string => { try { return localStorage.getItem(proofKey(id)) || ''; } catch { return ''; } };
   const saveProofImage = (id: string, base64: string) => {
-    if (base64) localStorage.setItem(proofKey(id), base64);
-    else localStorage.removeItem(proofKey(id));
+    try {
+      if (base64) localStorage.setItem(proofKey(id), base64);
+      else localStorage.removeItem(proofKey(id));
+    } catch { /* localStorage 용량 초과 시 무시 */ }
   };
   const applyProofToEntries = (entries: ManualEntry[]): ManualEntry[] =>
     entries.map(e => ({ ...e, proofImage: loadProofImage(e.id) }));
@@ -381,11 +383,6 @@ const App: React.FC = () => {
       const defaults = createEmptyRow();
       const list = snapshot.docs.map(d => {
         const data = d.data();
-        // proofImage는 localStorage에서 읽음 (Firestore에 남아있는 기존 데이터는 마이그레이션)
-        if (data.proofImage) {
-          const existing = localStorage.getItem(proofKey(d.id));
-          if (!existing) localStorage.setItem(proofKey(d.id), data.proofImage);
-        }
         return {
           ...defaults,
           ...data,
