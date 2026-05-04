@@ -2987,10 +2987,6 @@ const App: React.FC = () => {
 
                     // 월별 비용 집계
                     const monthCosts: Record<string, number> = {};
-                    dailyCosts.forEach((c: DailyCostItem) => {
-                      const m = c.date?.substring(0, 7);
-                      if (m) monthCosts[m] = (monthCosts[m] || 0) + c.amount;
-                    });
 
                     // 전체 합계
                     const grandTotal = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, ref: 0, net: 0, cost: 0, profit: 0 };
