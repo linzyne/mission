@@ -397,7 +397,7 @@ const App: React.FC = () => {
           name1: data.name1 ?? '',
           name2: data.name2 ?? '',
           ordererName: data.ordererName ?? '',
-          orderNumber: data.orderNumber ?? '',
+          orderNumber: data.orderNumber != null ? String(data.orderNumber) : '',
           address: data.address ?? '',
           memo: data.memo ?? '',
           emergencyContact: data.emergencyContact ?? '',
@@ -658,7 +658,7 @@ const App: React.FC = () => {
     const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply, silbaeRate } = hpFormula;
     const baseUnitCost = Math.round(extraFee + sellPrice * supplyPriceRate + baseFee);
     const total = entries.reduce((sum, e) => {
-      const unitCost = (silbaeAddSupply && e.orderNumber?.includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
+      const unitCost = (silbaeAddSupply && String(e.orderNumber || '').includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
       return sum + unitCost;
     }, 0);
     return -total;
@@ -688,7 +688,7 @@ const App: React.FC = () => {
             const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply, silbaeRate } = hpFormula;
             const baseUnitCost = Math.round(extraFee + sellPrice * supplyPriceRate + baseFee);
             hp = -matchedEntries.reduce((sum, e) => {
-              const unitCost = (silbaeAddSupply && e.orderNumber?.includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
+              const unitCost = (silbaeAddSupply && String(e.orderNumber || '').includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
               return sum + unitCost;
             }, 0);
           }
@@ -720,7 +720,7 @@ const App: React.FC = () => {
         const baseUnitCost = Math.round(extraFee + sellPrice * supplyPriceRate + baseFee);
         const entriesForCombo = manualEntries.filter(e => normProductName(e.product) === pNorm && e.date === date);
         const hp = -entriesForCombo.reduce((sum, e) => {
-          const unitCost = (silbaeAddSupply && e.orderNumber?.includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
+          const unitCost = (silbaeAddSupply && String(e.orderNumber || '').includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
           return sum + unitCost;
         }, 0);
         const docId = `${date}_${cleanProduct}`;
@@ -3790,7 +3790,7 @@ const App: React.FC = () => {
                               manualEntries.forEach(me => {
                                 if (normProductName(me.product) !== product) return;
                                 if (!hpCountByDate[me.date]) hpCountByDate[me.date] = { 빈박: 0, 실배: 0 };
-                                if (me.orderNumber?.includes('실배')) hpCountByDate[me.date].실배 += 1;
+                                if (String(me.orderNumber || '').includes('실배')) hpCountByDate[me.date].실배 += 1;
                                 else hpCountByDate[me.date].빈박 += 1;
                               });
                               const hpCountTotal = Object.values(hpCountByDate).reduce((s, n) => ({ 빈박: s.빈박 + n.빈박, 실배: s.실배 + n.실배 }), { 빈박: 0, 실배: 0 });
