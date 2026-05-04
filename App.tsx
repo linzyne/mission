@@ -480,7 +480,7 @@ const App: React.FC = () => {
     const q = query(collection(db, getCol('salesDaily', colPrefix)));
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as SalesDailyEntry));
-      list.sort((a, b) => a.date.localeCompare(b.date));
+      list.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
       setSalesDaily(list);
       salesDailyRef.current = list;
       setSalesDailyLoaded(true);
@@ -625,7 +625,7 @@ const App: React.FC = () => {
 
   const handleSalesAddRow = async (product: string) => {
     // 해당 월의 마지막 날짜 다음 날 찾기
-    const existingDates = salesDaily.filter(e => e.product === product && e.date.startsWith(salesMonthStr)).map(e => e.date).sort();
+    const existingDates = salesDaily.filter(e => e.product === product && e.date?.startsWith(salesMonthStr)).map(e => e.date).sort();
     const daysInMonth = new Date(salesMonth.year, salesMonth.month, 0).getDate();
     let newDate = '';
     if (existingDates.length === 0) {
@@ -675,7 +675,7 @@ const App: React.FC = () => {
       const sdMap = new Map<string, SalesDailyEntry>();
       for (const sd of salesDaily) {
         sdMap.set(`${sd.date}|||${normProductName(sd.product)}`, sd);
-        if (isProtectedMonth(sd.date.substring(0, 7))) continue;
+        if (!sd.date || isProtectedMonth(sd.date.substring(0, 7))) continue;
         if ((sd as any).hpManual) continue;
         const sdNorm = normProductName(sd.product);
         const matchedEntries = manualEntries.filter(e => normProductName(e.product) === sdNorm && e.date === sd.date);
@@ -749,7 +749,7 @@ const App: React.FC = () => {
     if (!name || !name.trim()) return;
     const product = name.trim();
     // 이미 해당 월에 존재하는지 확인
-    if (salesDaily.some(e => e.product === product && e.date.startsWith(salesMonthStr))) {
+    if (salesDaily.some(e => e.product === product && e.date?.startsWith(salesMonthStr))) {
       alert('이미 존재하는 품목입니다.');
       return;
     }
@@ -764,7 +764,7 @@ const App: React.FC = () => {
   const handleSalesDeleteProduct = async (product: string) => {
     if (!confirm(`"${product}" 품목의 ${salesMonth.year}.${salesMonth.month}월 데이터를 모두 삭제할까요?`)) return;
     const normTarget = normProductName(product);
-    const targets = salesDaily.filter(e => normProductName(e.product) === normTarget && e.date.startsWith(salesMonthStr));
+    const targets = salesDaily.filter(e => normProductName(e.product) === normTarget && e.date?.startsWith(salesMonthStr));
     if (targets.length === 0) return;
     const batch = writeBatch(db);
     const undoEntries: { id: string, data: any }[] = [];
@@ -3126,7 +3126,7 @@ const App: React.FC = () => {
                   </div>
 
                   {salesSubTab === 'vendorSettlement' ? (() => {
-                    const filteredSummaries = vendorSummaries.filter(s => s.date.startsWith(salesMonthStr));
+                    const filteredSummaries = vendorSummaries.filter(s => s.date?.startsWith(salesMonthStr));
                     return (
                       <div className="space-y-3">
                         <div className="flex justify-end">
@@ -3391,7 +3391,7 @@ const App: React.FC = () => {
                   })() : salesSubTab === 'profitLoss' ? (
                     /* ===== 손익표 ===== */
                     (() => {
-                      const filtered = salesDaily.filter(e => e.date.startsWith(salesMonthStr));
+                      const filtered = salesDaily.filter(e => e.date?.startsWith(salesMonthStr));
                       // 날짜별 전체 품목 합산
                       const byDate: Record<string, { margin: number; adCost: number }> = {};
                       filtered.forEach(e => {
@@ -3399,7 +3399,7 @@ const App: React.FC = () => {
                         byDate[e.date].margin += (e.totalMargin + e.adCost + e.housePurchase + e.solution);
                         byDate[e.date].adCost += (e.adCost || 0);
                       });
-                      const monthlyCosts = dailyCosts.filter(c => c.date.startsWith(salesMonthStr));
+                      const monthlyCosts = dailyCosts.filter(c => c.date?.startsWith(salesMonthStr));
                       // 비용이 있는 날짜도 포함
                       monthlyCosts.forEach(c => {
                         if (!byDate[c.date]) byDate[c.date] = { margin: 0, adCost: 0 };
@@ -3629,7 +3629,7 @@ const App: React.FC = () => {
                   ) : salesSubTab === 'expenses' ? (
                     /* ===== 지출내역 ===== */
                     (() => {
-                      const monthlyCosts = dailyCosts.filter(c => c.date.startsWith(salesMonthStr)).sort((a, b) => a.date.localeCompare(b.date));
+                      const monthlyCosts = dailyCosts.filter(c => c.date?.startsWith(salesMonthStr)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
                       const totalAmount = monthlyCosts.reduce((s, c) => s + c.amount, 0);
                       // 카테고리별 합산
                       const byCategory: Record<string, number> = {};
@@ -3771,7 +3771,7 @@ const App: React.FC = () => {
                       </div>
 
                       {(() => {
-                        const filtered = salesDaily.filter(e => e.date.startsWith(salesMonthStr));
+                        const filtered = salesDaily.filter(e => e.date?.startsWith(salesMonthStr));
                         const byProduct: Record<string, SalesDailyEntry[]> = {};
                         filtered.forEach(e => {
                           const key = normProductName(e.product);
@@ -3785,7 +3785,7 @@ const App: React.FC = () => {
                         return (
                           <div className="space-y-8">
                             {productNames.map(product => {
-                              const entries = byProduct[product].sort((a, b) => a.date.localeCompare(b.date));
+                              const entries = byProduct[product].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
                               const hpCountByDate: Record<string, { 빈박: number; 실배: number }> = {};
                               manualEntries.forEach(me => {
                                 if (normProductName(me.product) !== product) return;
