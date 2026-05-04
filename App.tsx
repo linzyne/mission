@@ -3882,6 +3882,20 @@ const App: React.FC = () => {
                                           </tr>
                                         ))}
                                       </tbody>
+                                      {entries.length > 1 && (
+                                        <tfoot>
+                                          <tr className="border-t-2 border-gray-300 bg-gray-50 font-black text-gray-700">
+                                            <td></td>
+                                            <td className="py-1.5 px-2 sm:px-3 text-gray-400 text-[10px]">총계</td>
+                                            <td className="py-1.5 px-2 sm:px-3">{totals.supplyPrice ? totals.supplyPrice.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-2 sm:px-3">{totals.totalMargin ? totals.totalMargin.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-2 sm:px-3">{totals.quantity ? totals.quantity.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-2 sm:px-3">{totals.adCost ? totals.adCost.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-2 sm:px-3">{totals.housePurchase ? totals.housePurchase.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-2 sm:px-3">{totals.solution ? totals.solution.toLocaleString() : '-'}</td>
+                                          </tr>
+                                        </tfoot>
+                                      )}
                                     </table>
                                   </div>
                                   <div className="p-2 text-center">
