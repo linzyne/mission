@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, DailyCostItem, SalesSubTab, VendorSettlement, VendorSummaryDoc, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource, PlatformConfig } from './types';
+import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, SalesSubTab, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource, PlatformConfig } from './types';
 import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField } from 'firebase/firestore';
@@ -496,16 +496,6 @@ const App: React.FC = () => {
   // 1월·2월은 수동 입력 데이터 - 보호 대상
   const isProtectedMonth = (monthStr: string) => monthStr === '2026-01' || monthStr === '2026-02';
 
-  // Firestore Sync: Daily Costs (손익표 비용 항목)
-  const [dailyCosts, setDailyCosts] = useState<DailyCostItem[]>([]);
-  useEffect(() => {
-    if (!selectedBiz) { setDailyCosts([]); return; }
-    const unsub = onSnapshot(collection(db, getCol('dailyCosts', colPrefix)), (snapshot) => {
-      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as DailyCostItem));
-      setDailyCosts(list);
-    });
-    return () => unsub();
-  }, [selectedBiz]);
   const [dailyMemos, setDailyMemos] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!selectedBiz) { setDailyMemos({}); return; }
@@ -516,40 +506,14 @@ const App: React.FC = () => {
     });
     return () => unsub();
   }, [selectedBiz]);
-  // Firestore Sync: Vendor Summaries (업체별정산)
-  const [vendorSummaries, setVendorSummaries] = useState<VendorSummaryDoc[]>([]);
-  useEffect(() => {
-    if (!selectedBiz) { setVendorSummaries([]); return; }
-    const unsub = onSnapshot(collection(db, getCol('vendorSummaries', colPrefix)), (snapshot) => {
-      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as VendorSummaryDoc));
-      list.sort((a, b) => b.date.localeCompare(a.date));
-      setVendorSummaries(list);
-    });
-    return () => unsub();
-  }, [selectedBiz]);
-  const [expandedVendorDate, setExpandedVendorDate] = useState<string | null>(null);
-  const [vendorEditModal, setVendorEditModal] = useState<{ date: string; vendors: VendorSettlement[] } | null>(null);
-
-  const [expandedCostDate, setExpandedCostDate] = useState<string | null>(null);
-  const [newCostName, setNewCostName] = useState('');
-  const [newCostAmount, setNewCostAmount] = useState('');
-  const DEFAULT_COST_CATEGORIES = ['임대료', '통신비', '소모품비', '물류비', '마케팅', '식비', '기타'];
   // localStorage 키를 사업자별로 분리 (안군농원은 기존 키 유지)
   const lsKey = (key: string) => !selectedBiz || selectedBiz === 'angun' ? key : `${selectedBiz}_${key}`;
-  const [costCategories, setCostCategories] = useState<string[]>(DEFAULT_COST_CATEGORIES);
   // selectedBiz 변경 시 localStorage에서 다시 로드
   useEffect(() => {
     if (!selectedBiz) return;
     const lk = (key: string) => selectedBiz === 'angun' ? key : `${selectedBiz}_${key}`;
-    try { const s = localStorage.getItem(lk('costCategories')); setCostCategories(s ? JSON.parse(s) : DEFAULT_COST_CATEGORIES); } catch { setCostCategories(DEFAULT_COST_CATEGORIES); }
     try { const s = localStorage.getItem(lk('manualColWidths')); setColWidths(s ? { ...DEFAULT_COL_WIDTHS, ...JSON.parse(s) } : { ...DEFAULT_COL_WIDTHS }); } catch { setColWidths({ ...DEFAULT_COL_WIDTHS }); }
   }, [selectedBiz]);
-  const addCostCategory = (name: string) => {
-    if (!name.trim() || costCategories.includes(name.trim())) return;
-    const updated = [...costCategories, name.trim()];
-    setCostCategories(updated);
-    localStorage.setItem(lsKey('costCategories'), JSON.stringify(updated));
-  };
 
   // Sales undo/redo
   const [salesUndoStack, setSalesUndoStack] = useState<{ type: string, entries: { id: string, data: any }[] }[]>([]);
@@ -781,76 +745,18 @@ const App: React.FC = () => {
     await batch.commit();
   };
 
-  // 손익표: 비용 항목 추가
-  const handleAddCostItem = async (date: string) => {
-    const name = newCostName.trim();
-    const amount = Number(newCostAmount);
-    if (!name || !amount) return;
-    await addDoc(collection(db, getCol('dailyCosts', colPrefix)), { date, name, amount });
-    setNewCostName('');
-    setNewCostAmount('');
-  };
-
-  // 손익표: 비용 항목 삭제
-  const handleDeleteCostItem = async (id: string) => {
-    await deleteDoc(doc(db, getCol('dailyCosts', colPrefix), id));
-  };
-
   // 손익표: 비고 저장
   const handleSaveMemo = async (date: string, memo: string) => {
     await setDoc(doc(db, getCol('dailyMemos', colPrefix), date), { memo });
   };
 
-  const expenseCostInputRef = useRef<HTMLInputElement>(null);
-  const [expenseUploading, setExpenseUploading] = useState(false);
-  const [pendingExpenses, setPendingExpenses] = useState<{date: string; name: string; amount: number; originalDesc: string}[] | null>(null);
-
   // 업무일지 업로드 미리보기 상태
   const [pendingUpload, setPendingUpload] = useState<{
     uploadDate: string;
     salesItems: { docId: string; product: string; productDetail: string; quantity: number; sellingPrice: number; supplyPrice: number; marginPerUnit: number; totalMargin: number; adCost: number; housePurchase: number; solution: number; refund: number; hpManual: boolean }[];
-    expenseItems: { name: string; amount: number; description: string }[];
-    vendorSummaryData?: VendorSettlement[];
   } | null>(null);
   // 마지막 업로드 삭제용
-  const [lastUploadInfo, setLastUploadInfo] = useState<{ uploadDate: string; salesDocIds: string[]; costDocIds: string[]; vendorSummaryDocId?: string } | null>(null);
-
-  const handleExpenseScreenshot = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setExpenseUploading(true);
-    try {
-      const base64 = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(file);
-      });
-      const { extractExpenseInfo } = await import('./services/geminiService');
-      const results = await extractExpenseInfo(base64);
-      if (!results || results.length === 0) { alert('이체 내역을 인식하지 못했습니다.'); return; }
-      const pending = results.map(item => {
-        const matchedCategory = costCategories.find(cat => item.description.includes(cat));
-        return { date: item.date, name: matchedCategory || item.description, amount: item.amount, originalDesc: item.description };
-      });
-      setPendingExpenses(pending);
-    } catch (err) {
-      console.error(err);
-      alert('비용 인식 중 오류가 발생했습니다.');
-    } finally {
-      setExpenseUploading(false);
-      e.target.value = '';
-    }
-  };
-
-  const handleConfirmExpenses = async () => {
-    if (!pendingExpenses) return;
-    for (const item of pendingExpenses) {
-      if (!costCategories.includes(item.name)) addCostCategory(item.name);
-      await addDoc(collection(db, getCol('dailyCosts', colPrefix)), { date: item.date, name: item.name, amount: item.amount });
-    }
-    alert(`${pendingExpenses.length}건의 비용이 등록되었습니다.`);
-    setPendingExpenses(null);
-  };
+  const [lastUploadInfo, setLastUploadInfo] = useState<{ uploadDate: string; salesDocIds: string[] } | null>(null);
 
   const handleSalesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -877,36 +783,13 @@ const App: React.FC = () => {
         ? toLocalDateStr(today)
         : `${salesMonthStr}-01`;
 
-    // 판매 항목 합산 (A열 있는 행)
+    // 판매 항목 합산
     const merged: Record<string, { product: string; details: string[]; quantity: number; sellingPrice: number; supplyPrice: number; totalMargin: number }> = {};
-    // 비용 항목 합산 ([비용] 섹션 아래 행 → B열 품목명이 카테고리)
-    const expenseMerged: Record<string, { amount: number; descriptions: string[] }> = {};
-    let inExpenseSection = false;
 
     for (const row of rows) {
       const product = String(row['등록상품명'] || row['업체명'] || '').trim();
       const productDetail = String(row['품목명'] || '').trim();
-
-      // [비용] 마커 감지
-      if (productDetail === '[비용]') {
-        inExpenseSection = true;
-        continue;
-      }
-
-      if (!product) {
-        // A열 비어있음 → 비용 항목 (지출금액 컬럼 우선, 총마진 폴백)
-        if (productDetail && inExpenseSection) {
-          const amount = Math.abs(Number(row['지출금액'] || row['총마진'] || 0));
-          const description = String(row['지출내역'] || '').trim();
-          if (amount > 0) {
-            if (!expenseMerged[productDetail]) expenseMerged[productDetail] = { amount: 0, descriptions: [] };
-            expenseMerged[productDetail].amount += amount;
-            if (description) expenseMerged[productDetail].descriptions.push(description);
-          }
-        }
-        continue;
-      }
-
+      if (!product) continue;
       if (!merged[product]) {
         merged[product] = { product, details: [], quantity: 0, sellingPrice: 0, supplyPrice: 0, totalMargin: 0 };
       }
@@ -917,13 +800,20 @@ const App: React.FC = () => {
       merged[product].totalMargin += Number(row['총마진'] || 0);
     }
 
-    // 비용 카테고리 검증
-    const expenseNames = Object.keys(expenseMerged);
-    const invalidCategories = expenseNames.filter(name => !costCategories.includes(name));
-    if (invalidCategories.length > 0) {
-      alert(`일치하지 않는 비용 카테고리가 있습니다:\n\n${invalidCategories.map(c => `• "${c}"`).join('\n')}\n\n기존 카테고리: ${costCategories.join(', ')}\n\n엑셀 파일의 품목명을 수정 후 다시 업로드해주세요.`);
-      e.target.value = '';
-      return;
+    // 반품시트 파싱
+    const refundByProductDate: Record<string, number> = {};
+    const refundSheetName = wb.SheetNames.find((n: string) => n.includes('반품'));
+    if (refundSheetName) {
+      const refundWs = wb.Sheets[refundSheetName];
+      const refundRows: any[][] = XLSX.utils.sheet_to_json(refundWs, { header: 1, defval: '' });
+      for (const row of refundRows.slice(1)) {
+        const date = String(row[0] || '').trim();
+        const product = String(row[3] || '').trim();
+        const amount = Number(row[7] || 0);
+        if (!date || !product || !amount) continue;
+        const key = `${date}|||${normProductName(product)}`;
+        refundByProductDate[key] = (refundByProductDate[key] || 0) + amount;
+      }
     }
 
     // 미리보기 데이터 세팅 (아직 저장 안 함)
@@ -947,85 +837,16 @@ const App: React.FC = () => {
       };
     });
 
-    const expenseItems = Object.entries(expenseMerged).map(([name, { amount, descriptions }]) => ({ name, amount, description: descriptions.join(', ') }));
-
-    // 반품시트 파싱
-    const refundByProductDate: Record<string, number> = {};
-    const refundSheetName = wb.SheetNames.find((n: string) => n.includes('반품'));
-    if (refundSheetName) {
-      const refundWs = wb.Sheets[refundSheetName];
-      const refundRows: any[][] = XLSX.utils.sheet_to_json(refundWs, { header: 1, defval: '' });
-      for (const row of refundRows.slice(1)) {
-        const date = String(row[0] || '').trim();
-        const product = String(row[3] || '').trim();
-        const amount = Number(row[7] || 0);
-        if (!date || !product || !amount) continue;
-        const key = `${date}|||${normProductName(product)}`;
-        refundByProductDate[key] = (refundByProductDate[key] || 0) + amount;
-      }
-    }
-
-    // 요약시트 파싱 (업체별정산)
-    let vendorSummaryData: VendorSettlement[] | undefined;
-    const summarySheetName = wb.SheetNames.find((n: string) => n.includes('요약'));
-    if (summarySheetName) {
-      const summaryWs = wb.Sheets[summarySheetName];
-      const summaryRows: any[][] = XLSX.utils.sheet_to_json(summaryWs, { header: 1, defval: '' });
-      vendorSummaryData = [];
-      let currentVendor: VendorSettlement | null = null;
-
-      for (const row of summaryRows) {
-        const col0 = String(row[0] || '').trim();
-        const col1 = String(row[1] || '').trim();
-        const col2 = String(row[2] || '').trim();
-        const col3 = String(row[3] || '').trim();
-        const col4 = String(row[4] || '').trim();
-
-        // [업체명 정산내역] 패턴 감지
-        const vendorMatch = col0.match(/^\[(.+?)\s*정산내역\]$/);
-        if (vendorMatch) {
-          if (currentVendor) vendorSummaryData.push(currentVendor);
-          currentVendor = { name: vendorMatch[1], totalCount: 0, subtotal: 0, items: [] };
-          continue;
-        }
-
-        if (!currentVendor || !col1) continue;
-
-        // 총 N개 패턴에서 수량 추출
-        const totalMatch = col0.match(/총\s*(\d+)\s*개/);
-        if (totalMatch) {
-          currentVendor.totalCount = parseInt(totalMatch[1]);
-        }
-
-        // 품목 행 파싱
-        const parseNum = (s: string) => Number(s.replace(/,/g, '')) || 0;
-        const qty = parseInt(col2.replace(/개/g, '').replace(/,/g, '').trim()) || 0;
-        const price = parseNum(col3);
-
-        if (qty > 0 && col1) {
-          currentVendor.items.push({ product: col1, quantity: qty, price });
-        }
-
-        // 소계 (E열) - 같은 업체 내 여러 E열 값 합산
-        if (col4) {
-          currentVendor.subtotal += parseNum(col4);
-        }
-      }
-      if (currentVendor) vendorSummaryData.push(currentVendor);
-    }
-
-    setPendingUpload({ uploadDate, salesItems, expenseItems, vendorSummaryData });
+    setPendingUpload({ uploadDate, salesItems });
     e.target.value = '';
   };
 
   // 업로드 미리보기 확인 → 실제 저장
   const handleConfirmUpload = async () => {
     if (!pendingUpload) return;
-    const { uploadDate, salesItems, expenseItems, vendorSummaryData } = pendingUpload;
+    const { uploadDate, salesItems } = pendingUpload;
     const batch = writeBatch(db);
     const savedSalesIds: string[] = [];
-    const savedCostIds: string[] = [];
-    let vendorSummaryDocId: string | undefined;
 
     for (const item of salesItems) {
       batch.set(doc(db, getCol('salesDaily', colPrefix), item.docId), {
@@ -1046,45 +867,19 @@ const App: React.FC = () => {
       savedSalesIds.push(item.docId);
     }
 
-    for (const item of expenseItems) {
-      const costDocId = `${uploadDate}_${item.name}`;
-      batch.set(doc(db, getCol('dailyCosts', colPrefix), costDocId), {
-        date: uploadDate,
-        name: item.name,
-        amount: item.amount,
-        ...(item.description ? { description: item.description } : {}),
-      });
-      savedCostIds.push(costDocId);
-    }
-
-    // 업체별정산 데이터 저장
-    if (vendorSummaryData && vendorSummaryData.length > 0) {
-      vendorSummaryDocId = uploadDate;
-      batch.set(doc(db, getCol('vendorSummaries', colPrefix), vendorSummaryDocId), {
-        date: uploadDate,
-        vendors: vendorSummaryData,
-      });
-    }
-
     await batch.commit();
-    setLastUploadInfo({ uploadDate, salesDocIds: savedSalesIds, costDocIds: savedCostIds, vendorSummaryDocId });
+    setLastUploadInfo({ uploadDate, salesDocIds: savedSalesIds });
     setPendingUpload(null);
-    alert(`${uploadDate} / ${salesItems.length}개 품목${expenseItems.length > 0 ? `, ${expenseItems.length}건 비용` : ''}${vendorSummaryData && vendorSummaryData.length > 0 ? `, ${vendorSummaryData.length}개 업체 정산` : ''} 등록 완료`);
+    alert(`${uploadDate} / ${salesItems.length}개 품목 등록 완료`);
   };
 
   // 마지막 업로드 삭제
   const handleDeleteLastUpload = async () => {
     if (!lastUploadInfo) return;
-    if (!confirm(`${lastUploadInfo.uploadDate} 업로드 데이터를 삭제하시겠습니까?\n\n• 판매 ${lastUploadInfo.salesDocIds.length}건\n• 비용 ${lastUploadInfo.costDocIds.length}건${lastUploadInfo.vendorSummaryDocId ? '\n• 업체별정산 1건' : ''}`)) return;
+    if (!confirm(`${lastUploadInfo.uploadDate} 업로드 데이터를 삭제하시겠습니까?\n\n• 판매 ${lastUploadInfo.salesDocIds.length}건`)) return;
     const batch = writeBatch(db);
     for (const id of lastUploadInfo.salesDocIds) {
       batch.delete(doc(db, getCol('salesDaily', colPrefix), id));
-    }
-    for (const id of lastUploadInfo.costDocIds) {
-      batch.delete(doc(db, getCol('dailyCosts', colPrefix), id));
-    }
-    if (lastUploadInfo.vendorSummaryDocId) {
-      batch.delete(doc(db, getCol('vendorSummaries', colPrefix), lastUploadInfo.vendorSummaryDocId));
     }
     await batch.commit();
     alert(`${lastUploadInfo.uploadDate} 업로드 데이터가 삭제되었습니다.`);
@@ -2638,11 +2433,6 @@ const App: React.FC = () => {
                     }`}
                   >{tab.label}</button>
                 ))}
-                <button onClick={() => expenseCostInputRef.current?.click()} disabled={expenseUploading}
-                  className="flex-shrink-0 px-4 py-2 rounded-2xl text-xs font-black bg-orange-100 text-orange-600 hover:bg-orange-200 transition-all disabled:opacity-50">
-                  {expenseUploading ? '...' : '비용'}
-                </button>
-                <input ref={expenseCostInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleExpenseScreenshot} />
               </div>
 
               {adminTab === 'dashboard' ? (
@@ -3140,99 +2930,12 @@ const App: React.FC = () => {
                   </div>
                   {/* 서브 탭 */}
                   <div className="flex gap-1.5 sm:gap-2 mb-6 overflow-x-auto">
-                    <button onClick={() => setSalesSubTab('vendorSettlement')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'vendorSettlement' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>업체별정산</button>
                     <button onClick={() => setSalesSubTab('summary')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'summary' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>요약</button>
                     <button onClick={() => setSalesSubTab('profitLoss')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'profitLoss' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>손익표</button>
                     <button onClick={() => setSalesSubTab('salesDetail')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'salesDetail' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>품목별판매</button>
-                    <button onClick={() => setSalesSubTab('expenses')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'expenses' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>지출내역</button>
                   </div>
 
-                  {salesSubTab === 'vendorSettlement' ? (() => {
-                    const filteredSummaries = vendorSummaries.filter(s => s.date?.startsWith(salesMonthStr));
-                    return (
-                      <div className="space-y-3">
-                        <div className="flex justify-end">
-                          <button
-                            onClick={() => setVendorEditModal({ date: toLocalDateStr(), vendors: [{ name: '', totalCount: 0, subtotal: 0, items: [{ product: '', quantity: 0, price: 0 }] }] })}
-                            className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-blue-500 hover:bg-blue-600 transition-colors"
-                          >+ 수동 입력</button>
-                        </div>
-                        {filteredSummaries.length === 0 ? (
-                          <div className="text-center text-gray-400 text-sm py-12">
-                            {salesMonthStr} 업체별정산 데이터가 없습니다.<br/>
-                            <span className="text-xs">업무일지를 업로드하거나 수동 입력으로 등록할 수 있습니다.</span>
-                          </div>
-                        ) : filteredSummaries.map(summary => {
-                          const isExpanded = expandedVendorDate === summary.date;
-                          const totalAmount = summary.vendors.reduce((s, v) => s + v.subtotal, 0);
-                          const totalCount = summary.vendors.reduce((s, v) => s + v.totalCount, 0);
-                          return (
-                            <div key={summary.date} className="border rounded-xl overflow-hidden">
-                              <button
-                                onClick={() => setExpandedVendorDate(isExpanded ? null : summary.date)}
-                                className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors"
-                              >
-                                <div className="flex items-center gap-3">
-                                  <span className="text-sm font-black text-gray-800">{summary.date}</span>
-                                  <span className="text-xs text-gray-400">{summary.vendors.length}개 업체 · {totalCount}건</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-sm font-bold text-blue-600">{totalAmount.toLocaleString()}원</span>
-                                  <span className={`text-gray-400 text-xs transition-transform ${isExpanded ? 'rotate-180' : ''}`}>▼</span>
-                                </div>
-                              </button>
-                              {isExpanded && (
-                                <div className="border-t bg-gray-50 p-4 space-y-3">
-                                  <div className="flex justify-end gap-2">
-                                    <button
-                                      onClick={() => setVendorEditModal({ date: summary.date, vendors: JSON.parse(JSON.stringify(summary.vendors)) })}
-                                      className="px-3 py-1 rounded-lg text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors"
-                                    >수정</button>
-                                    <button
-                                      onClick={async () => {
-                                        if (!confirm(`${summary.date} 업체별정산 데이터를 삭제하시겠습니까?`)) return;
-                                        await deleteDoc(doc(db, getCol('vendorSummaries', colPrefix), summary.date));
-                                      }}
-                                      className="px-3 py-1 rounded-lg text-[10px] font-bold text-red-500 bg-red-50 hover:bg-red-100 transition-colors"
-                                    >삭제</button>
-                                  </div>
-                                  {summary.vendors.map((vendor, vi) => (
-                                    <div key={vi} className="bg-white rounded-xl border p-3 space-y-2">
-                                      <div className="flex items-center justify-between">
-                                        <span className="text-sm font-black text-gray-800">{vendor.name}</span>
-                                        <div className="flex items-center gap-2">
-                                          <span className="text-[10px] text-gray-400">총 {vendor.totalCount}개</span>
-                                          <span className="text-sm font-bold text-blue-600">{vendor.subtotal.toLocaleString()}원</span>
-                                        </div>
-                                      </div>
-                                      <table className="w-full text-xs">
-                                        <thead>
-                                          <tr className="text-gray-400 border-b">
-                                            <th className="py-1 text-left font-bold">품목</th>
-                                            <th className="py-1 text-right font-bold">수량</th>
-                                            <th className="py-1 text-right font-bold">금액</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {vendor.items.map((item, ii) => (
-                                            <tr key={ii} className="border-b border-gray-50">
-                                              <td className="py-1 text-gray-700">{item.product}</td>
-                                              <td className="py-1 text-right text-gray-600">{item.quantity}개</td>
-                                              <td className="py-1 text-right font-bold text-gray-700">{item.price.toLocaleString()}</td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })() : salesSubTab === 'summary' ? (() => {
+                  {salesSubTab === 'summary' ? (() => {
                     // 모든 월 데이터 수집
                     const monthSet = new Set<string>();
                     salesDaily.forEach(e => {
@@ -3417,24 +3120,15 @@ const App: React.FC = () => {
                     /* ===== 손익표 ===== */
                     (() => {
                       const filtered = salesDaily.filter(e => e.date?.startsWith(salesMonthStr));
-                      // 날짜별 전체 품목 합산
                       const byDate: Record<string, { margin: number; adCost: number }> = {};
                       filtered.forEach(e => {
                         if (!byDate[e.date]) byDate[e.date] = { margin: 0, adCost: 0 };
                         byDate[e.date].margin += (e.totalMargin + e.adCost + e.housePurchase + e.solution + (e.refund || 0));
                         byDate[e.date].adCost += (e.adCost || 0);
                       });
-                      const monthlyCosts = dailyCosts.filter(c => c.date?.startsWith(salesMonthStr));
-                      // 비용이 있는 날짜도 포함
-                      monthlyCosts.forEach(c => {
-                        if (!byDate[c.date]) byDate[c.date] = { margin: 0, adCost: 0 };
-                      });
                       const dates = Object.keys(byDate).sort();
                       const grandMargin = dates.reduce((s, d) => s + byDate[d].margin, 0);
-                      const grandCost = monthlyCosts.reduce((s, c) => s + c.amount, 0);
-                      const grandProfit = grandMargin - grandCost;
 
-                      // 손익계산서: 매출 내역 (품목별 마진)
                       const revenueByProduct: Record<string, number> = {};
                       filtered.forEach(e => {
                         const profit = e.totalMargin + e.adCost + e.housePurchase + e.solution + (e.refund || 0);
@@ -3442,16 +3136,6 @@ const App: React.FC = () => {
                       });
                       const revenueItems = Object.entries(revenueByProduct).sort((a, b) => b[1] - a[1]);
                       const totalRevenue = revenueItems.reduce((s, [, v]) => s + v, 0);
-
-                      // 손익계산서: 지출 내역 (비용 카테고리별)
-                      const expenseByCategory: Record<string, number> = {};
-                      monthlyCosts.forEach(c => {
-                        expenseByCategory[c.name] = (expenseByCategory[c.name] || 0) + c.amount;
-                      });
-                      const expenseItems = Object.entries(expenseByCategory).sort((a, b) => b[1] - a[1]);
-                      // 광고비 합산 (salesDaily의 adCost는 음수이므로 절대값)
-                      const totalAdCost = Math.abs(filtered.reduce((s, e) => s + (e.adCost || 0), 0));
-                      const totalExpense = expenseItems.reduce((s, [, v]) => s + v, 0) + totalAdCost;
 
                       return (
                         <div>
@@ -3465,96 +3149,34 @@ const App: React.FC = () => {
                                     <th className="py-1.5 px-3">날짜</th>
                                     <th className="py-1.5 px-3">마진</th>
                                     <th className="py-1.5 px-3">광고비</th>
-                                    <th className="py-1.5 px-3">비용</th>
-                                    <th className="py-1.5 px-3">순익</th>
                                     <th className="py-1.5 px-3">비고</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {dates.map(date => {
                                     const dayMargin = byDate[date].margin;
-                                    const dayCostItems = monthlyCosts.filter(c => c.date === date);
-                                    const dayCostTotal = dayCostItems.reduce((s, c) => s + c.amount, 0);
-                                    const dayProfit = dayMargin - dayCostTotal;
-                                    const isExpanded = expandedCostDate === date;
-
                                     return (
-                                      <React.Fragment key={date}>
-                                        <tr className="border-t hover:bg-gray-50 text-center">
-                                          <td className="py-1 px-3 text-gray-600 font-bold">{date.slice(5)}</td>
-                                          <td className="py-1 px-3 font-bold">{dayMargin.toLocaleString()}</td>
-                                          <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].adCost ? byDate[date].adCost.toLocaleString() : '-'}</td>
-                                          <td className="py-1 px-3">
-                                            <button
-                                              onClick={() => setExpandedCostDate(isExpanded ? null : date)}
-                                              className="font-bold hover:text-blue-600 transition-colors underline decoration-dotted"
-                                            >
-                                              {dayCostTotal.toLocaleString()}
-                                            </button>
-                                          </td>
-                                          <td className="py-1 px-3 font-black" style={{ color: dayProfit >= 0 ? '#16a34a' : '#dc2626' }}>{dayProfit.toLocaleString()}</td>
-                                          <td className="py-1 px-3">
-                                            <input
-                                              type="text"
-                                              className="w-full bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-500 text-center text-xs"
-                                              defaultValue={dailyMemos[date] || ''}
-                                              onBlur={e => { const v = e.target.value; if (v !== (dailyMemos[date] || '')) handleSaveMemo(date, v); }}
-                                              placeholder="메모"
-                                            />
-                                          </td>
-                                        </tr>
-                                        {isExpanded && (
-                                          <tr>
-                                            <td colSpan={6} className="bg-blue-50 px-6 py-2">
-                                              <div className="space-y-1.5">
-                                                {dayCostItems.map(item => (
-                                                  <div key={item.id} className="flex items-center justify-between text-xs">
-                                                    <div className="flex items-center gap-2">
-                                                      <span className="text-gray-600">{item.name}</span>
-                                                      {item.description && <span className="text-gray-400">({item.description})</span>}
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                      <span className="font-bold text-gray-700">{item.amount.toLocaleString()}원</span>
-                                                      <button onClick={() => handleDeleteCostItem(item.id)} className="text-red-400 hover:text-red-600">&times;</button>
-                                                    </div>
-                                                  </div>
-                                                ))}
-                                                {dayCostItems.length === 0 && <p className="text-gray-400 text-[11px]">등록된 비용 항목이 없습니다.</p>}
-                                                <div className="flex gap-2 items-center pt-1.5 border-t border-blue-100">
-                                                  <select
-                                                    className="flex-1 px-3 py-1.5 bg-white rounded-lg text-xs border border-blue-200 outline-none focus:border-blue-400"
-                                                    value={newCostName}
-                                                    onChange={e => {
-                                                      if (e.target.value === '__add__') {
-                                                        const name = prompt('새 비용 항목명을 입력하세요');
-                                                        if (name && name.trim()) { addCostCategory(name); setNewCostName(name.trim()); }
-                                                        else e.target.value = newCostName;
-                                                      } else setNewCostName(e.target.value);
-                                                    }}
-                                                  >
-                                                    <option value="">항목 선택</option>
-                                                    {costCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                                                    <option value="__add__">+ 항목 추가...</option>
-                                                  </select>
-                                                  <input
-                                                    type="number"
-                                                    className="w-24 px-3 py-1.5 bg-white rounded-lg text-xs border border-blue-200 outline-none focus:border-blue-400"
-                                                    placeholder="금액"
-                                                    value={newCostAmount}
-                                                    onChange={e => setNewCostAmount(e.target.value)}
-                                                  />
-                                                  <button
-                                                    onClick={() => handleAddCostItem(date)}
-                                                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700"
-                                                  >추가</button>
-                                                </div>
-                                              </div>
-                                            </td>
-                                          </tr>
-                                        )}
-                                      </React.Fragment>
+                                      <tr key={date} className="border-t hover:bg-gray-50 text-center">
+                                        <td className="py-1 px-3 text-gray-600 font-bold">{date.slice(5)}</td>
+                                        <td className="py-1 px-3 font-bold">{dayMargin.toLocaleString()}</td>
+                                        <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].adCost ? byDate[date].adCost.toLocaleString() : '-'}</td>
+                                        <td className="py-1 px-3">
+                                          <input
+                                            type="text"
+                                            className="w-full bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-500 text-center text-xs"
+                                            defaultValue={dailyMemos[date] || ''}
+                                            onBlur={e => { const v = e.target.value; if (v !== (dailyMemos[date] || '')) handleSaveMemo(date, v); }}
+                                            placeholder="메모"
+                                          />
+                                        </td>
+                                      </tr>
                                     );
                                   })}
+                                  <tr className="border-t-2 border-gray-900 bg-gray-50 font-black text-center">
+                                    <td className="py-1.5 px-3">합계</td>
+                                    <td className="py-1.5 px-3" style={{ color: grandMargin >= 0 ? '#16a34a' : '#dc2626' }}>{grandMargin.toLocaleString()}</td>
+                                    <td></td><td></td>
+                                  </tr>
                                 </tbody>
                               </table>
                             </div>
@@ -3565,210 +3187,36 @@ const App: React.FC = () => {
                             <div className="bg-white border-b-2 border-gray-300 py-4 text-center">
                               <h3 className="text-xl font-black text-gray-900">{salesMonth.month}월 손익 계산서</h3>
                             </div>
-                            <div className="grid grid-cols-1 md:grid-cols-2">
-                              {/* 총 매출 내역 */}
-                              <div className="md:border-r-2 border-b-2 md:border-b-0 border-gray-300">
-                                <div className="bg-yellow-50 border-b border-gray-300 py-2 text-center font-black text-sm text-gray-800">총 매출 내역</div>
-                                <div className="text-right text-[10px] text-gray-400 px-3 py-1 border-b border-gray-200">(단위 : 원)</div>
-                                <table className="w-full text-xs">
-                                  <thead>
-                                    <tr className="border-b border-gray-300 bg-gray-50">
-                                      <th className="py-1.5 px-3 text-left font-bold text-gray-600">항목</th>
-                                      <th className="py-1.5 px-3 text-right font-bold text-gray-600">금액</th>
-                                      <th className="py-1.5 px-3 text-right font-bold text-gray-600 w-16">비율</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {revenueItems.map(([name, amount]) => (
-                                      <tr key={name} className="border-b border-gray-100">
-                                        <td className="py-1.5 px-3 text-gray-700">{name}</td>
-                                        <td className="py-1.5 px-3 text-right font-bold">{amount.toLocaleString()}</td>
-                                        <td className="py-1.5 px-3 text-right text-gray-500">{totalRevenue ? Math.round(amount / totalRevenue * 100) : 0}%</td>
-                                      </tr>
-                                    ))}
-                                    {revenueItems.length === 0 && <tr><td colSpan={3} className="py-4 text-center text-gray-300">데이터 없음</td></tr>}
-                                  </tbody>
-                                  <tfoot>
-                                    <tr className="border-t-2 border-gray-300 bg-gray-50">
-                                      <td className="py-2 px-3 font-black text-gray-800">총 매출액</td>
-                                      <td className="py-2 px-3 text-right font-black text-gray-800">{totalRevenue.toLocaleString()}</td>
-                                      <td className="py-2 px-3"></td>
-                                    </tr>
-                                  </tfoot>
-                                </table>
-                                <div className="border-t-2 border-gray-300 bg-green-50 py-3 px-3 flex justify-between items-center">
-                                  <span className="font-black text-sm text-gray-800">순 수익</span>
-                                  <span className="font-black text-lg" style={{ color: grandProfit >= 0 ? '#16a34a' : '#dc2626' }}>{grandProfit.toLocaleString()}</span>
-                                </div>
-                              </div>
-                              {/* 총 지출 내역 */}
-                              <div>
-                                <div className="bg-yellow-50 border-b border-gray-300 py-2 text-center font-black text-sm text-gray-800">총 지출 내역</div>
-                                <div className="text-right text-[10px] text-gray-400 px-3 py-1 border-b border-gray-200">(단위 : 원)</div>
-                                <table className="w-full text-xs">
-                                  <thead>
-                                    <tr className="border-b border-gray-300 bg-gray-50">
-                                      <th className="py-1.5 px-3 text-left font-bold text-gray-600">항목</th>
-                                      <th className="py-1.5 px-3 text-right font-bold text-gray-600">금액</th>
-                                      <th className="py-1.5 px-3 text-right font-bold text-gray-600 w-16">비율</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    <tr className="border-b border-gray-100 bg-red-50">
-                                      <td className="py-1.5 px-3 text-gray-700 font-bold">광고비</td>
-                                      <td className="py-1.5 px-3 text-right font-bold">{totalAdCost ? totalAdCost.toLocaleString() : '-'}</td>
-                                      <td className="py-1.5 px-3 text-right text-gray-500">{totalExpense && totalAdCost ? Math.round(totalAdCost / totalExpense * 100) : 0}%</td>
-                                    </tr>
-                                    {costCategories.map(cat => {
-                                      const amt = expenseByCategory[cat] || 0;
-                                      return (
-                                        <tr key={cat} className="border-b border-gray-100">
-                                          <td className="py-1.5 px-3 text-gray-700">{cat}</td>
-                                          <td className="py-1.5 px-3 text-right font-bold">{amt ? amt.toLocaleString() : '-'}</td>
-                                          <td className="py-1.5 px-3 text-right text-gray-500">{totalExpense && amt ? Math.round(amt / totalExpense * 100) : 0}%</td>
-                                        </tr>
-                                      );
-                                    })}
-                                    {expenseItems.filter(([name]) => !costCategories.includes(name)).map(([name, amount]) => (
-                                      <tr key={name} className="border-b border-gray-100">
-                                        <td className="py-1.5 px-3 text-gray-700">{name}</td>
-                                        <td className="py-1.5 px-3 text-right font-bold">{amount.toLocaleString()}</td>
-                                        <td className="py-1.5 px-3 text-right text-gray-500">{totalExpense ? Math.round(amount / totalExpense * 100) : 0}%</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                  <tfoot>
-                                    <tr className="border-t-2 border-gray-300 bg-gray-50">
-                                      <td className="py-2 px-3 font-black text-gray-800">총 지출액</td>
-                                      <td className="py-2 px-3 text-right font-black text-gray-800">{totalExpense.toLocaleString()}</td>
-                                      <td className="py-2 px-3"></td>
-                                    </tr>
-                                  </tfoot>
-                                </table>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()
-                  ) : salesSubTab === 'expenses' ? (
-                    /* ===== 지출내역 ===== */
-                    (() => {
-                      const monthlyCosts = dailyCosts.filter(c => c.date?.startsWith(salesMonthStr)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-                      const totalAmount = monthlyCosts.reduce((s, c) => s + c.amount, 0);
-                      // 카테고리별 합산
-                      const byCategory: Record<string, number> = {};
-                      monthlyCosts.forEach(c => { byCategory[c.name] = (byCategory[c.name] || 0) + c.amount; });
-                      const categoryItems = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
-
-                      return (
-                        <div>
-                          {/* 카테고리별 요약 */}
-                          {categoryItems.length > 0 && (
-                            <div className="flex flex-wrap gap-2 mb-4">
-                              {categoryItems.map(([cat, amt]) => (
-                                <div key={cat} className="px-3 py-1.5 bg-gray-50 rounded-xl text-xs">
-                                  <span className="text-gray-500 font-bold">{cat}</span>
-                                  <span className="ml-2 font-black text-gray-700">{amt.toLocaleString()}</span>
-                                </div>
-                              ))}
-                              <div className="px-3 py-1.5 bg-red-50 rounded-xl text-xs">
-                                <span className="text-red-500 font-bold">합계</span>
-                                <span className="ml-2 font-black text-red-600">{totalAmount.toLocaleString()}</span>
-                              </div>
-                            </div>
-                          )}
-
-                          {monthlyCosts.length === 0 ? (
-                            <p className="text-gray-300 text-center py-16">등록된 지출 내역이 없습니다.</p>
-                          ) : (
-                            <div className="overflow-x-auto">
+                            <div>
+                              <div className="bg-yellow-50 border-b border-gray-300 py-2 text-center font-black text-sm text-gray-800">총 매출 내역</div>
+                              <div className="text-right text-[10px] text-gray-400 px-3 py-1 border-b border-gray-200">(단위 : 원)</div>
                               <table className="w-full text-xs">
-                                <thead className="bg-gray-100 text-gray-500 font-bold text-center">
-                                  <tr>
-                                    <th className="py-1.5 px-3">날짜</th>
-                                    <th className="py-1.5 px-3">카테고리</th>
-                                    <th className="py-1.5 px-3">금액</th>
-                                    <th className="py-1.5 px-3">내역</th>
-                                    <th className="py-1.5 px-3 w-8"></th>
+                                <thead>
+                                  <tr className="border-b border-gray-300 bg-gray-50">
+                                    <th className="py-1.5 px-3 text-left font-bold text-gray-600">항목</th>
+                                    <th className="py-1.5 px-3 text-right font-bold text-gray-600">금액</th>
+                                    <th className="py-1.5 px-3 text-right font-bold text-gray-600 w-16">비율</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {monthlyCosts.map(item => (
-                                    <tr key={item.id} className="border-t hover:bg-gray-50 text-center">
-                                      <td className="py-1.5 px-3 text-gray-600 font-bold">{item.date.slice(5)}</td>
-                                      <td className="py-1.5 px-3">
-                                        <span className="px-2 py-0.5 bg-gray-100 rounded-lg text-gray-700 font-bold">{item.name}</span>
-                                      </td>
-                                      <td className="py-1.5 px-3 font-bold text-red-600">{item.amount.toLocaleString()}</td>
-                                      <td className="py-1.5 px-3 text-gray-500">{item.description || '-'}</td>
-                                      <td className="py-1.5 px-1">
-                                        <button onClick={() => handleDeleteCostItem(item.id)} className="text-red-300 hover:text-red-500 text-xs">&times;</button>
-                                      </td>
+                                  {revenueItems.map(([name, amount]) => (
+                                    <tr key={name} className="border-b border-gray-100">
+                                      <td className="py-1.5 px-3 text-gray-700">{name}</td>
+                                      <td className="py-1.5 px-3 text-right font-bold">{amount.toLocaleString()}</td>
+                                      <td className="py-1.5 px-3 text-right text-gray-500">{totalRevenue ? Math.round(amount / totalRevenue * 100) : 0}%</td>
                                     </tr>
                                   ))}
+                                  {revenueItems.length === 0 && <tr><td colSpan={3} className="py-4 text-center text-gray-300">데이터 없음</td></tr>}
                                 </tbody>
                                 <tfoot>
-                                  <tr className="border-t-2 border-gray-300 bg-gray-50 font-bold text-center">
+                                  <tr className="border-t-2 border-gray-300 bg-gray-50">
+                                    <td className="py-2 px-3 font-black text-gray-800">총 매출액</td>
+                                    <td className="py-2 px-3 text-right font-black text-gray-800">{totalRevenue.toLocaleString()}</td>
                                     <td className="py-2 px-3"></td>
-                                    <td className="py-2 px-3 text-gray-700">합계</td>
-                                    <td className="py-2 px-3 text-red-600">{totalAmount.toLocaleString()}</td>
-                                    <td className="py-2 px-3"></td>
-                                    <td></td>
                                   </tr>
                                 </tfoot>
                               </table>
                             </div>
-                          )}
-
-                          {/* 수동 비용 추가 */}
-                          <div className="mt-4 flex gap-2 items-center bg-gray-50 p-3 rounded-xl">
-                            <select
-                              className="flex-1 px-3 py-2 bg-white rounded-xl text-xs border border-gray-200 outline-none focus:border-blue-400 font-bold"
-                              value={newCostName}
-                              onChange={e => {
-                                if (e.target.value === '__add__') {
-                                  const name = prompt('새 비용 항목명을 입력하세요');
-                                  if (name && name.trim()) { addCostCategory(name); setNewCostName(name.trim()); }
-                                  else e.target.value = newCostName;
-                                } else setNewCostName(e.target.value);
-                              }}
-                            >
-                              <option value="">카테고리 선택</option>
-                              {costCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                              <option value="__add__">+ 항목 추가...</option>
-                            </select>
-                            <input
-                              type="number"
-                              className="w-24 px-3 py-2 bg-white rounded-xl text-xs border border-gray-200 outline-none focus:border-blue-400"
-                              placeholder="금액"
-                              value={newCostAmount}
-                              onChange={e => setNewCostAmount(e.target.value)}
-                            />
-                            <input
-                              type="text"
-                              id="expenseDescInput"
-                              className="flex-1 px-3 py-2 bg-white rounded-xl text-xs border border-gray-200 outline-none focus:border-blue-400"
-                              placeholder="내역 (선택)"
-                            />
-                            <button
-                              onClick={async () => {
-                                const name = newCostName.trim();
-                                const amount = Number(newCostAmount);
-                                if (!name || !amount) return;
-                                const descEl = document.getElementById('expenseDescInput') as HTMLInputElement;
-                                const description = descEl?.value?.trim() || '';
-                                const today = new Date();
-                                const dateStr = (today.getFullYear() === salesMonth.year && today.getMonth() + 1 === salesMonth.month)
-                                  ? toLocalDateStr(today)
-                                  : `${salesMonthStr}-01`;
-                                await addDoc(collection(db, getCol('dailyCosts', colPrefix)), { date: dateStr, name, amount, ...(description ? { description } : {}) });
-                                setNewCostName('');
-                                setNewCostAmount('');
-                                if (descEl) descEl.value = '';
-                              }}
-                              className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700"
-                            >추가</button>
                           </div>
                         </div>
                       );
@@ -5098,76 +4546,6 @@ const App: React.FC = () => {
         table tbody tr input, table tbody tr button { user-select: auto; -webkit-user-select: auto; }
       `}</style>
 
-      {/* 비용 확인 모달 */}
-      {pendingExpenses && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setPendingExpenses(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="p-5 border-b border-gray-100">
-              <h3 className="text-lg font-bold text-gray-800">비용 확인</h3>
-              <p className="text-xs text-gray-500 mt-1">인식된 {pendingExpenses.length}건을 확인 후 저장하세요</p>
-            </div>
-            <div className="p-4 space-y-3">
-              {pendingExpenses.map((item, idx) => (
-                <div key={idx} className="bg-gray-50 rounded-xl p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-gray-400">#{idx + 1}</span>
-                    <button onClick={() => setPendingExpenses(prev => prev!.filter((_, i) => i !== idx))}
-                      className="text-red-400 hover:text-red-600 text-sm font-bold">삭제</button>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-500 w-10 flex-shrink-0">날짜</label>
-                    <input type="date" value={item.date}
-                      onChange={e => setPendingExpenses(prev => prev!.map((p, i) => i === idx ? { ...p, date: e.target.value } : p))}
-                      className="flex-1 text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:border-blue-400 outline-none" />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-500 w-10 flex-shrink-0">항목</label>
-                    <select value={costCategories.includes(item.name) ? item.name : '__custom__'}
-                      onChange={e => {
-                        if (e.target.value === '__add__') {
-                          const name = prompt('새 카테고리 이름:');
-                          if (name && name.trim()) {
-                            addCostCategory(name.trim());
-                            setPendingExpenses(prev => prev!.map((p, i) => i === idx ? { ...p, name: name.trim() } : p));
-                          }
-                        } else if (e.target.value !== '__custom__') {
-                          setPendingExpenses(prev => prev!.map((p, i) => i === idx ? { ...p, name: e.target.value } : p));
-                        }
-                      }}
-                      className="flex-1 text-sm border border-gray-200 rounded-lg px-2 py-1.5 focus:border-blue-400 outline-none">
-                      {costCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                      {!costCategories.includes(item.name) && <option value="__custom__">{item.name}</option>}
-                      <option value="__add__">+ 새 항목 추가...</option>
-                    </select>
-                  </div>
-                  {item.originalDesc !== item.name && (
-                    <p className="text-[10px] text-gray-400 pl-12">원본: {item.originalDesc}</p>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-500 w-10 flex-shrink-0">금액</label>
-                    <input type="number" value={item.amount}
-                      onChange={e => setPendingExpenses(prev => prev!.map((p, i) => i === idx ? { ...p, amount: Number(e.target.value) } : p))}
-                      className="flex-1 text-sm border border-gray-200 rounded-lg px-2 py-1.5 text-right font-bold focus:border-blue-400 outline-none" />
-                    <span className="text-xs text-gray-400">원</span>
-                  </div>
-                </div>
-              ))}
-              {pendingExpenses.length === 0 && (
-                <p className="text-center text-gray-400 text-sm py-4">모든 항목이 삭제되었습니다</p>
-              )}
-            </div>
-            <div className="p-4 border-t border-gray-100 flex gap-2">
-              <button onClick={() => setPendingExpenses(null)}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 transition-colors">취소</button>
-              <button onClick={handleConfirmExpenses} disabled={pendingExpenses.length === 0}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 disabled:opacity-40 transition-colors">
-                {pendingExpenses.length}건 저장
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 업무일지 업로드 미리보기 모달 */}
       {pendingUpload && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setPendingUpload(null)}>
@@ -5214,81 +4592,7 @@ const App: React.FC = () => {
                 </div>
               )}
 
-              {/* 비용 항목 */}
-              {pendingUpload.expenseItems.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-                    <span className="w-2 h-2 bg-red-500 rounded-full"></span>
-                    비용 항목 ({pendingUpload.expenseItems.length}건)
-                  </h4>
-                  <div className="bg-red-50 rounded-xl overflow-hidden">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-red-100">
-                          <th className="py-2 px-3 text-left text-gray-500 font-bold">카테고리</th>
-                          <th className="py-2 px-3 text-right text-gray-500 font-bold">금액</th>
-                          <th className="py-2 px-3 text-left text-gray-500 font-bold">내역</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pendingUpload.expenseItems.map((item, idx) => (
-                          <tr key={idx} className="border-b border-red-100 last:border-0">
-                            <td className="py-1.5 px-3 text-gray-700">{item.name}</td>
-                            <td className="py-1.5 px-3 text-right font-bold text-red-600">{item.amount.toLocaleString()}</td>
-                            <td className="py-1.5 px-3 text-gray-500">{item.description || ''}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr className="bg-red-100 font-bold">
-                          <td className="py-2 px-3 text-gray-700">합계</td>
-                          <td className="py-2 px-3 text-right text-red-600">{pendingUpload.expenseItems.reduce((s, i) => s + i.amount, 0).toLocaleString()}</td>
-                          <td></td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* 업체별정산 항목 */}
-              {pendingUpload.vendorSummaryData && pendingUpload.vendorSummaryData.length > 0 && (
-                <div>
-                  <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
-                    <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                    업체별정산 ({pendingUpload.vendorSummaryData.length}개 업체)
-                  </h4>
-                  <div className="bg-green-50 rounded-xl overflow-hidden">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-green-100">
-                          <th className="py-2 px-3 text-left text-gray-500 font-bold">업체</th>
-                          <th className="py-2 px-3 text-right text-gray-500 font-bold">수량</th>
-                          <th className="py-2 px-3 text-right text-gray-500 font-bold">소계</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pendingUpload.vendorSummaryData.map((vendor, idx) => (
-                          <tr key={idx} className="border-b border-green-100 last:border-0">
-                            <td className="py-1.5 px-3 text-gray-700">{vendor.name}</td>
-                            <td className="py-1.5 px-3 text-right text-gray-600">{vendor.totalCount}개</td>
-                            <td className="py-1.5 px-3 text-right font-bold text-green-700">{vendor.subtotal.toLocaleString()}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr className="bg-green-100 font-bold">
-                          <td className="py-2 px-3 text-gray-700">합계</td>
-                          <td className="py-2 px-3 text-right text-gray-600">{pendingUpload.vendorSummaryData.reduce((s, v) => s + v.totalCount, 0)}개</td>
-                          <td className="py-2 px-3 text-right text-green-700">{pendingUpload.vendorSummaryData.reduce((s, v) => s + v.subtotal, 0).toLocaleString()}</td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {pendingUpload.salesItems.length === 0 && pendingUpload.expenseItems.length === 0 && (!pendingUpload.vendorSummaryData || pendingUpload.vendorSummaryData.length === 0) && (
+              {pendingUpload.salesItems.length === 0 && (
                 <p className="text-center text-gray-400 text-sm py-4">등록할 항목이 없습니다.</p>
               )}
             </div>
@@ -5296,132 +4600,8 @@ const App: React.FC = () => {
               <button onClick={() => setPendingUpload(null)}
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 transition-colors">취소</button>
               <button onClick={handleConfirmUpload}
-                disabled={pendingUpload.salesItems.length === 0 && pendingUpload.expenseItems.length === 0 && (!pendingUpload.vendorSummaryData || pendingUpload.vendorSummaryData.length === 0)}
+                disabled={pendingUpload.salesItems.length === 0}
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 disabled:opacity-40 transition-colors">
-                저장
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 업체별정산 수동 입력/수정 모달 */}
-      {vendorEditModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setVendorEditModal(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="p-5 border-b border-gray-100">
-              <h3 className="text-lg font-bold text-gray-800">업체별정산 {vendorSummaries.some(s => s.date === vendorEditModal.date) ? '수정' : '입력'}</h3>
-            </div>
-            <div className="p-4 space-y-4">
-              {/* 날짜 */}
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-bold text-gray-500 w-10">날짜</label>
-                <input type="date" value={vendorEditModal.date}
-                  onChange={e => setVendorEditModal(prev => prev ? { ...prev, date: e.target.value } : null)}
-                  className="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:border-blue-400 outline-none" />
-              </div>
-
-              {/* 업체 블록 */}
-              {vendorEditModal.vendors.map((vendor, vi) => (
-                <div key={vi} className="border rounded-xl p-3 space-y-2 bg-gray-50">
-                  <div className="flex items-center gap-2">
-                    <input type="text" placeholder="업체명" value={vendor.name}
-                      onChange={e => setVendorEditModal(prev => {
-                        if (!prev) return null;
-                        const vendors = [...prev.vendors];
-                        vendors[vi] = { ...vendors[vi], name: e.target.value };
-                        return { ...prev, vendors };
-                      })}
-                      className="flex-1 text-sm font-bold border border-gray-200 rounded-lg px-3 py-1.5 focus:border-blue-400 outline-none" />
-                    {vendorEditModal.vendors.length > 1 && (
-                      <button onClick={() => setVendorEditModal(prev => {
-                        if (!prev) return null;
-                        return { ...prev, vendors: prev.vendors.filter((_, i) => i !== vi) };
-                      })} className="text-red-400 hover:text-red-600 text-xs font-bold px-2">삭제</button>
-                    )}
-                  </div>
-
-                  {/* 품목 행 */}
-                  {vendor.items.map((item, ii) => (
-                    <div key={ii} className="flex items-center gap-1.5">
-                      <input type="text" placeholder="품목명" value={item.product}
-                        onChange={e => setVendorEditModal(prev => {
-                          if (!prev) return null;
-                          const vendors = JSON.parse(JSON.stringify(prev.vendors));
-                          vendors[vi].items[ii].product = e.target.value;
-                          return { ...prev, vendors };
-                        })}
-                        className="flex-1 text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:border-blue-400 outline-none" />
-                      <input type="number" placeholder="수량" value={item.quantity || ''}
-                        onChange={e => setVendorEditModal(prev => {
-                          if (!prev) return null;
-                          const vendors = JSON.parse(JSON.stringify(prev.vendors));
-                          vendors[vi].items[ii].quantity = Number(e.target.value) || 0;
-                          vendors[vi].totalCount = vendors[vi].items.reduce((s: number, it: any) => s + it.quantity, 0);
-                          return { ...prev, vendors };
-                        })}
-                        className="w-16 text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-right focus:border-blue-400 outline-none" />
-                      <input type="number" placeholder="금액" value={item.price || ''}
-                        onChange={e => setVendorEditModal(prev => {
-                          if (!prev) return null;
-                          const vendors = JSON.parse(JSON.stringify(prev.vendors));
-                          vendors[vi].items[ii].price = Number(e.target.value) || 0;
-                          vendors[vi].subtotal = vendors[vi].items.reduce((s: number, it: any) => s + it.price, 0);
-                          return { ...prev, vendors };
-                        })}
-                        className="w-24 text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-right focus:border-blue-400 outline-none" />
-                      {vendor.items.length > 1 && (
-                        <button onClick={() => setVendorEditModal(prev => {
-                          if (!prev) return null;
-                          const vendors = JSON.parse(JSON.stringify(prev.vendors));
-                          vendors[vi].items = vendors[vi].items.filter((_: any, i: number) => i !== ii);
-                          vendors[vi].totalCount = vendors[vi].items.reduce((s: number, it: any) => s + it.quantity, 0);
-                          vendors[vi].subtotal = vendors[vi].items.reduce((s: number, it: any) => s + it.price, 0);
-                          return { ...prev, vendors };
-                        })} className="text-red-300 hover:text-red-500 text-xs">✕</button>
-                      )}
-                    </div>
-                  ))}
-
-                  <div className="flex items-center justify-between">
-                    <button onClick={() => setVendorEditModal(prev => {
-                      if (!prev) return null;
-                      const vendors = JSON.parse(JSON.stringify(prev.vendors));
-                      vendors[vi].items.push({ product: '', quantity: 0, price: 0 });
-                      return { ...prev, vendors };
-                    })} className="text-[10px] text-blue-500 hover:text-blue-700 font-bold">+ 품목 추가</button>
-                    <div className="text-[10px] text-gray-400">
-                      {vendor.totalCount}개 · <span className="font-bold text-gray-600">{vendor.subtotal.toLocaleString()}원</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-
-              <button onClick={() => setVendorEditModal(prev => {
-                if (!prev) return null;
-                return { ...prev, vendors: [...prev.vendors, { name: '', totalCount: 0, subtotal: 0, items: [{ product: '', quantity: 0, price: 0 }] }] };
-              })} className="w-full py-2 rounded-xl text-xs font-bold text-blue-500 border border-dashed border-blue-300 hover:bg-blue-50 transition-colors">
-                + 업체 추가
-              </button>
-            </div>
-
-            <div className="p-4 border-t border-gray-100 flex gap-2">
-              <button onClick={() => setVendorEditModal(null)}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 transition-colors">취소</button>
-              <button onClick={async () => {
-                if (!vendorEditModal.date) { alert('날짜를 입력해주세요.'); return; }
-                const validVendors = vendorEditModal.vendors.filter(v => v.name.trim() && v.items.some(it => it.product.trim()));
-                if (validVendors.length === 0) { alert('업체와 품목을 입력해주세요.'); return; }
-                const cleanVendors = validVendors.map(v => ({
-                  name: v.name.trim(),
-                  totalCount: v.items.reduce((s, it) => s + it.quantity, 0),
-                  subtotal: v.items.reduce((s, it) => s + it.price, 0),
-                  items: v.items.filter(it => it.product.trim()).map(it => ({ product: it.product.trim(), quantity: it.quantity, price: it.price })),
-                }));
-                await setDoc(doc(db, getCol('vendorSummaries', colPrefix), vendorEditModal.date), { date: vendorEditModal.date, vendors: cleanVendors });
-                setVendorEditModal(null);
-              }}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 transition-colors">
                 저장
               </button>
             </div>

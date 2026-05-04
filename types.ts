@@ -132,34 +132,7 @@ export interface UserSubmission {
   reviewProofImage?: string;
 }
 
-export interface DailyCostItem {
-  id: string;
-  date: string;
-  name: string;
-  amount: number;
-  description?: string;
-}
-
-export type SalesSubTab = 'vendorSettlement' | 'summary' | 'profitLoss' | 'salesDetail' | 'expenses';
-
-export interface VendorItem {
-  product: string;
-  quantity: number;
-  price: number;
-}
-
-export interface VendorSettlement {
-  name: string;
-  totalCount: number;
-  subtotal: number;
-  items: VendorItem[];
-}
-
-export interface VendorSummaryDoc {
-  id: string;
-  date: string;
-  vendors: VendorSettlement[];
-}
+export type SalesSubTab = 'summary' | 'profitLoss' | 'salesDetail';
 
 export interface ProductPrice {
   id: string;
