@@ -800,26 +800,32 @@ const App: React.FC = () => {
       merged[product].totalMargin += Number(row['총마진'] || 0);
     }
 
-    // 반품시트 파싱
-    const refundByProductDate: Record<string, number> = {};
-    const refundSheetName = wb.SheetNames.find((n: string) => n.includes('반품'));
-    if (refundSheetName) {
-      const refundWs = wb.Sheets[refundSheetName];
-      const refundRows: any[][] = XLSX.utils.sheet_to_json(refundWs, { header: 1, defval: '' });
-      for (const row of refundRows.slice(1)) {
-        const date = String(row[0] || '').trim();
-        const product = String(row[3] || '').trim();
-        const amount = Number(row[7] || 0);
+    // 품목별비용 시트 파싱 (반품/광고비/슬롯)
+    type CostByProduct = { refund: number; adCost: number; solution: number };
+    const costByProductDate: Record<string, CostByProduct> = {};
+    const costSheetName = wb.SheetNames.find((n: string) => n.includes('품목별비용'));
+    if (costSheetName) {
+      const costWs = wb.Sheets[costSheetName];
+      const costRows: any[][] = XLSX.utils.sheet_to_json(costWs, { header: 1, defval: '' });
+      for (const row of costRows.slice(1)) {
+        const category = String(row[0] || '').trim(); // A열: 구분
+        const date = String(row[1] || '').trim();     // B열: 날짜
+        const product = String(row[4] || '').trim();  // E열: 등록상품명
+        const amount = Number(row[8] || 0);           // I열: 금액
         if (!date || !product || !amount) continue;
         const key = `${date}|||${normProductName(product)}`;
-        refundByProductDate[key] = (refundByProductDate[key] || 0) + amount;
+        if (!costByProductDate[key]) costByProductDate[key] = { refund: 0, adCost: 0, solution: 0 };
+        if (category === '반품') costByProductDate[key].refund += amount;
+        else if (category === '광고비') costByProductDate[key].adCost += amount;
+        else if (category === '슬롯') costByProductDate[key].solution += amount;
       }
     }
 
     // 미리보기 데이터 세팅 (아직 저장 안 함)
     const salesItems = Object.values(merged).map(m => {
       const existingSD = salesDaily.find(entry => entry.date === uploadDate && normProductName(entry.product) === normProductName(m.product));
-      const refundKey = `${uploadDate}|||${normProductName(m.product)}`;
+      const costKey = `${uploadDate}|||${normProductName(m.product)}`;
+      const cost = costByProductDate[costKey];
       return {
         docId: existingSD?.id || `${uploadDate}_${m.product}`,
         product: m.product,
@@ -829,10 +835,10 @@ const App: React.FC = () => {
         supplyPrice: m.supplyPrice,
         marginPerUnit: m.quantity > 0 ? Math.round(m.totalMargin / m.quantity) : 0,
         totalMargin: m.totalMargin,
-        adCost: existingSD?.adCost || 0,
+        adCost: cost ? cost.adCost : (existingSD?.adCost || 0),
         housePurchase: existingSD?.housePurchase || 0,
-        solution: existingSD?.solution || 0,
-        refund: refundByProductDate[refundKey] ?? existingSD?.refund ?? 0,
+        solution: cost ? cost.solution : (existingSD?.solution || 0),
+        refund: cost ? cost.refund : (existingSD?.refund ?? 0),
         hpManual: existingSD?.hpManual || false,
       };
     });
