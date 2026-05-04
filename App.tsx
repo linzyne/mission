@@ -2157,8 +2157,6 @@ const App: React.FC = () => {
     setCustomerView('landing');
     setSalesUndoStack([]);
     setSalesRedoStack([]);
-    setVendorEditModal(null);
-    setPendingExpenses(null);
     setPendingUpload(null);
     setLastUploadInfo(null);
     setColorPicker(null);
@@ -3304,11 +3302,11 @@ const App: React.FC = () => {
                                           <th className="py-1.5 px-2 sm:px-3">날짜</th>
                                           <th className="py-1.5 px-2 sm:px-3">공급가</th>
                                           <th className="py-1.5 px-2 sm:px-3">마진</th>
-                                          <th className="py-1.5 px-2 sm:px-3">수량</th>
-                                          <th className="py-1.5 px-2 sm:px-3">광고비</th>
-                                          <th className="py-1.5 px-2 sm:px-3">가구매</th>
-                                          <th className="py-1.5 px-2 sm:px-3">반품</th>
-                                          <th className="py-1.5 px-2 sm:px-3">솔룻</th>
+                                          <th className="py-1.5 px-1">수량</th>
+                                          <th className="py-1.5 px-2">광고비</th>
+                                          <th className="py-1.5 px-2 min-w-[130px]">가구매</th>
+                                          <th className="py-1.5 px-2">반품</th>
+                                          <th className="py-1.5 px-1">솔룻</th>
                                         </tr>
                                       </thead>
                                       <tbody>
@@ -3329,31 +3327,31 @@ const App: React.FC = () => {
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.totalMargin || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'totalMargin', Number(e.target.value) || 0)} />
                                             </td>
-                                            <td className="py-1 px-3">
-                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                            <td className="py-1 px-1">
+                                              <input type="number" className="w-14 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.quantity || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'quantity', Number(e.target.value) || 0)} />
                                             </td>
-                                            <td className="py-1 px-3">
-                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                            <td className="py-1 px-2">
+                                              <input type="number" className="w-16 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.adCost || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'adCost', Number(e.target.value) || 0)} />
                                             </td>
-                                            <td className="py-1 px-3">
-                                              <div className="flex items-center justify-center gap-1">
-                                                <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                            <td className="py-1 px-2">
+                                              <div className="flex items-center justify-center gap-1 whitespace-nowrap">
+                                                <input type="number" className="w-16 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                   defaultValue={entry.housePurchase || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'housePurchase', Number(e.target.value) || 0)} />
                                                 {hpCountByDate[entry.date] && (hpCountByDate[entry.date].빈박 + hpCountByDate[entry.date].실배) > 0 ? (
-                                                  <span className="text-[10px] text-gray-400">
+                                                  <span className="text-[10px] text-gray-400 whitespace-nowrap">
                                                     {[hpCountByDate[entry.date].빈박 > 0 && `빈박${hpCountByDate[entry.date].빈박}`, hpCountByDate[entry.date].실배 > 0 && `실배${hpCountByDate[entry.date].실배}`].filter(Boolean).join('/')}
                                                   </span>
                                                 ) : null}
                                               </div>
                                             </td>
-                                            <td className="py-1 px-3">
-                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                            <td className="py-1 px-2">
+                                              <input type="number" className="w-16 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.refund || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'refund', Number(e.target.value) || 0)} />
                                             </td>
-                                            <td className="py-1 px-3">
-                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                            <td className="py-1 px-1">
+                                              <input type="number" className="w-14 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.solution || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'solution', Number(e.target.value) || 0)} />
                                             </td>
                                           </tr>
@@ -3366,11 +3364,11 @@ const App: React.FC = () => {
                                             <td className="py-1.5 px-2 sm:px-3 text-gray-400 text-[10px]">총계</td>
                                             <td className="py-1.5 px-2 sm:px-3">{totals.supplyPrice ? totals.supplyPrice.toLocaleString() : '-'}</td>
                                             <td className="py-1.5 px-2 sm:px-3">{totals.totalMargin ? totals.totalMargin.toLocaleString() : '-'}</td>
-                                            <td className="py-1.5 px-2 sm:px-3">{totals.quantity ? totals.quantity.toLocaleString() : '-'}</td>
-                                            <td className="py-1.5 px-2 sm:px-3">{totals.adCost ? totals.adCost.toLocaleString() : '-'}</td>
-                                            <td className="py-1.5 px-2 sm:px-3">{totals.housePurchase ? totals.housePurchase.toLocaleString() : '-'}</td>
-                                            <td className="py-1.5 px-2 sm:px-3">{totals.refund ? totals.refund.toLocaleString() : '-'}</td>
-                                            <td className="py-1.5 px-2 sm:px-3">{totals.solution ? totals.solution.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-1">{totals.quantity ? totals.quantity.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-2">{totals.adCost ? totals.adCost.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-2">{totals.housePurchase ? totals.housePurchase.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-2">{totals.refund ? totals.refund.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-1">{totals.solution ? totals.solution.toLocaleString() : '-'}</td>
                                           </tr>
                                         </tfoot>
                                       )}
