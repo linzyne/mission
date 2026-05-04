@@ -638,7 +638,7 @@ const App: React.FC = () => {
     }
     const docId = `${newDate}_${product}_${Date.now()}`;
     const autoHP = calcHousePurchase(product, newDate);
-    const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: autoHP, solution: 0 };
+    const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: autoHP, solution: 0, refund: 0 };
     setSalesUndoStack(prev => [...prev, { type: 'add', entries: [{ id: docId, data: {} }] }]);
     setSalesRedoStack([]);
     await setDoc(doc(db, getCol('salesDaily', colPrefix), docId), newEntry);
@@ -758,7 +758,7 @@ const App: React.FC = () => {
     }
     const newDate = `${salesMonthStr}-01`;
     const docId = `${newDate}_${product}`;
-    const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: 0, solution: 0 };
+    const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: 0, solution: 0, refund: 0 };
     setSalesUndoStack(prev => [...prev, { type: 'add', entries: [{ id: docId, data: {} }] }]);
     setSalesRedoStack([]);
     await setDoc(doc(db, getCol('salesDaily', colPrefix), docId), newEntry);
@@ -808,7 +808,7 @@ const App: React.FC = () => {
   // 업무일지 업로드 미리보기 상태
   const [pendingUpload, setPendingUpload] = useState<{
     uploadDate: string;
-    salesItems: { docId: string; product: string; productDetail: string; quantity: number; sellingPrice: number; supplyPrice: number; marginPerUnit: number; totalMargin: number; adCost: number; housePurchase: number; solution: number; hpManual: boolean }[];
+    salesItems: { docId: string; product: string; productDetail: string; quantity: number; sellingPrice: number; supplyPrice: number; marginPerUnit: number; totalMargin: number; adCost: number; housePurchase: number; solution: number; refund: number; hpManual: boolean }[];
     expenseItems: { name: string; amount: number; description: string }[];
     vendorSummaryData?: VendorSettlement[];
   } | null>(null);
@@ -929,6 +929,7 @@ const App: React.FC = () => {
     // 미리보기 데이터 세팅 (아직 저장 안 함)
     const salesItems = Object.values(merged).map(m => {
       const existingSD = salesDaily.find(entry => entry.date === uploadDate && normProductName(entry.product) === normProductName(m.product));
+      const refundKey = `${uploadDate}|||${normProductName(m.product)}`;
       return {
         docId: existingSD?.id || `${uploadDate}_${m.product}`,
         product: m.product,
@@ -941,11 +942,28 @@ const App: React.FC = () => {
         adCost: existingSD?.adCost || 0,
         housePurchase: existingSD?.housePurchase || 0,
         solution: existingSD?.solution || 0,
+        refund: refundByProductDate[refundKey] ?? existingSD?.refund ?? 0,
         hpManual: existingSD?.hpManual || false,
       };
     });
 
     const expenseItems = Object.entries(expenseMerged).map(([name, { amount, descriptions }]) => ({ name, amount, description: descriptions.join(', ') }));
+
+    // 반품시트 파싱
+    const refundByProductDate: Record<string, number> = {};
+    const refundSheetName = wb.SheetNames.find((n: string) => n.includes('반품'));
+    if (refundSheetName) {
+      const refundWs = wb.Sheets[refundSheetName];
+      const refundRows: any[][] = XLSX.utils.sheet_to_json(refundWs, { header: 1, defval: '' });
+      for (const row of refundRows.slice(1)) {
+        const date = String(row[0] || '').trim();
+        const product = String(row[3] || '').trim();
+        const amount = Number(row[7] || 0);
+        if (!date || !product || !amount) continue;
+        const key = `${date}|||${normProductName(product)}`;
+        refundByProductDate[key] = (refundByProductDate[key] || 0) + amount;
+      }
+    }
 
     // 요약시트 파싱 (업체별정산)
     let vendorSummaryData: VendorSettlement[] | undefined;
@@ -1022,6 +1040,7 @@ const App: React.FC = () => {
         adCost: item.adCost,
         housePurchase: item.housePurchase,
         solution: item.solution,
+        refund: item.refund,
         hpManual: item.hpManual,
       });
       savedSalesIds.push(item.docId);
@@ -3233,14 +3252,14 @@ const App: React.FC = () => {
 
                     months.forEach(m => {
                       data[m] = {};
-                      monthTotals[m] = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, net: 0 };
+                      monthTotals[m] = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, ref: 0, net: 0 };
                     });
 
                     salesDaily.forEach(e => {
                       const m = e.date?.substring(0, 7);
                       if (!m || !data[m]) return;
                       const pName = normProductName(e.product);
-                      if (!data[m][pName]) data[m][pName] = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, net: 0 };
+                      if (!data[m][pName]) data[m][pName] = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, ref: 0, net: 0 };
                       const d = data[m][pName];
                       d.supply += e.supplyPrice || 0;
                       d.margin += e.totalMargin || 0;
@@ -3248,7 +3267,8 @@ const App: React.FC = () => {
                       d.ad += e.adCost || 0;
                       d.hp += e.housePurchase || 0;
                       d.sol += e.solution || 0;
-                      d.net = d.margin + d.ad + d.hp + d.sol;
+                      d.ref += e.refund || 0;
+                      d.net = d.margin + d.ad + d.hp + d.sol + d.ref;
 
                       const mt = monthTotals[m];
                       mt.supply += e.supplyPrice || 0;
@@ -3257,7 +3277,8 @@ const App: React.FC = () => {
                       mt.ad += e.adCost || 0;
                       mt.hp += e.housePurchase || 0;
                       mt.sol += e.solution || 0;
-                      mt.net = mt.margin + mt.ad + mt.hp + mt.sol;
+                      mt.ref += e.refund || 0;
+                      mt.net = mt.margin + mt.ad + mt.hp + mt.sol + mt.ref;
                     });
 
                     const fmt = (n: number) => n ? n.toLocaleString() : '-';
@@ -3271,7 +3292,7 @@ const App: React.FC = () => {
                     });
 
                     // 전체 합계
-                    const grandTotal = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, net: 0, cost: 0, profit: 0 };
+                    const grandTotal = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, ref: 0, net: 0, cost: 0, profit: 0 };
                     months.forEach(m => {
                       grandTotal.supply += monthTotals[m].supply;
                       grandTotal.margin += monthTotals[m].margin;
@@ -3279,9 +3300,10 @@ const App: React.FC = () => {
                       grandTotal.ad += monthTotals[m].ad;
                       grandTotal.hp += monthTotals[m].hp;
                       grandTotal.sol += monthTotals[m].sol;
+                      grandTotal.ref += monthTotals[m].ref;
                       grandTotal.cost += monthCosts[m] || 0;
                     });
-                    grandTotal.net = grandTotal.margin + grandTotal.ad + grandTotal.hp + grandTotal.sol;
+                    grandTotal.net = grandTotal.margin + grandTotal.ad + grandTotal.hp + grandTotal.sol + grandTotal.ref;
                     grandTotal.profit = grandTotal.net - grandTotal.cost;
 
                     return (
@@ -3399,7 +3421,7 @@ const App: React.FC = () => {
                       const byDate: Record<string, { margin: number; adCost: number }> = {};
                       filtered.forEach(e => {
                         if (!byDate[e.date]) byDate[e.date] = { margin: 0, adCost: 0 };
-                        byDate[e.date].margin += (e.totalMargin + e.adCost + e.housePurchase + e.solution);
+                        byDate[e.date].margin += (e.totalMargin + e.adCost + e.housePurchase + e.solution + (e.refund || 0));
                         byDate[e.date].adCost += (e.adCost || 0);
                       });
                       const monthlyCosts = dailyCosts.filter(c => c.date?.startsWith(salesMonthStr));
@@ -3415,7 +3437,7 @@ const App: React.FC = () => {
                       // 손익계산서: 매출 내역 (품목별 마진)
                       const revenueByProduct: Record<string, number> = {};
                       filtered.forEach(e => {
-                        const profit = e.totalMargin + e.adCost + e.housePurchase + e.solution;
+                        const profit = e.totalMargin + e.adCost + e.housePurchase + e.solution + (e.refund || 0);
                         revenueByProduct[e.product] = (revenueByProduct[e.product] || 0) + profit;
                       });
                       const revenueItems = Object.entries(revenueByProduct).sort((a, b) => b[1] - a[1]);
@@ -3804,8 +3826,9 @@ const App: React.FC = () => {
                                 adCost: entries.reduce((s, e) => s + e.adCost, 0),
                                 housePurchase: entries.reduce((s, e) => s + e.housePurchase, 0),
                                 solution: entries.reduce((s, e) => s + e.solution, 0),
+                                refund: entries.reduce((s, e) => s + (e.refund || 0), 0),
                               };
-                              const profit = totals.totalMargin + totals.adCost + totals.housePurchase + totals.solution;
+                              const profit = totals.totalMargin + totals.adCost + totals.housePurchase + totals.solution + totals.refund;
 
                               return (
                                 <div key={product} className="border rounded-2xl overflow-hidden">
@@ -3822,6 +3845,7 @@ const App: React.FC = () => {
                                     <span>수량 {totals.quantity}</span>
                                     <span>광고비 {totals.adCost.toLocaleString()}</span>
                                     <span>가구매 {totals.housePurchase.toLocaleString()}{(hpCountTotal.빈박 + hpCountTotal.실배) > 0 ? ` (빈박${hpCountTotal.빈박}개/실배${hpCountTotal.실배}개)` : ''}</span>
+                                    {totals.refund !== 0 && <span>반품 {totals.refund.toLocaleString()}</span>}
                                     <span>솔룻 {totals.solution.toLocaleString()}</span>
                                   </div>
                                   <div className="overflow-x-auto">
@@ -3835,6 +3859,7 @@ const App: React.FC = () => {
                                           <th className="py-1.5 px-2 sm:px-3">수량</th>
                                           <th className="py-1.5 px-2 sm:px-3">광고비</th>
                                           <th className="py-1.5 px-2 sm:px-3">가구매</th>
+                                          <th className="py-1.5 px-2 sm:px-3">반품</th>
                                           <th className="py-1.5 px-2 sm:px-3">솔룻</th>
                                         </tr>
                                       </thead>
@@ -3877,6 +3902,10 @@ const App: React.FC = () => {
                                             </td>
                                             <td className="py-1 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
+                                                defaultValue={entry.refund || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'refund', Number(e.target.value) || 0)} />
+                                            </td>
+                                            <td className="py-1 px-3">
+                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.solution || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'solution', Number(e.target.value) || 0)} />
                                             </td>
                                           </tr>
@@ -3892,6 +3921,7 @@ const App: React.FC = () => {
                                             <td className="py-1.5 px-2 sm:px-3">{totals.quantity ? totals.quantity.toLocaleString() : '-'}</td>
                                             <td className="py-1.5 px-2 sm:px-3">{totals.adCost ? totals.adCost.toLocaleString() : '-'}</td>
                                             <td className="py-1.5 px-2 sm:px-3">{totals.housePurchase ? totals.housePurchase.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-2 sm:px-3">{totals.refund ? totals.refund.toLocaleString() : '-'}</td>
                                             <td className="py-1.5 px-2 sm:px-3">{totals.solution ? totals.solution.toLocaleString() : '-'}</td>
                                           </tr>
                                         </tfoot>
