@@ -652,12 +652,13 @@ const App: React.FC = () => {
     const entries = manualEntries.filter(e => e.product === product && e.date === date);
     if (entries.length === 0) return 0;
     const pp = productPrices.find(p => p.name === product);
-    const sellPrice = pp?.sellingPrice || pp?.price || 0;
-    const supPrice = pp?.supplyPrice || (sellPrice - 1000);
-    if (sellPrice <= 0) return 0;
     const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply, silbaeRate } = hpFormula;
-    const baseUnitCost = Math.round(extraFee + sellPrice * supplyPriceRate + baseFee);
     const total = entries.reduce((sum, e) => {
+      const isCoupon = e.couponApplied !== false;
+      const sellPrice = isCoupon ? (pp?.sellingPrice || pp?.price || 0) : (pp?.sellingPriceNoCoupon || pp?.priceNoCoupon || pp?.sellingPrice || pp?.price || 0);
+      const supPrice = pp?.supplyPrice || (sellPrice - 1000);
+      if (sellPrice <= 0) return sum;
+      const baseUnitCost = Math.round(extraFee + sellPrice * supplyPriceRate + baseFee);
       const unitCost = (silbaeAddSupply && String(e.orderNumber || '').includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
       return sum + unitCost;
     }, 0);
@@ -682,16 +683,16 @@ const App: React.FC = () => {
         let hp = 0;
         if (matchedEntries.length > 0) {
           const pp = productPrices.find(p => normProductName(p.name) === sdNorm);
-          const sellPrice = pp?.sellingPrice || pp?.price || 0;
-          const supPrice = pp?.supplyPrice || (sellPrice - 1000);
-          if (sellPrice > 0) {
-            const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply, silbaeRate } = hpFormula;
+          const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply, silbaeRate } = hpFormula;
+          hp = -matchedEntries.reduce((sum, e) => {
+            const isCoupon = e.couponApplied !== false;
+            const sellPrice = isCoupon ? (pp?.sellingPrice || pp?.price || 0) : (pp?.sellingPriceNoCoupon || pp?.priceNoCoupon || pp?.sellingPrice || pp?.price || 0);
+            const supPrice = pp?.supplyPrice || (sellPrice - 1000);
+            if (sellPrice <= 0) return sum;
             const baseUnitCost = Math.round(extraFee + sellPrice * supplyPriceRate + baseFee);
-            hp = -matchedEntries.reduce((sum, e) => {
-              const unitCost = (silbaeAddSupply && String(e.orderNumber || '').includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
-              return sum + unitCost;
-            }, 0);
-          }
+            const unitCost = (silbaeAddSupply && String(e.orderNumber || '').includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
+            return sum + unitCost;
+          }, 0);
         }
         if (sd.housePurchase !== hp) {
           batch.update(doc(db, getCol('salesDaily', colPrefix), sd.id), { housePurchase: hp });
@@ -712,17 +713,19 @@ const App: React.FC = () => {
         if (sdMap.has(key)) continue; // 이미 위에서 처리됨
         const pNorm = normProductName(product);
         const pp = productPrices.find(p => normProductName(p.name) === pNorm);
-        const sellPrice = pp?.sellingPrice || pp?.price || 0;
-        const supPrice = pp?.supplyPrice || (sellPrice - 1000);
-        if (sellPrice <= 0) continue;
         const cleanProduct = pp?.name || pNorm;
         const { baseFee, supplyPriceRate, extraFee, silbaeAddSupply, silbaeRate } = hpFormula;
-        const baseUnitCost = Math.round(extraFee + sellPrice * supplyPriceRate + baseFee);
         const entriesForCombo = manualEntries.filter(e => normProductName(e.product) === pNorm && e.date === date);
         const hp = -entriesForCombo.reduce((sum, e) => {
+          const isCoupon = e.couponApplied !== false;
+          const sellPrice = isCoupon ? (pp?.sellingPrice || pp?.price || 0) : (pp?.sellingPriceNoCoupon || pp?.priceNoCoupon || pp?.sellingPrice || pp?.price || 0);
+          const supPrice = pp?.supplyPrice || (sellPrice - 1000);
+          if (sellPrice <= 0) return sum;
+          const baseUnitCost = Math.round(extraFee + sellPrice * supplyPriceRate + baseFee);
           const unitCost = (silbaeAddSupply && String(e.orderNumber || '').includes('실배')) ? Math.round(supPrice + sellPrice * silbaeRate) : baseUnitCost;
           return sum + unitCost;
         }, 0);
+        if (hp === 0) continue;
         const docId = `${date}_${cleanProduct}`;
         batch.set(doc(db, getCol('salesDaily', colPrefix), docId), {
           date, product: cleanProduct, productDetail: '', quantity: 0, sellingPrice: 0,
@@ -1237,7 +1240,7 @@ const App: React.FC = () => {
   const [cellSelection, setCellSelection] = useState<{startRow: number, startCol: number, endRow: number, endCol: number} | null>(null);
 
   // Resizable column widths for purchase list
-  const DEFAULT_COL_WIDTHS: Record<string, number> = { photo: 32, id: 28, count: 32, product: 64, date: 64, name1: 56, name2: 56, orderNumber: 80, address: 64, memo: 56, paymentAmount: 56, emergencyContact: 64, accountNumber: 112, trackingNumber: 80, beforeDeposit: 32, afterDeposit: 32 };
+  const DEFAULT_COL_WIDTHS: Record<string, number> = { photo: 32, id: 28, count: 32, product: 64, coupon: 52, date: 64, name1: 56, name2: 56, orderNumber: 80, address: 64, memo: 56, paymentAmount: 56, emergencyContact: 64, accountNumber: 112, trackingNumber: 80, beforeDeposit: 32, afterDeposit: 32 };
   const [colWidths, setColWidths] = useState<Record<string, number>>({ ...DEFAULT_COL_WIDTHS });
   const resizeColRef = useRef<{ key: string; startX: number; startW: number } | null>(null);
   const colResizedRef = useRef(false);
@@ -3988,13 +3991,16 @@ const App: React.FC = () => {
                           .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ko'))
                           .map(p => {
                             const sellPrice = p.sellingPrice || p.price || 0;
+                            const sellPriceNC = p.sellingPriceNoCoupon || p.priceNoCoupon || 0;
                             const supPrice = p.supplyPrice || (sellPrice - 1000);
                             if (sellPrice <= 0) return null;
                             const base = Math.round(hpFormulaEdit.extraFee + sellPrice * hpFormulaEdit.supplyPriceRate + hpFormulaEdit.baseFee);
+                            const baseNC = sellPriceNC > 0 ? Math.round(hpFormulaEdit.extraFee + sellPriceNC * hpFormulaEdit.supplyPriceRate + hpFormulaEdit.baseFee) : null;
                             const silbae = hpFormulaEdit.silbaeAddSupply ? Math.round(supPrice + sellPrice * (hpFormulaEdit.silbaeRate ?? 0.12)) : null;
-                            return { name: p.name, supPrice, base, silbae };
+                            const silbaeNC = (hpFormulaEdit.silbaeAddSupply && sellPriceNC > 0) ? Math.round(supPrice + sellPriceNC * (hpFormulaEdit.silbaeRate ?? 0.12)) : null;
+                            return { name: p.name, supPrice, base, baseNC, silbae, silbaeNC };
                           })
-                          .filter(Boolean) as { name: string; supPrice: number; base: number; silbae: number | null }[];
+                          .filter(Boolean) as { name: string; supPrice: number; base: number; baseNC: number | null; silbae: number | null; silbaeNC: number | null }[];
                         if (rows.length === 0) return null;
                         return (
                           <div className="overflow-x-auto">
@@ -4003,8 +4009,10 @@ const App: React.FC = () => {
                                 <tr>
                                   <th className="py-1.5 px-3 text-left rounded-tl-xl">품목명</th>
                                   <th className="py-1.5 px-3">공급가</th>
-                                  <th className="py-1.5 px-3">빈박 단위비용</th>
-                                  {hpFormulaEdit.silbaeAddSupply && <th className="py-1.5 px-3 text-orange-400 rounded-tr-xl">실배 단위비용</th>}
+                                  <th className="py-1.5 px-3">빈박단위비용<br/><span className="font-normal text-[10px]">쿠폰적용</span></th>
+                                  {hpFormulaEdit.silbaeAddSupply && <th className="py-1.5 px-3 text-orange-400">실배단위비용<br/><span className="font-normal text-[10px]">쿠폰적용</span></th>}
+                                  <th className="py-1.5 px-3 text-blue-400">빈박단위비용<br/><span className="font-normal text-[10px]">쿠폰미적용</span></th>
+                                  {hpFormulaEdit.silbaeAddSupply && <th className="py-1.5 px-3 text-orange-300 rounded-tr-xl">실배단위비용<br/><span className="font-normal text-[10px]">쿠폰미적용</span></th>}
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-100 font-bold">
@@ -4014,6 +4022,8 @@ const App: React.FC = () => {
                                     <td className="py-1.5 px-3 text-gray-400">{r.supPrice.toLocaleString()}</td>
                                     <td className="py-1.5 px-3 text-gray-700">{r.base.toLocaleString()}</td>
                                     {hpFormulaEdit.silbaeAddSupply && <td className="py-1.5 px-3 text-orange-500">{r.silbae!.toLocaleString()}</td>}
+                                    <td className="py-1.5 px-3 text-blue-500">{r.baseNC != null ? r.baseNC.toLocaleString() : '-'}</td>
+                                    {hpFormulaEdit.silbaeAddSupply && <td className="py-1.5 px-3 text-orange-400">{r.silbaeNC != null ? r.silbaeNC.toLocaleString() : '-'}</td>}
                                   </tr>
                                 ))}
                               </tbody>
@@ -4063,9 +4073,11 @@ const App: React.FC = () => {
                         <tr>
                           <th className="py-1.5 px-3 rounded-tl-xl">No.</th>
                           <th className="py-1.5 px-3 text-left">품목명</th>
-                          <th className="py-1.5 px-3">가격</th>
+                          <th className="py-1.5 px-3">가격<br/><span className="font-normal text-[10px]">쿠폰적용</span></th>
+                          <th className="py-1.5 px-3">가격<br/><span className="font-normal text-[10px]">쿠폰미적용</span></th>
                           <th className="py-1.5 px-3 text-gray-400">공급가</th>
-                          <th className="py-1.5 px-3 text-gray-400">판매가</th>
+                          <th className="py-1.5 px-3 text-gray-400">판매가<br/><span className="font-normal text-[10px]">쿠폰적용</span></th>
+                          <th className="py-1.5 px-3 text-gray-400">판매가<br/><span className="font-normal text-[10px]">쿠폰미적용</span></th>
                           <th className="py-1.5 px-3 text-gray-400">마진</th>
                           <th className="py-1.5 px-3 rounded-tr-xl w-24">관리</th>
                         </tr>
@@ -4097,6 +4109,17 @@ const App: React.FC = () => {
                             <td className="py-1 px-3">
                               <input
                                 type="number"
+                                defaultValue={price.priceNoCoupon || ''}
+                                key={`priceNoCoupon-${price.id}-${price.priceNoCoupon}`}
+                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                onBlur={(e) => updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { priceNoCoupon: Number(e.target.value) || 0 })}
+                                className="w-full bg-transparent outline-none text-blue-400 font-bold text-center border-b border-transparent focus:border-blue-400 transition-colors"
+                                placeholder="-"
+                              />
+                            </td>
+                            <td className="py-1 px-3">
+                              <input
+                                type="number"
                                 defaultValue={price.supplyPrice || ''}
                                 key={`supply-${price.id}-${price.supplyPrice}`}
                                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
@@ -4112,6 +4135,17 @@ const App: React.FC = () => {
                                 key={`selling-${price.id}-${price.sellingPrice}`}
                                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                                 onBlur={(e) => updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { sellingPrice: Number(e.target.value) || 0 })}
+                                className="w-full bg-transparent outline-none text-gray-400 font-normal text-center border-b border-transparent focus:border-gray-400 transition-colors"
+                                placeholder="-"
+                              />
+                            </td>
+                            <td className="py-1 px-3">
+                              <input
+                                type="number"
+                                defaultValue={price.sellingPriceNoCoupon || ''}
+                                key={`sellingNoCoupon-${price.id}-${price.sellingPriceNoCoupon}`}
+                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                onBlur={(e) => updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { sellingPriceNoCoupon: Number(e.target.value) || 0 })}
                                 className="w-full bg-transparent outline-none text-gray-400 font-normal text-center border-b border-transparent focus:border-gray-400 transition-colors"
                                 placeholder="-"
                               />
@@ -4142,7 +4176,7 @@ const App: React.FC = () => {
                           </tr>
                         ))}
                         {productPrices.length === 0 && (
-                          <tr><td colSpan={7} className="p-16 text-gray-300">등록된 품목금액이 없습니다.</td></tr>
+                          <tr><td colSpan={9} className="p-16 text-gray-300">등록된 품목금액이 없습니다.</td></tr>
                         )}
                       </tbody>
                     </table>
@@ -4553,6 +4587,7 @@ const App: React.FC = () => {
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.id + 'px' }} onClick={() => handleSort('id')}>순번 {sortConfig?.key === 'id' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('id', e)} onDoubleClick={() => resetColWidth('id')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.count + 'px' }} onClick={() => handleSort('count')}>갯수 {sortConfig?.key === 'count' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('count', e)} onDoubleClick={() => resetColWidth('count')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.product + 'px' }} onClick={() => handleSort('product')}>품목 {sortConfig?.key === 'product' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('product', e)} onDoubleClick={() => resetColWidth('product')} /></th>
+                          <th className="py-0 px-0.5 overflow-hidden relative" style={{ width: colWidths.coupon + 'px' }}>쿠폰<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('coupon', e)} onDoubleClick={() => resetColWidth('coupon')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.date + 'px' }} onClick={() => handleSort('date')}>날짜 {sortConfig?.key === 'date' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('date', e)} onDoubleClick={() => resetColWidth('date')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.name1 + 'px' }} onClick={() => handleSort('name1')}>이름1 {sortConfig?.key === 'name1' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('name1', e)} onDoubleClick={() => resetColWidth('name1')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.name2 + 'px' }} onClick={() => handleSort('name2')}>받는사람 {sortConfig?.key === 'name2' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('name2', e)} onDoubleClick={() => resetColWidth('name2')} /></th>
@@ -4736,6 +4771,16 @@ const App: React.FC = () => {
                                       {productPrices.map(p => (
                                         <option key={p.id} value={p.name}>{p.name}</option>
                                       ))}
+                                    </select>
+                                  </td>
+                                  <td className="p-0 border border-gray-200 text-center align-middle">
+                                    <select
+                                      className={`excel-input ${rowColor} cursor-pointer text-[10px]`}
+                                      value={entry.couponApplied === false ? 'N' : 'Y'}
+                                      onChange={e => updateManualEntry(entry.id, 'couponApplied', e.target.value === 'Y')}
+                                    >
+                                      <option value="Y">적용</option>
+                                      <option value="N">미적용</option>
                                     </select>
                                   </td>
                                   <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.date ? entry.date.slice(2).replace(/-/g, '.') : '')} data-row={idx} data-col={2} defaultValue={entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'date', idx, 2)} type="text" placeholder="YY.MM.DD" className={`excel-input px-1 text-center ${rowColor}`} onFocus={(e) => e.target.select()} onBlur={(e) => handleCellBlur(e, entry, 'date')} /></td>

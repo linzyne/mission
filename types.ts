@@ -46,6 +46,7 @@ export interface ManualEntry {
   beforeDeposit: boolean;
   afterDeposit: boolean;
   depositDate?: string;
+  couponApplied?: boolean;
   isManualCheck?: boolean;
   reservationComplete?: boolean;
   textColor?: string;
@@ -163,8 +164,10 @@ export interface ProductPrice {
   id: string;
   name: string;
   price: number;
+  priceNoCoupon?: number;
   supplyPrice?: number;
   sellingPrice?: number;
+  sellingPriceNoCoupon?: number;
   margin?: number;
 }
 
