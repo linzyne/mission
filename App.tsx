@@ -4569,6 +4569,9 @@ const App: React.FC = () => {
                           <th className="py-2 px-3 text-left text-gray-500 font-bold">품목</th>
                           <th className="py-2 px-3 text-right text-gray-500 font-bold">수량</th>
                           <th className="py-2 px-3 text-right text-gray-500 font-bold">마진</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">광고비</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">반품</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">슬롯</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -4577,6 +4580,9 @@ const App: React.FC = () => {
                             <td className="py-1.5 px-3 text-gray-700">{item.product}</td>
                             <td className="py-1.5 px-3 text-right text-gray-600">{item.quantity}</td>
                             <td className="py-1.5 px-3 text-right font-bold">{item.totalMargin.toLocaleString()}</td>
+                            <td className="py-1.5 px-3 text-right text-red-500">{item.adCost ? item.adCost.toLocaleString() : '-'}</td>
+                            <td className="py-1.5 px-3 text-right text-red-500">{item.refund ? item.refund.toLocaleString() : '-'}</td>
+                            <td className="py-1.5 px-3 text-right text-red-500">{item.solution ? item.solution.toLocaleString() : '-'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -4585,6 +4591,9 @@ const App: React.FC = () => {
                           <td className="py-2 px-3 text-gray-700">합계</td>
                           <td className="py-2 px-3 text-right text-gray-600">{pendingUpload.salesItems.reduce((s, i) => s + i.quantity, 0)}</td>
                           <td className="py-2 px-3 text-right">{pendingUpload.salesItems.reduce((s, i) => s + i.totalMargin, 0).toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-red-500">{pendingUpload.salesItems.reduce((s, i) => s + i.adCost, 0).toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-red-500">{pendingUpload.salesItems.reduce((s, i) => s + i.refund, 0).toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-red-500">{pendingUpload.salesItems.reduce((s, i) => s + i.solution, 0).toLocaleString()}</td>
                         </tr>
                       </tfoot>
                     </table>
