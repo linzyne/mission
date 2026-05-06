@@ -3512,8 +3512,8 @@ const App: React.FC = () => {
                                   <th className="py-1.5 px-3 text-left rounded-tl-xl">품목명</th>
                                   <th className="py-1.5 px-3">공급가</th>
                                   <th className="py-1.5 px-3">빈박단위비용<br/><span className="font-normal text-[10px]">쿠폰적용</span></th>
-                                  {hpFormulaEdit.silbaeAddSupply && <th className="py-1.5 px-3 text-orange-400">실배단위비용<br/><span className="font-normal text-[10px]">쿠폰적용</span></th>}
-                                  <th className="py-1.5 px-3 text-blue-400">빈박단위비용<br/><span className="font-normal text-[10px]">쿠폰미적용</span></th>
+                                  <th className={`py-1.5 px-3 text-blue-400${!hpFormulaEdit.silbaeAddSupply ? " rounded-tr-xl" : ""}`}>빈박단위비용<br/><span className="font-normal text-[10px]">쿠폰미적용</span></th>
+                                  {hpFormulaEdit.silbaeAddSupply && <th className="py-1.5 px-3 text-orange-400 border-l-2 border-gray-100">실배단위비용<br/><span className="font-normal text-[10px]">쿠폰적용</span></th>}
                                   {hpFormulaEdit.silbaeAddSupply && <th className="py-1.5 px-3 text-orange-300 rounded-tr-xl">실배단위비용<br/><span className="font-normal text-[10px]">쿠폰미적용</span></th>}
                                 </tr>
                               </thead>
@@ -3523,8 +3523,8 @@ const App: React.FC = () => {
                                     <td className="py-1.5 px-3 text-left text-gray-700">{r.name}</td>
                                     <td className="py-1.5 px-3 text-gray-400">{r.supPrice.toLocaleString()}</td>
                                     <td className="py-1.5 px-3 text-gray-700">{r.base.toLocaleString()}</td>
-                                    {hpFormulaEdit.silbaeAddSupply && <td className="py-1.5 px-3 text-orange-500">{r.silbae!.toLocaleString()}</td>}
                                     <td className="py-1.5 px-3 text-blue-500">{r.baseNC != null ? r.baseNC.toLocaleString() : '-'}</td>
+                                    {hpFormulaEdit.silbaeAddSupply && <td className="py-1.5 px-3 text-orange-500 border-l-2 border-gray-100">{r.silbae!.toLocaleString()}</td>}
                                     {hpFormulaEdit.silbaeAddSupply && <td className="py-1.5 px-3 text-orange-400">{r.silbaeNC != null ? r.silbaeNC.toLocaleString() : '-'}</td>}
                                   </tr>
                                 ))}
@@ -3615,7 +3615,7 @@ const App: React.FC = () => {
                                 key={`priceNoCoupon-${price.id}-${price.priceNoCoupon}`}
                                 onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                                 onBlur={(e) => updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { priceNoCoupon: Number(e.target.value) || 0 })}
-                                className="w-full bg-transparent outline-none text-blue-400 font-bold text-center border-b border-transparent focus:border-blue-400 transition-colors"
+                                className="w-full bg-transparent outline-none text-blue-600 font-bold text-center border-b border-transparent focus:border-blue-500 transition-colors"
                                 placeholder="-"
                               />
                             </td>
