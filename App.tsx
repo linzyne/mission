@@ -959,7 +959,9 @@ const App: React.FC = () => {
         if (!entry) return;
         const updates: Partial<ManualEntry> = { product: productName };
         if (matchedPrice) {
-          let finalPrice = matchedPrice.price;
+          const isCoupon = entry.couponApplied !== false;
+          const basePrice = isCoupon ? matchedPrice.price : (matchedPrice.priceNoCoupon || matchedPrice.price);
+          let finalPrice = basePrice;
           if ((entry.orderNumber || '').includes('실배')) finalPrice -= 1000;
           updates.paymentAmount = finalPrice;
         }
@@ -1750,12 +1752,14 @@ const App: React.FC = () => {
     });
 
     // Auto-calculate Payment Amount
-    if (field === 'product' || field === 'orderNumber') {
+    if (field === 'product' || field === 'orderNumber' || field === 'couponApplied') {
       const productName = field === 'product' ? value : entry.product;
       const matchedPrice = productPrices.find(p => p.name === productName);
 
       if (matchedPrice) {
-        let finalPrice = matchedPrice.price;
+        const isCoupon = field === 'couponApplied' ? (value as boolean) : entry.couponApplied !== false;
+        const basePrice = isCoupon ? matchedPrice.price : (matchedPrice.priceNoCoupon || matchedPrice.price);
+        let finalPrice = basePrice;
         const orderNum = field === 'orderNumber' ? value : entry.orderNumber;
         if ((orderNum || '').includes('실배')) {
           finalPrice -= 1000;
