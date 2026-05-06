@@ -513,6 +513,12 @@ const App: React.FC = () => {
     if (!selectedBiz) return;
     const lk = (key: string) => selectedBiz === 'angun' ? key : `${selectedBiz}_${key}`;
     try { const s = localStorage.getItem(lk('manualColWidths')); setColWidths(s ? { ...DEFAULT_COL_WIDTHS, ...JSON.parse(s) } : { ...DEFAULT_COL_WIDTHS }); } catch { setColWidths({ ...DEFAULT_COL_WIDTHS }); }
+    // 사업자 전환 시 마스터 주문서·운송장 초기화 (각 사업자 개별 관리)
+    setMasterSheets([]);
+    setMasterUploadPlatformId('');
+    setMasterUnmatchedExpanded(false);
+    setWaybillMap(new Map());
+    setWaybillSources([]);
   }, [selectedBiz]);
 
   // Sales undo/redo
