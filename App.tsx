@@ -3569,9 +3569,9 @@ const App: React.FC = () => {
                         <tr>
                           <th className="py-1.5 px-3 rounded-tl-xl">No.</th>
                           <th className="py-1.5 px-3 text-left">품목명</th>
-                          <th className="py-1.5 px-3">리뷰비<br/><span className="font-normal text-[10px]">쿠폰적용</span></th>
-                          <th className="py-1.5 px-3">리뷰비<br/><span className="font-normal text-[10px]">쿠폰미적용</span></th>
-                          <th className="py-1.5 px-3 text-gray-400">공급가</th>
+                          <th className="py-1.5 px-3">페이백<br/><span className="font-normal text-[10px]">쿠폰적용</span></th>
+                          <th className="py-1.5 px-3">페이백<br/><span className="font-normal text-[10px]">쿠폰미적용</span></th>
+                          <th className="py-1.5 px-3 text-gray-400">물건값</th>
                           <th className="py-1.5 px-3 text-gray-400">판매가<br/><span className="font-normal text-[10px]">쿠폰적용</span></th>
                           <th className="py-1.5 px-3 text-gray-400">판매가<br/><span className="font-normal text-[10px]">쿠폰미적용</span></th>
                           <th className="py-1.5 px-3 text-gray-400">마진</th>
