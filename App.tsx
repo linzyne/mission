@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, SalesSubTab, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource, PlatformConfig } from './types';
 import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
-import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs } from 'firebase/firestore';
 
 const BUSINESSES: Record<string, BusinessInfo> = {
   angun: {
@@ -487,6 +487,30 @@ const App: React.FC = () => {
     });
     return () => unsub();
   }, [selectedBiz]);
+  // monthlyOverhead: 업무일지 비용시트에서 파싱된 공통 경비 (이자 제외, 연동업체 없는 항목)
+  // key = "YYYY-MM", value = { 물류비: 15890, 식비: 32434, ... }
+  // getDocs(일회성 읽기) + 업로드/삭제 시 in-memory 갱신 → Firestore 읽기 최소화
+  const [monthlyOverhead, setMonthlyOverhead] = useState<Record<string, Record<string, number>>>({});
+  const reloadOverheadRef = useRef<(() => Promise<void>) | null>(null);
+  useEffect(() => {
+    if (!selectedBiz) { setMonthlyOverhead({}); reloadOverheadRef.current = null; return; }
+    const reload = async () => {
+      const snap = await getDocs(collection(db, getCol('monthlyOverhead', colPrefix)));
+      const result: Record<string, Record<string, number>> = {};
+      snap.docs.forEach(d => {
+        const { month, categories } = d.data() as { month: string; categories: Record<string, number> };
+        if (!month || !categories) return;
+        if (!result[month]) result[month] = {};
+        Object.entries(categories).forEach(([cat, amt]) => {
+          result[month][cat] = (result[month][cat] || 0) + (Number(amt) || 0);
+        });
+      });
+      setMonthlyOverhead(result);
+    };
+    reloadOverheadRef.current = reload;
+    reload();
+  }, [selectedBiz]);
+
   const [salesMonth, setSalesMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() + 1 }; });
   const salesMonthStr = `${salesMonth.year}-${String(salesMonth.month).padStart(2, '0')}`;
   const salesFileRef = useRef<HTMLInputElement>(null);
@@ -760,6 +784,7 @@ const App: React.FC = () => {
   const [pendingUpload, setPendingUpload] = useState<{
     uploadDate: string;
     salesItems: { docId: string; product: string; productDetail: string; quantity: number; sellingPrice: number; supplyPrice: number; marginPerUnit: number; totalMargin: number; adCost: number; housePurchase: number; solution: number; refund: number; hpManual: boolean }[];
+    overheadCategories: Record<string, number>;
   } | null>(null);
   // 마지막 업로드 삭제용
   const [lastUploadInfo, setLastUploadInfo] = useState<{ uploadDate: string; salesDocIds: string[] } | null>(null);
@@ -828,6 +853,24 @@ const App: React.FC = () => {
       }
     }
 
+    // 비용시트 파싱 (이자 제외, 연동업체 없는 행만 → 공통 오버헤드)
+    const overheadCategories: Record<string, number> = {};
+    const expenseSheetName = wb.SheetNames.find((n: string) => n.includes('비용시트'));
+    if (expenseSheetName) {
+      const expWs = wb.Sheets[expenseSheetName];
+      const expRows: any[][] = XLSX.utils.sheet_to_json(expWs, { header: 1, defval: '' });
+      for (const row of expRows.slice(1)) {
+        const category = String(row[0] || '').trim(); // A: 구분
+        const amount = Number(row[1] || 0);           // B: 금액
+        const linkedCompany = String(row[3] || '').trim(); // D: 연동업체
+        if (!category || !amount) continue;
+        if (category === '합계') continue;  // 합계 행 스킵
+        if (category === '이자') continue;  // 이자 스킵
+        if (linkedCompany) continue;        // 연동업체 있으면 스킵 (품목별 처리 대상)
+        overheadCategories[category] = (overheadCategories[category] || 0) + amount;
+      }
+    }
+
     // 미리보기 데이터 세팅 (아직 저장 안 함)
     const salesItems = Object.values(merged).map(m => {
       const existingSD = salesDaily.find(entry => entry.date === uploadDate && normProductName(entry.product) === normProductName(m.product));
@@ -849,7 +892,7 @@ const App: React.FC = () => {
       };
     });
 
-    setPendingUpload({ uploadDate, salesItems });
+    setPendingUpload({ uploadDate, salesItems, overheadCategories });
     e.target.value = '';
   };
 
@@ -880,6 +923,17 @@ const App: React.FC = () => {
     }
 
     await batch.commit();
+
+    // 오버헤드 비용 저장 (비용시트에서 파싱된 공통 경비)
+    const { overheadCategories } = pendingUpload;
+    if (Object.keys(overheadCategories).length > 0) {
+      await setDoc(doc(db, getCol('monthlyOverhead', colPrefix), uploadDate), {
+        month: uploadDate.substring(0, 7),
+        categories: overheadCategories,
+      });
+      await reloadOverheadRef.current?.();
+    }
+
     setLastUploadInfo({ uploadDate, salesDocIds: savedSalesIds });
     setPendingUpload(null);
     alert(`${uploadDate} / ${salesItems.length}개 품목 등록 완료`);
@@ -894,6 +948,9 @@ const App: React.FC = () => {
       batch.delete(doc(db, getCol('salesDaily', colPrefix), id));
     }
     await batch.commit();
+    // 오버헤드 비용 삭제 (없으면 Firestore가 조용히 무시)
+    await deleteDoc(doc(db, getCol('monthlyOverhead', colPrefix), lastUploadInfo.uploadDate));
+    await reloadOverheadRef.current?.();
     alert(`${lastUploadInfo.uploadDate} 업로드 데이터가 삭제되었습니다.`);
     setLastUploadInfo(null);
   };
@@ -3001,8 +3058,12 @@ const App: React.FC = () => {
                     const fmt = (n: number) => n ? n.toLocaleString() : '-';
                     const fmtColor = (n: number) => n > 0 ? 'text-blue-600' : n < 0 ? 'text-red-500' : 'text-gray-300';
 
-                    // 월별 비용 집계
+                    // 월별 비용 집계 (monthlyOverhead 상태에서 읽음 - getDocs 캐시)
                     const monthCosts: Record<string, number> = {};
+                    months.forEach(m => {
+                      const cats = monthlyOverhead[m] || {};
+                      monthCosts[m] = Object.values(cats).reduce((s, v) => s + v, 0);
+                    });
 
                     // 전체 합계
                     const grandTotal = { supply: 0, margin: 0, qty: 0, ad: 0, hp: 0, sol: 0, ref: 0, net: 0, cost: 0, profit: 0 };
@@ -3035,7 +3096,10 @@ const App: React.FC = () => {
                                 <div className={`text-xl font-black ${fmtColor(profit)}`}>{fmt(profit)}</div>
                                 <div className="text-[10px] text-gray-400 space-y-0.5">
                                   <div className="flex justify-between"><span>순이익</span><span className={fmtColor(t.net)}>{fmt(t.net)}</span></div>
-                                  <div className="flex justify-between"><span>비용</span><span className={fmtColor(-cost)}>{cost ? `-${cost.toLocaleString()}` : '-'}</span></div>
+                                  <div className="flex justify-between font-bold"><span>비용합계</span><span className={cost ? 'text-red-400' : 'text-gray-300'}>{cost ? `-${cost.toLocaleString()}` : '-'}</span></div>
+                                  {Object.entries(monthlyOverhead[m] || {}).map(([cat, amt]) => (
+                                    <div key={cat} className="flex justify-between pl-2"><span>{cat}</span><span className="text-red-400">-{(amt as number).toLocaleString()}</span></div>
+                                  ))}
                                   <div className="flex justify-between border-t pt-0.5 mt-0.5"><span>마진</span><span className="text-gray-600">{fmt(t.margin)}</span></div>
                                   <div className="flex justify-between"><span>광고비</span><span className={fmtColor(t.ad)}>{fmt(t.ad)}</span></div>
                                   <div className="flex justify-between"><span>가구매</span><span className={fmtColor(t.hp)}>{fmt(t.hp)}</span></div>
@@ -3065,7 +3129,18 @@ const App: React.FC = () => {
                                   <div className={`text-xl font-black ${fmtColor(grandTotal.profit)}`}>{fmt(grandTotal.profit)}</div>
                                   <div className="text-[10px] text-gray-400 space-y-0.5">
                                     <div className="flex justify-between"><span>순이익</span><span className={fmtColor(grandTotal.net)}>{fmt(grandTotal.net)}</span></div>
-                                    <div className="flex justify-between"><span>비용</span><span className={fmtColor(-grandTotal.cost)}>{grandTotal.cost ? `-${grandTotal.cost.toLocaleString()}` : '-'}</span></div>
+                                    <div className="flex justify-between font-bold"><span>비용합계</span><span className={grandTotal.cost ? 'text-red-400' : 'text-gray-300'}>{grandTotal.cost ? `-${grandTotal.cost.toLocaleString()}` : '-'}</span></div>
+                                    {(() => {
+                                      const allCats: Record<string, number> = {};
+                                      months.forEach(m => {
+                                        Object.entries(monthlyOverhead[m] || {}).forEach(([cat, amt]) => {
+                                          allCats[cat] = (allCats[cat] || 0) + (amt as number);
+                                        });
+                                      });
+                                      return Object.entries(allCats).map(([cat, amt]) => (
+                                        <div key={cat} className="flex justify-between pl-2"><span>{cat}</span><span className="text-red-400">-{amt.toLocaleString()}</span></div>
+                                      ));
+                                    })()}
                                     <div className="flex justify-between border-t pt-0.5 mt-0.5"><span>마진</span><span className="text-gray-600">{fmt(grandTotal.margin)}</span></div>
                                     <div className="flex justify-between"><span>광고비</span><span className={fmtColor(grandTotal.ad)}>{fmt(grandTotal.ad)}</span></div>
                                     <div className="flex justify-between"><span>가구매</span><span className={fmtColor(grandTotal.hp)}>{fmt(grandTotal.hp)}</span></div>
@@ -3147,6 +3222,10 @@ const App: React.FC = () => {
                       const revenueItems = Object.entries(revenueByProduct).sort((a, b) => b[1] - a[1]);
                       const totalRevenue = revenueItems.reduce((s, [, v]) => s + v, 0);
 
+                      const monthOverheadCats = monthlyOverhead[salesMonthStr] || {};
+                      const totalOverhead = Object.values(monthOverheadCats).reduce((s, v) => s + v, 0);
+                      const netProfit = totalRevenue - totalOverhead;
+
                       return (
                         <div>
                           {dates.length === 0 ? (
@@ -3197,6 +3276,8 @@ const App: React.FC = () => {
                             <div className="bg-white border-b-2 border-gray-300 py-4 text-center">
                               <h3 className="text-xl font-black text-gray-900">{salesMonth.month}월 손익 계산서</h3>
                             </div>
+
+                            {/* 총 매출 내역 */}
                             <div>
                               <div className="bg-yellow-50 border-b border-gray-300 py-2 text-center font-black text-sm text-gray-800">총 매출 내역</div>
                               <div className="text-right text-[10px] text-gray-400 px-3 py-1 border-b border-gray-200">(단위 : 원)</div>
@@ -3226,6 +3307,45 @@ const App: React.FC = () => {
                                   </tr>
                                 </tfoot>
                               </table>
+                            </div>
+
+                            {/* 비용 내역 */}
+                            <div className="border-t-2 border-gray-300">
+                              <div className="bg-red-50 border-b border-gray-300 py-2 text-center font-black text-sm text-gray-800">비용 내역</div>
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="border-b border-gray-300 bg-gray-50">
+                                    <th className="py-1.5 px-3 text-left font-bold text-gray-600">항목</th>
+                                    <th className="py-1.5 px-3 text-right font-bold text-gray-600">금액</th>
+                                    <th className="py-1.5 px-3 text-right font-bold text-gray-600 w-16">비율</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {Object.entries(monthOverheadCats).map(([cat, amt]) => (
+                                    <tr key={cat} className="border-b border-gray-100">
+                                      <td className="py-1.5 px-3 text-gray-700">{cat}</td>
+                                      <td className="py-1.5 px-3 text-right font-bold text-red-500">-{(amt as number).toLocaleString()}</td>
+                                      <td className="py-1.5 px-3 text-right text-gray-500">{totalRevenue ? Math.round((amt as number) / totalRevenue * 100) : 0}%</td>
+                                    </tr>
+                                  ))}
+                                  {Object.keys(monthOverheadCats).length === 0 && (
+                                    <tr><td colSpan={3} className="py-4 text-center text-gray-300">비용 데이터 없음 (업무일지 비용시트 업로드 필요)</td></tr>
+                                  )}
+                                </tbody>
+                                <tfoot>
+                                  <tr className="border-t-2 border-gray-300 bg-gray-50">
+                                    <td className="py-2 px-3 font-black text-gray-800">총 비용</td>
+                                    <td className="py-2 px-3 text-right font-black text-red-500">{totalOverhead ? `-${totalOverhead.toLocaleString()}` : '-'}</td>
+                                    <td className="py-2 px-3"></td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            </div>
+
+                            {/* 순이익 */}
+                            <div className="border-t-2 border-gray-900 bg-gray-50 px-4 py-4 flex justify-between items-center">
+                              <span className="text-base font-black text-gray-900">순이익</span>
+                              <span className={`text-xl font-black ${netProfit >= 0 ? 'text-blue-600' : 'text-red-500'}`}>{netProfit.toLocaleString()}</span>
                             </div>
                           </div>
                         </div>
@@ -4618,6 +4738,28 @@ const App: React.FC = () => {
 
               {pendingUpload.salesItems.length === 0 && (
                 <p className="text-center text-gray-400 text-sm py-4">등록할 항목이 없습니다.</p>
+              )}
+
+              {/* 공통 비용 항목 */}
+              {Object.keys(pendingUpload.overheadCategories).length > 0 && (
+                <div>
+                  <h4 className="text-sm font-bold text-gray-700 mb-2 flex items-center gap-2">
+                    <span className="w-2 h-2 bg-red-400 rounded-full"></span>
+                    공통 비용 ({Object.keys(pendingUpload.overheadCategories).length}항목)
+                  </h4>
+                  <div className="bg-red-50 rounded-xl p-3 space-y-1">
+                    {Object.entries(pendingUpload.overheadCategories).map(([cat, amt]) => (
+                      <div key={cat} className="flex justify-between text-xs">
+                        <span className="text-gray-600">{cat}</span>
+                        <span className="font-bold text-red-500">-{amt.toLocaleString()}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-xs border-t border-red-200 pt-1 mt-1">
+                      <span className="font-bold text-gray-700">합계</span>
+                      <span className="font-bold text-red-600">-{Object.values(pendingUpload.overheadCategories).reduce((s, v) => s + v, 0).toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
             <div className="p-4 border-t border-gray-100 flex gap-2">
