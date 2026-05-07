@@ -865,7 +865,6 @@ const App: React.FC = () => {
         const linkedCompany = String(row[3] || '').trim(); // D: 연동업체
         if (!category || !amount) continue;
         if (category === '합계') continue;  // 합계 행 스킵
-        if (category === '이자') continue;  // 이자 스킵
         if (linkedCompany) continue;        // 연동업체 있으면 스킵 (품목별 처리 대상)
         overheadCategories[category] = (overheadCategories[category] || 0) + amount;
       }
