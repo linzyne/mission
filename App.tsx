@@ -81,7 +81,7 @@ const DEFAULT_EXPORT_TEMPLATES: ExportTemplate[] = [
       { header: '주문번호', source: 'orderNumber' },
       { header: '받는사람', source: 'name2' },
       { header: '전화번호1', source: 'emergencyContact', stripDash: true },
-      { header: '전화번호2', source: 'empty' },
+      { header: '전화번호2', source: 'fixed', fixedValue: '롯데택배' },
       { header: '우편번호', source: 'empty' },
       { header: '주소', source: 'address' },
       { header: '상품명1', source: 'fixed', fixedValue: '완구류' },
@@ -3831,7 +3831,12 @@ const App: React.FC = () => {
                                   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
                                   const wb = XLSX.utils.book_new();
                                   XLSX.utils.book_append_sheet(wb, ws, tpl.sheetName);
-                                  XLSX.writeFile(wb, `${tpl.filePrefix}_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
+                                  const dateStr = toLocalDateStr().replace(/-/g,'');
+                                  const bizPrefix = selectedBiz === 'zoe' ? '조에' : '안군';
+                                  const fileName = tpl.id === 'delivery'
+                                    ? `${bizPrefix}_롯데대행 운송장_${dateStr}.xlsx`
+                                    : `${tpl.filePrefix}_${dateStr}.xlsx`;
+                                  XLSX.writeFile(wb, fileName);
                                 }} className={`px-2.5 py-1 text-white rounded-lg font-bold text-[11px] ${colorMap[tpl.color] || 'bg-gray-500 hover:bg-gray-600'}`}>{tpl.name} 📋</button>
                               );
                             })}
