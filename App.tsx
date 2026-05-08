@@ -3267,9 +3267,10 @@ const App: React.FC = () => {
                       const totalRefund = filtered.reduce((s, e) => s + (e.refund || 0), 0);
 
                       const monthOverheadCats = monthlyOverhead[salesMonthStr] || {};
-                      const totalManual = manualRows.reduce((s, r) => s + r.amount, 0);
-                      const totalOverhead = Object.values(monthOverheadCats).reduce((s, v) => s + v, 0) + totalManual;
-                      const netProfit = totalRevenue - totalOverhead;
+                      const totalUploadOverhead = Object.values(monthOverheadCats).reduce((s, v) => s + v, 0);
+                      const totalManual = manualRows.reduce((s, r) => s + r.amount, 0); // 음수로 입력됨
+                      const totalOverhead = totalUploadOverhead - totalManual; // 실제 총비용 (표시용 양수)
+                      const netProfit = totalRevenue - totalUploadOverhead + totalManual;
 
                       return (
                         <div>
@@ -3457,7 +3458,7 @@ const App: React.FC = () => {
                                             setManualOverhead(prev => ({ ...prev, [salesMonthStr]: updated }));
                                           }}
                                           onBlur={() => saveManualOverheadRows(salesMonthStr, manualRows)}
-                                          placeholder="0"
+                                          placeholder="-50000"
                                         />
                                       </td>
                                       <td className="py-1 px-3 text-right">
