@@ -492,24 +492,33 @@ const App: React.FC = () => {
   // getDocs(일회성 읽기) + 업로드/삭제 시 in-memory 갱신 → Firestore 읽기 최소화
   const [monthlyOverhead, setMonthlyOverhead] = useState<Record<string, Record<string, number>>>({});
   // manualOverhead: 손익표에서 직접 입력한 비용 (Firestore doc ID: manual-YYYY-MM)
-  const [manualOverhead, setManualOverhead] = useState<Record<string, { id: string; name: string; amount: number }[]>>({});
+  const [manualOverhead, setManualOverhead] = useState<Record<string, { id: string; name: string; amount: number; date?: string }[]>>({});
   const reloadOverheadRef = useRef<(() => Promise<void>) | null>(null);
   useEffect(() => {
     if (!selectedBiz) { setMonthlyOverhead({}); setManualOverhead({}); reloadOverheadRef.current = null; return; }
     const reload = async () => {
       const snap = await getDocs(collection(db, getCol('monthlyOverhead', colPrefix)));
       const result: Record<string, Record<string, number>> = {};
-      const manualResult: Record<string, { id: string; name: string; amount: number }[]> = {};
+      const manualResult: Record<string, { id: string; name: string; amount: number; date?: string }[]> = {};
       snap.docs.forEach(d => {
-        const data = d.data() as { month: string; categories: Record<string, number>; isManual?: boolean };
-        if (!data.month || !data.categories) return;
+        const data = d.data() as { month: string; categories?: Record<string, number>; items?: { name: string; amount: number; date?: string }[]; isManual?: boolean };
+        if (!data.month) return;
         if (data.isManual) {
-          manualResult[data.month] = Object.entries(data.categories).map(([name, amount], i) => ({
-            id: `${data.month}-${i}-${name}`,
-            name,
-            amount: Number(amount) || 0,
-          }));
-        } else {
+          if (Array.isArray(data.items)) {
+            manualResult[data.month] = data.items.map((item, i) => ({
+              id: `${data.month}-${i}-${item.name}`,
+              name: item.name || '',
+              amount: Number(item.amount) || 0,
+              date: item.date || undefined,
+            }));
+          } else if (data.categories) {
+            manualResult[data.month] = Object.entries(data.categories).map(([name, amount], i) => ({
+              id: `${data.month}-${i}-${name}`,
+              name,
+              amount: Number(amount) || 0,
+            }));
+          }
+        } else if (data.categories) {
           if (!result[data.month]) result[data.month] = {};
           Object.entries(data.categories).forEach(([cat, amt]) => {
             result[data.month][cat] = (result[data.month][cat] || 0) + (Number(amt) || 0);
@@ -793,13 +802,12 @@ const App: React.FC = () => {
   };
 
   // 손익표: 직접 입력 비용 저장
-  const saveManualOverheadRows = async (month: string, rows: { id: string; name: string; amount: number }[]) => {
-    const categories: Record<string, number> = {};
-    rows.forEach(r => { if (r.name.trim()) categories[r.name.trim()] = r.amount; });
-    if (Object.keys(categories).length === 0) {
+  const saveManualOverheadRows = async (month: string, rows: { id: string; name: string; amount: number; date?: string }[]) => {
+    const items = rows.filter(r => r.name.trim()).map(r => ({ name: r.name.trim(), amount: r.amount, ...(r.date ? { date: r.date } : {}) }));
+    if (items.length === 0) {
       await deleteDoc(doc(db, getCol('monthlyOverhead', colPrefix), `manual-${month}`)).catch(() => {});
     } else {
-      await setDoc(doc(db, getCol('monthlyOverhead', colPrefix), `manual-${month}`), { month, categories, isManual: true });
+      await setDoc(doc(db, getCol('monthlyOverhead', colPrefix), `manual-${month}`), { month, items, isManual: true });
     }
     setManualOverhead(prev => ({ ...prev, [month]: rows }));
   };
@@ -3228,13 +3236,20 @@ const App: React.FC = () => {
                     /* ===== 손익표 ===== */
                     (() => {
                       const filtered = salesDaily.filter(e => e.date?.startsWith(salesMonthStr));
-                      const byDate: Record<string, { margin: number; adCost: number; solution: number; refund: number }> = {};
+                      const byDate: Record<string, { margin: number; adCost: number; solution: number; refund: number; manualCost: number }> = {};
                       filtered.forEach(e => {
-                        if (!byDate[e.date]) byDate[e.date] = { margin: 0, adCost: 0, solution: 0, refund: 0 };
+                        if (!byDate[e.date]) byDate[e.date] = { margin: 0, adCost: 0, solution: 0, refund: 0, manualCost: 0 };
                         byDate[e.date].margin += (e.totalMargin + e.adCost + e.housePurchase + e.solution + (e.refund || 0));
                         byDate[e.date].adCost += (e.adCost || 0);
                         byDate[e.date].solution += (e.solution || 0);
                         byDate[e.date].refund += (e.refund || 0);
+                      });
+                      const manualRows = manualOverhead[salesMonthStr] || [];
+                      manualRows.forEach(r => {
+                        if (r.date && r.date.startsWith(salesMonthStr)) {
+                          if (!byDate[r.date]) byDate[r.date] = { margin: 0, adCost: 0, solution: 0, refund: 0, manualCost: 0 };
+                          byDate[r.date].manualCost += r.amount;
+                        }
                       });
                       const dates = Object.keys(byDate).sort();
                       const grandMargin = dates.reduce((s, d) => s + byDate[d].margin, 0);
@@ -3252,7 +3267,6 @@ const App: React.FC = () => {
                       const totalRefund = filtered.reduce((s, e) => s + (e.refund || 0), 0);
 
                       const monthOverheadCats = monthlyOverhead[salesMonthStr] || {};
-                      const manualRows = manualOverhead[salesMonthStr] || [];
                       const totalManual = manualRows.reduce((s, r) => s + r.amount, 0);
                       const totalOverhead = Object.values(monthOverheadCats).reduce((s, v) => s + v, 0) + totalManual;
                       const netProfit = totalRevenue - totalOverhead;
@@ -3271,6 +3285,7 @@ const App: React.FC = () => {
                                     <th className="py-1.5 px-3">광고비</th>
                                     <th className="py-1.5 px-3">슬롯</th>
                                     <th className="py-1.5 px-3">반품</th>
+                                    <th className="py-1.5 px-3">비용</th>
                                     <th className="py-1.5 px-3">비고</th>
                                   </tr>
                                 </thead>
@@ -3284,6 +3299,7 @@ const App: React.FC = () => {
                                         <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].adCost ? byDate[date].adCost.toLocaleString() : '-'}</td>
                                         <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].solution ? byDate[date].solution.toLocaleString() : '-'}</td>
                                         <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].refund ? byDate[date].refund.toLocaleString() : '-'}</td>
+                                        <td className="py-1 px-3 text-orange-500 font-bold">{byDate[date].manualCost ? byDate[date].manualCost.toLocaleString() : '-'}</td>
                                         <td className="py-1 px-3">
                                           <input
                                             type="text"
@@ -3299,7 +3315,7 @@ const App: React.FC = () => {
                                   <tr className="border-t-2 border-gray-900 bg-gray-50 font-black text-center">
                                     <td className="py-1.5 px-3">합계</td>
                                     <td className="py-1.5 px-3" style={{ color: grandMargin >= 0 ? '#16a34a' : '#dc2626' }}>{grandMargin.toLocaleString()}</td>
-                                    <td></td><td></td><td></td><td></td>
+                                    <td></td><td></td><td></td><td></td><td></td>
                                   </tr>
                                 </tbody>
                               </table>
@@ -3405,17 +3421,31 @@ const App: React.FC = () => {
                                   {manualRows.map((row, idx) => (
                                     <tr key={row.id} className="border-b border-gray-100 bg-orange-50/30">
                                       <td className="py-1 px-3">
-                                        <input
-                                          type="text"
-                                          className="w-full bg-transparent border-b border-transparent focus:border-orange-300 outline-none text-gray-700 text-xs"
-                                          value={row.name}
-                                          onChange={e => {
-                                            const updated = manualRows.map((r, i) => i === idx ? { ...r, name: e.target.value } : r);
-                                            setManualOverhead(prev => ({ ...prev, [salesMonthStr]: updated }));
-                                          }}
-                                          onBlur={() => saveManualOverheadRows(salesMonthStr, manualRows)}
-                                          placeholder="항목명"
-                                        />
+                                        <div className="flex flex-col gap-0.5">
+                                          <input
+                                            type="text"
+                                            className="w-full bg-transparent border-b border-transparent focus:border-orange-300 outline-none text-gray-700 text-xs"
+                                            value={row.name}
+                                            onChange={e => {
+                                              const updated = manualRows.map((r, i) => i === idx ? { ...r, name: e.target.value } : r);
+                                              setManualOverhead(prev => ({ ...prev, [salesMonthStr]: updated }));
+                                            }}
+                                            onBlur={() => saveManualOverheadRows(salesMonthStr, manualRows)}
+                                            placeholder="항목명"
+                                          />
+                                          <input
+                                            type="date"
+                                            className="w-full bg-transparent outline-none text-[10px] text-gray-400 focus:text-orange-400"
+                                            value={row.date || ''}
+                                            min={`${salesMonthStr}-01`}
+                                            max={`${salesMonthStr}-31`}
+                                            onChange={e => {
+                                              const updated = manualRows.map((r, i) => i === idx ? { ...r, date: e.target.value || undefined } : r);
+                                              setManualOverhead(prev => ({ ...prev, [salesMonthStr]: updated }));
+                                            }}
+                                            onBlur={() => saveManualOverheadRows(salesMonthStr, manualRows)}
+                                          />
+                                        </div>
                                       </td>
                                       <td className="py-1 px-3 text-right">
                                         <input
