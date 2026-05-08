@@ -3253,6 +3253,8 @@ const App: React.FC = () => {
                       });
                       const dates = Object.keys(byDate).sort();
                       const grandMargin = dates.reduce((s, d) => s + byDate[d].margin, 0);
+                      const grandManualCost = dates.reduce((s, d) => s + byDate[d].manualCost, 0);
+                      const grandNet = grandMargin + grandManualCost;
 
                       const revenueByProduct: Record<string, number> = {};
                       filtered.forEach(e => {
@@ -3287,6 +3289,7 @@ const App: React.FC = () => {
                                     <th className="py-1.5 px-3">슬롯</th>
                                     <th className="py-1.5 px-3">반품</th>
                                     <th className="py-1.5 px-3">비용</th>
+                                    <th className="py-1.5 px-3 text-blue-600">순계</th>
                                     <th className="py-1.5 px-3">비고</th>
                                   </tr>
                                 </thead>
@@ -3301,6 +3304,7 @@ const App: React.FC = () => {
                                         <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].solution ? byDate[date].solution.toLocaleString() : '-'}</td>
                                         <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].refund ? byDate[date].refund.toLocaleString() : '-'}</td>
                                         <td className="py-1 px-3 text-orange-500 font-bold">{byDate[date].manualCost ? byDate[date].manualCost.toLocaleString() : '-'}</td>
+                                        <td className="py-1 px-3 font-bold" style={{ color: (dayMargin + byDate[date].manualCost) >= 0 ? '#2563eb' : '#dc2626' }}>{(dayMargin + byDate[date].manualCost).toLocaleString()}</td>
                                         <td className="py-1 px-3">
                                           <input
                                             type="text"
@@ -3316,7 +3320,9 @@ const App: React.FC = () => {
                                   <tr className="border-t-2 border-gray-900 bg-gray-50 font-black text-center">
                                     <td className="py-1.5 px-3">합계</td>
                                     <td className="py-1.5 px-3" style={{ color: grandMargin >= 0 ? '#16a34a' : '#dc2626' }}>{grandMargin.toLocaleString()}</td>
-                                    <td></td><td></td><td></td><td></td><td></td>
+                                    <td></td><td></td><td></td><td></td>
+                                    <td className="py-1.5 px-3" style={{ color: grandNet >= 0 ? '#2563eb' : '#dc2626' }}>{grandNet.toLocaleString()}</td>
+                                    <td></td>
                                   </tr>
                                 </tbody>
                               </table>
