@@ -3586,7 +3586,6 @@ const App: React.FC = () => {
                                         <tr>
                                           <th className="py-1.5 w-6"></th>
                                           <th className="py-1.5 px-2 sm:px-3">날짜</th>
-                                          <th className="py-1.5 px-2 sm:px-3">공급가</th>
                                           <th className="py-1.5 px-2 sm:px-3">마진</th>
                                           <th className="py-1.5 px-1">수량</th>
                                           <th className="py-1.5 px-2">광고비</th>
@@ -3604,10 +3603,6 @@ const App: React.FC = () => {
                                             <td className="py-1 px-3">
                                               <input type="text" className="w-24 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-600"
                                                 defaultValue={entry.date} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => { const v = e.target.value; if (v !== entry.date) salesUpdate(entry.id, 'date', v); }} />
-                                            </td>
-                                            <td className="py-1 px-3">
-                                              <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
-                                                defaultValue={entry.supplyPrice || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'supplyPrice', Number(e.target.value) || 0)} />
                                             </td>
                                             <td className="py-1 px-3">
                                               <input type="number" className="w-20 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
@@ -3648,7 +3643,6 @@ const App: React.FC = () => {
                                           <tr className="border-t-2 border-gray-300 bg-gray-50 font-black text-gray-700">
                                             <td></td>
                                             <td className="py-1.5 px-2 sm:px-3 text-gray-400 text-[10px]">총계</td>
-                                            <td className="py-1.5 px-2 sm:px-3">{totals.supplyPrice ? totals.supplyPrice.toLocaleString() : '-'}</td>
                                             <td className="py-1.5 px-2 sm:px-3">{totals.totalMargin ? totals.totalMargin.toLocaleString() : '-'}</td>
                                             <td className="py-1.5 px-1">{totals.quantity ? totals.quantity.toLocaleString() : '-'}</td>
                                             <td className="py-1.5 px-2">{totals.adCost ? totals.adCost.toLocaleString() : '-'}</td>
