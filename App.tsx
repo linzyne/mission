@@ -4035,6 +4035,7 @@ const App: React.FC = () => {
                                     newRows[0] = [...newRows[0], '운송장번호'];
                                     actualTrackColIdx = newRows[0].length - 1;
                                   }
+                                  const carrierColIdx = newRows[0].findIndex(h => h === '택배사');
                                   sheet.allRows.slice(sheet.headerRowIndex + 1).forEach(row => {
                                     const orderNum = String(row[orderColIdx] ?? '').trim();
                                     if (!orderNum || !waybillMap.has(orderNum)) return;
@@ -4044,12 +4045,14 @@ const App: React.FC = () => {
                                     } else {
                                       newRow[actualTrackColIdx] = waybillMap.get(orderNum) ?? '';
                                     }
+                                    if (carrierColIdx !== -1) newRow[carrierColIdx] = '롯데택배';
                                     newRows.push(newRow);
                                   });
                                   const ws = XLSX.utils.aoa_to_sheet(newRows);
                                   const wb = XLSX.utils.book_new();
                                   XLSX.utils.book_append_sheet(wb, ws, sheet.platformName);
-                                  XLSX.writeFile(wb, `${sheet.platformName}_운송장_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
+                                  const bizPfx = selectedBiz === 'zoe' ? '조에' : '안군';
+                                  XLSX.writeFile(wb, `${bizPfx}_롯데대행 운송장_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
                                 }} className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-bold text-[11px]">
                                   ⬇ {sheet.platformName} ({filledCount}건)
                                 </button>
