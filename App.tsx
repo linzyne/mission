@@ -491,21 +491,33 @@ const App: React.FC = () => {
   // key = "YYYY-MM", value = { 물류비: 15890, 식비: 32434, ... }
   // getDocs(일회성 읽기) + 업로드/삭제 시 in-memory 갱신 → Firestore 읽기 최소화
   const [monthlyOverhead, setMonthlyOverhead] = useState<Record<string, Record<string, number>>>({});
+  // manualOverhead: 손익표에서 직접 입력한 비용 (Firestore doc ID: manual-YYYY-MM)
+  const [manualOverhead, setManualOverhead] = useState<Record<string, { id: string; name: string; amount: number }[]>>({});
   const reloadOverheadRef = useRef<(() => Promise<void>) | null>(null);
   useEffect(() => {
-    if (!selectedBiz) { setMonthlyOverhead({}); reloadOverheadRef.current = null; return; }
+    if (!selectedBiz) { setMonthlyOverhead({}); setManualOverhead({}); reloadOverheadRef.current = null; return; }
     const reload = async () => {
       const snap = await getDocs(collection(db, getCol('monthlyOverhead', colPrefix)));
       const result: Record<string, Record<string, number>> = {};
+      const manualResult: Record<string, { id: string; name: string; amount: number }[]> = {};
       snap.docs.forEach(d => {
-        const { month, categories } = d.data() as { month: string; categories: Record<string, number> };
-        if (!month || !categories) return;
-        if (!result[month]) result[month] = {};
-        Object.entries(categories).forEach(([cat, amt]) => {
-          result[month][cat] = (result[month][cat] || 0) + (Number(amt) || 0);
-        });
+        const data = d.data() as { month: string; categories: Record<string, number>; isManual?: boolean };
+        if (!data.month || !data.categories) return;
+        if (data.isManual) {
+          manualResult[data.month] = Object.entries(data.categories).map(([name, amount], i) => ({
+            id: `${data.month}-${i}-${name}`,
+            name,
+            amount: Number(amount) || 0,
+          }));
+        } else {
+          if (!result[data.month]) result[data.month] = {};
+          Object.entries(data.categories).forEach(([cat, amt]) => {
+            result[data.month][cat] = (result[data.month][cat] || 0) + (Number(amt) || 0);
+          });
+        }
       });
       setMonthlyOverhead(result);
+      setManualOverhead(manualResult);
     };
     reloadOverheadRef.current = reload;
     reload();
@@ -778,6 +790,18 @@ const App: React.FC = () => {
   // 손익표: 비고 저장
   const handleSaveMemo = async (date: string, memo: string) => {
     await setDoc(doc(db, getCol('dailyMemos', colPrefix), date), { memo });
+  };
+
+  // 손익표: 직접 입력 비용 저장
+  const saveManualOverheadRows = async (month: string, rows: { id: string; name: string; amount: number }[]) => {
+    const categories: Record<string, number> = {};
+    rows.forEach(r => { if (r.name.trim()) categories[r.name.trim()] = r.amount; });
+    if (Object.keys(categories).length === 0) {
+      await deleteDoc(doc(db, getCol('monthlyOverhead', colPrefix), `manual-${month}`)).catch(() => {});
+    } else {
+      await setDoc(doc(db, getCol('monthlyOverhead', colPrefix), `manual-${month}`), { month, categories, isManual: true });
+    }
+    setManualOverhead(prev => ({ ...prev, [month]: rows }));
   };
 
   // 업무일지 업로드 미리보기 상태
@@ -3222,7 +3246,9 @@ const App: React.FC = () => {
                       const totalRevenue = revenueItems.reduce((s, [, v]) => s + v, 0);
 
                       const monthOverheadCats = monthlyOverhead[salesMonthStr] || {};
-                      const totalOverhead = Object.values(monthOverheadCats).reduce((s, v) => s + v, 0);
+                      const manualRows = manualOverhead[salesMonthStr] || [];
+                      const totalManual = manualRows.reduce((s, r) => s + r.amount, 0);
+                      const totalOverhead = Object.values(monthOverheadCats).reduce((s, v) => s + v, 0) + totalManual;
                       const netProfit = totalRevenue - totalOverhead;
 
                       return (
@@ -3327,9 +3353,67 @@ const App: React.FC = () => {
                                       <td className="py-1.5 px-3 text-right text-gray-500">{totalRevenue ? Math.round((amt as number) / totalRevenue * 100) : 0}%</td>
                                     </tr>
                                   ))}
-                                  {Object.keys(monthOverheadCats).length === 0 && (
+                                  {Object.keys(monthOverheadCats).length === 0 && manualRows.length === 0 && (
                                     <tr><td colSpan={3} className="py-4 text-center text-gray-300">비용 데이터 없음 (업무일지 비용시트 업로드 필요)</td></tr>
                                   )}
+                                  {/* 직접 입력 비용 */}
+                                  {manualRows.length > 0 && (
+                                    <tr className="bg-orange-50 border-b border-orange-200">
+                                      <td colSpan={3} className="py-1 px-3 text-[10px] text-orange-400 font-bold">직접 입력</td>
+                                    </tr>
+                                  )}
+                                  {manualRows.map((row, idx) => (
+                                    <tr key={row.id} className="border-b border-gray-100 bg-orange-50/30">
+                                      <td className="py-1 px-3">
+                                        <input
+                                          type="text"
+                                          className="w-full bg-transparent border-b border-transparent focus:border-orange-300 outline-none text-gray-700 text-xs"
+                                          value={row.name}
+                                          onChange={e => {
+                                            const updated = manualRows.map((r, i) => i === idx ? { ...r, name: e.target.value } : r);
+                                            setManualOverhead(prev => ({ ...prev, [salesMonthStr]: updated }));
+                                          }}
+                                          onBlur={() => saveManualOverheadRows(salesMonthStr, manualRows)}
+                                          placeholder="항목명"
+                                        />
+                                      </td>
+                                      <td className="py-1 px-3 text-right">
+                                        <input
+                                          type="number"
+                                          className="w-full bg-transparent border-b border-transparent focus:border-orange-300 outline-none text-right text-red-500 font-bold text-xs"
+                                          value={row.amount || ''}
+                                          onChange={e => {
+                                            const updated = manualRows.map((r, i) => i === idx ? { ...r, amount: Number(e.target.value) || 0 } : r);
+                                            setManualOverhead(prev => ({ ...prev, [salesMonthStr]: updated }));
+                                          }}
+                                          onBlur={() => saveManualOverheadRows(salesMonthStr, manualRows)}
+                                          placeholder="0"
+                                        />
+                                      </td>
+                                      <td className="py-1 px-3 text-right">
+                                        <button
+                                          onClick={() => {
+                                            const updated = manualRows.filter((_, i) => i !== idx);
+                                            saveManualOverheadRows(salesMonthStr, updated);
+                                          }}
+                                          className="text-red-300 hover:text-red-500 text-xs font-bold"
+                                        >&times;</button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                  {/* + 비용 추가 버튼 */}
+                                  <tr>
+                                    <td colSpan={3} className="py-1.5 px-3">
+                                      <button
+                                        onClick={() => {
+                                          const newRow = { id: `manual-${Date.now()}`, name: '', amount: 0 };
+                                          const updated = [...manualRows, newRow];
+                                          setManualOverhead(prev => ({ ...prev, [salesMonthStr]: updated }));
+                                        }}
+                                        className="text-xs text-orange-500 hover:text-orange-700 font-bold"
+                                      >+ 비용 추가</button>
+                                    </td>
+                                  </tr>
                                 </tbody>
                                 <tfoot>
                                   <tr className="border-t-2 border-gray-300 bg-gray-50">
