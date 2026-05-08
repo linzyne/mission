@@ -3247,6 +3247,10 @@ const App: React.FC = () => {
                       const revenueItems = Object.entries(revenueByProduct).sort((a, b) => b[1] - a[1]);
                       const totalRevenue = revenueItems.reduce((s, [, v]) => s + v, 0);
 
+                      const totalAdCost = filtered.reduce((s, e) => s + (e.adCost || 0), 0);
+                      const totalSolution = filtered.reduce((s, e) => s + (e.solution || 0), 0);
+                      const totalRefund = filtered.reduce((s, e) => s + (e.refund || 0), 0);
+
                       const monthOverheadCats = monthlyOverhead[salesMonthStr] || {};
                       const manualRows = manualOverhead[salesMonthStr] || [];
                       const totalManual = manualRows.reduce((s, r) => s + r.amount, 0);
@@ -3352,6 +3356,36 @@ const App: React.FC = () => {
                                   </tr>
                                 </thead>
                                 <tbody>
+                                  {/* 참고용: 품목별 비용 (이미 순마진에 차감 반영됨) */}
+                                  {(totalAdCost !== 0 || totalSolution !== 0 || totalRefund !== 0) && (
+                                    <>
+                                      <tr className="bg-gray-50 border-b border-gray-200">
+                                        <td colSpan={3} className="py-1 px-3 text-[10px] text-gray-400">※ 아래 항목은 품목별 순마진에 이미 차감 반영됨 (참고용)</td>
+                                      </tr>
+                                      {totalAdCost !== 0 && (
+                                        <tr className="border-b border-gray-100 text-gray-400">
+                                          <td className="py-1.5 px-3">광고비</td>
+                                          <td className="py-1.5 px-3 text-right font-bold">{totalAdCost.toLocaleString()}</td>
+                                          <td className="py-1.5 px-3 text-right">{totalRevenue ? Math.round(Math.abs(totalAdCost) / totalRevenue * 100) : 0}%</td>
+                                        </tr>
+                                      )}
+                                      {totalSolution !== 0 && (
+                                        <tr className="border-b border-gray-100 text-gray-400">
+                                          <td className="py-1.5 px-3">슬롯</td>
+                                          <td className="py-1.5 px-3 text-right font-bold">{totalSolution.toLocaleString()}</td>
+                                          <td className="py-1.5 px-3 text-right">{totalRevenue ? Math.round(Math.abs(totalSolution) / totalRevenue * 100) : 0}%</td>
+                                        </tr>
+                                      )}
+                                      {totalRefund !== 0 && (
+                                        <tr className="border-b border-gray-100 text-gray-400">
+                                          <td className="py-1.5 px-3">반품</td>
+                                          <td className="py-1.5 px-3 text-right font-bold">{totalRefund.toLocaleString()}</td>
+                                          <td className="py-1.5 px-3 text-right">{totalRevenue ? Math.round(Math.abs(totalRefund) / totalRevenue * 100) : 0}%</td>
+                                        </tr>
+                                      )}
+                                      <tr className="border-b-2 border-gray-200 bg-gray-50"></tr>
+                                    </>
+                                  )}
                                   {Object.entries(monthOverheadCats).map(([cat, amt]) => (
                                     <tr key={cat} className="border-b border-gray-100">
                                       <td className="py-1.5 px-3 text-gray-700">{cat}</td>
