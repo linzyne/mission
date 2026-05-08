@@ -3091,9 +3091,11 @@ const App: React.FC = () => {
 
                     // 월별 비용 집계 (monthlyOverhead 상태에서 읽음 - getDocs 캐시)
                     const monthCosts: Record<string, number> = {};
+                    const monthManualSums: Record<string, number> = {};
                     months.forEach(m => {
                       const cats = monthlyOverhead[m] || {};
                       monthCosts[m] = Object.values(cats).reduce((s, v) => s + v, 0);
+                      monthManualSums[m] = (manualOverhead[m] || []).reduce((s, r) => s + r.amount, 0); // 음수
                     });
 
                     // 전체 합계
@@ -3106,7 +3108,7 @@ const App: React.FC = () => {
                       grandTotal.hp += monthTotals[m].hp;
                       grandTotal.sol += monthTotals[m].sol;
                       grandTotal.ref += monthTotals[m].ref;
-                      grandTotal.cost += monthCosts[m] || 0;
+                      grandTotal.cost += (monthCosts[m] || 0) - (monthManualSums[m] || 0); // 총비용(표시용 양수)
                     });
                     grandTotal.net = grandTotal.margin + grandTotal.ad + grandTotal.hp + grandTotal.sol + grandTotal.ref;
                     grandTotal.profit = grandTotal.net - grandTotal.cost;
@@ -3119,17 +3121,22 @@ const App: React.FC = () => {
                           const secondHalf = months.filter(m => parseInt(m.split('-')[1]) > 6);
                           const renderCard = (m: string) => {
                             const t = monthTotals[m];
-                            const cost = monthCosts[m] || 0;
-                            const profit = t.net - cost;
+                            const uploadCost = monthCosts[m] || 0;
+                            const manualSum = monthManualSums[m] || 0; // 음수
+                            const totalCost = uploadCost - manualSum; // 표시용 양수
+                            const profit = t.net - uploadCost + manualSum; // 손익계산서와 동일
                             return (
                               <div key={m} className="border rounded-xl p-4 space-y-2">
                                 <div className="text-sm font-black text-gray-700">{parseInt(m.split('-')[1])}월</div>
                                 <div className={`text-xl font-black ${fmtColor(profit)}`}>{fmt(profit)}</div>
                                 <div className="text-[10px] text-gray-400 space-y-0.5">
-                                  <div className="flex justify-between"><span>순이익</span><span className={fmtColor(t.net)}>{fmt(t.net)}</span></div>
-                                  <div className="flex justify-between font-bold"><span>비용합계</span><span className={cost ? 'text-red-400' : 'text-gray-300'}>{cost ? `-${cost.toLocaleString()}` : '-'}</span></div>
+                                  <div className="flex justify-between"><span>순마진</span><span className={fmtColor(t.net)}>{fmt(t.net)}</span></div>
+                                  <div className="flex justify-between font-bold"><span>비용합계</span><span className={totalCost ? 'text-red-400' : 'text-gray-300'}>{totalCost ? `-${totalCost.toLocaleString()}` : '-'}</span></div>
                                   {Object.entries(monthlyOverhead[m] || {}).map(([cat, amt]) => (
                                     <div key={cat} className="flex justify-between pl-2"><span>{cat}</span><span className="text-red-400">-{(amt as number).toLocaleString()}</span></div>
+                                  ))}
+                                  {(manualOverhead[m] || []).filter(r => r.name).map(r => (
+                                    <div key={r.id} className="flex justify-between pl-2"><span>{r.name}</span><span className="text-red-400">{r.amount.toLocaleString()}</span></div>
                                   ))}
                                   <div className="flex justify-between border-t pt-0.5 mt-0.5"><span>마진</span><span className="text-gray-600">{fmt(t.margin)}</span></div>
                                   <div className="flex justify-between"><span>광고비</span><span className={fmtColor(t.ad)}>{fmt(t.ad)}</span></div>
@@ -3159,7 +3166,7 @@ const App: React.FC = () => {
                                   <div className="text-sm font-black text-gray-900">전체 합계</div>
                                   <div className={`text-xl font-black ${fmtColor(grandTotal.profit)}`}>{fmt(grandTotal.profit)}</div>
                                   <div className="text-[10px] text-gray-400 space-y-0.5">
-                                    <div className="flex justify-between"><span>순이익</span><span className={fmtColor(grandTotal.net)}>{fmt(grandTotal.net)}</span></div>
+                                    <div className="flex justify-between"><span>순마진</span><span className={fmtColor(grandTotal.net)}>{fmt(grandTotal.net)}</span></div>
                                     <div className="flex justify-between font-bold"><span>비용합계</span><span className={grandTotal.cost ? 'text-red-400' : 'text-gray-300'}>{grandTotal.cost ? `-${grandTotal.cost.toLocaleString()}` : '-'}</span></div>
                                     {(() => {
                                       const allCats: Record<string, number> = {};
