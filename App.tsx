@@ -3302,9 +3302,9 @@ const App: React.FC = () => {
                               <h3 className="text-xl font-black text-gray-900">{salesMonth.month}월 손익 계산서</h3>
                             </div>
 
-                            {/* 총 매출 내역 */}
+                            {/* 품목별 순마진 */}
                             <div>
-                              <div className="bg-yellow-50 border-b border-gray-300 py-2 text-center font-black text-sm text-gray-800">총 매출 내역</div>
+                              <div className="bg-yellow-50 border-b border-gray-300 py-2 text-center font-black text-sm text-gray-800">품목별 순마진</div>
                               <div className="text-right text-[10px] text-gray-400 px-3 py-1 border-b border-gray-200">(단위 : 원)</div>
                               <table className="w-full text-xs">
                                 <thead>
@@ -3326,7 +3326,7 @@ const App: React.FC = () => {
                                 </tbody>
                                 <tfoot>
                                   <tr className="border-t-2 border-gray-300 bg-gray-50">
-                                    <td className="py-2 px-3 font-black text-gray-800">총 매출액</td>
+                                    <td className="py-2 px-3 font-black text-gray-800">순마진 합계</td>
                                     <td className="py-2 px-3 text-right font-black text-gray-800">{totalRevenue.toLocaleString()}</td>
                                     <td className="py-2 px-3"></td>
                                   </tr>
