@@ -137,6 +137,17 @@ const App: React.FC = () => {
 
 
   // Firestore Sync: Settings
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const onFbError = (err: unknown) => {
+    if ((err as any)?.code === 'resource-exhausted') setQuotaExceeded(true);
+  };
+
+  useEffect(() => {
+    const handler = (e: PromiseRejectionEvent) => onFbError(e.reason);
+    window.addEventListener('unhandledrejection', handler);
+    return () => window.removeEventListener('unhandledrejection', handler);
+  }, []);
+
   const [settings, setSettings] = useState<AppSettings>({ isApplyActive: true });
 
   useEffect(() => {
@@ -144,7 +155,7 @@ const App: React.FC = () => {
     const unsub = onSnapshot(doc(db, getCol('settings', colPrefix), 'global'), (d) => {
       if (d.exists()) setSettings(d.data() as AppSettings);
       else setSettings({ isApplyActive: true });
-    });
+    }, onFbError);
     return () => unsub();
   }, [selectedBiz]);
 
@@ -174,7 +185,7 @@ const App: React.FC = () => {
       } else {
         setExportTemplates(DEFAULT_EXPORT_TEMPLATES);
       }
-    });
+    }, onFbError);
     return () => unsub();
   }, [selectedBiz]);
 
@@ -194,7 +205,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'settings', 'platformConfigs'), (d) => {
       setSharedPlatformConfigs(d.exists() ? (d.data().configs as PlatformConfig[] || []) : []);
-    });
+    }, onFbError);
     return () => unsub();
   }, []);
 
@@ -203,7 +214,7 @@ const App: React.FC = () => {
     if (!selectedBiz || colPrefix === '') { setPlatformConfigs([]); return; }
     const unsub = onSnapshot(doc(db, getCol('settings', colPrefix), 'platformConfigs'), (d) => {
       setPlatformConfigs(d.exists() ? (d.data().configs as PlatformConfig[] || []) : []);
-    });
+    }, onFbError);
     return () => unsub();
   }, [selectedBiz]);
 
@@ -367,7 +378,7 @@ const App: React.FC = () => {
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
       setProducts(list);
-    });
+    }, onFbError);
     return () => unsub();
   }, [selectedBiz]);
 
@@ -440,7 +451,7 @@ const App: React.FC = () => {
       });
       setManualEntries(list);
       setManualEntriesLoaded(true);
-    });
+    }, onFbError);
     return () => unsub();
   }, [selectedBiz]);
 
@@ -453,7 +464,7 @@ const App: React.FC = () => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ReviewEntry));
       list.sort((a, b) => b.date.localeCompare(a.date));
       setReviewEntries(list);
-    });
+    }, onFbError);
     return () => unsub();
   }, [selectedBiz]);
 
@@ -465,7 +476,7 @@ const App: React.FC = () => {
     const unsub = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProductPrice));
       setProductPrices(list);
-    });
+    }, onFbError);
     return () => unsub();
   }, [selectedBiz]);
 
@@ -484,7 +495,7 @@ const App: React.FC = () => {
       setSalesDaily(list);
       salesDailyRef.current = list;
       setSalesDailyLoaded(true);
-    });
+    }, onFbError);
     return () => unsub();
   }, [selectedBiz]);
   // monthlyOverhead: 업무일지 비용시트에서 파싱된 공통 경비 (이자 제외, 연동업체 없는 항목)
@@ -548,7 +559,7 @@ const App: React.FC = () => {
       const m: Record<string, string> = {};
       snapshot.docs.forEach(d => { m[d.id] = (d.data() as any).memo || ''; });
       setDailyMemos(m);
-    });
+    }, onFbError);
     return () => unsub();
   }, [selectedBiz]);
   // localStorage 키를 사업자별로 분리 (안군농원은 기존 키 유지)
@@ -1133,12 +1144,12 @@ const App: React.FC = () => {
     if (colorPicker.type === 'cell' && colorPicker.entryId && colorPicker.cellField) {
       const entry = manualEntries.find(e => e.id === colorPicker.entryId);
       const existing = entry?.cellColors || {};
-      await updateDoc(doc(db, getCol('manualEntries', colPrefix), colorPicker.entryId), { cellColors: { ...existing, [colorPicker.cellField]: color } });
+      await setDoc(doc(db, getCol('manualEntries', colPrefix), colorPicker.entryId), { cellColors: { ...existing, [colorPicker.cellField]: color } }, { merge: true });
     } else if (selectedManualIds.size > 0) {
       const field = colorPicker.type === 'text' ? 'textColor' : 'rowBgColor';
       const batch = writeBatch(db);
       selectedManualIds.forEach(id => {
-        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { [field]: color });
+        batch.set(doc(db, getCol('manualEntries', colPrefix), id), { [field]: color }, { merge: true });
       });
       await batch.commit();
     }
@@ -1414,7 +1425,7 @@ const App: React.FC = () => {
         if (result.phone) updates.emergencyContact = result.phone;
 
         if (Object.keys(updates).length > 0) {
-          await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), updates);
+          await setDoc(doc(db, getCol('manualEntries', colPrefix), id), updates, { merge: true });
         }
       } catch (err) {
         console.error('[Drop OCR] 실패:', err);
@@ -1450,7 +1461,7 @@ const App: React.FC = () => {
             if (result.address) updates.address = result.address;
             if (result.phone) updates.emergencyContact = result.phone;
             if (Object.keys(updates).length > 0) {
-              await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), updates);
+              await setDoc(doc(db, getCol('manualEntries', colPrefix), id), updates, { merge: true });
             }
           } catch (err) {
             console.error('[Paste OCR] 실패:', err);
@@ -1707,7 +1718,7 @@ const App: React.FC = () => {
         }
       }
 
-      await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), updates);
+      await setDoc(doc(db, getCol('manualEntries', colPrefix), id), updates, { merge: true });
     } catch (e) {
       console.error("Toggle Error:", e);
       alert("오류가 발생했습니다: " + e);
@@ -1716,9 +1727,9 @@ const App: React.FC = () => {
 
   const toggleAfterDeposit = async (id: string, currentVal: boolean) => {
     try {
-      await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), {
+      await setDoc(doc(db, getCol('manualEntries', colPrefix), id), {
         afterDeposit: !currentVal
-      });
+      }, { merge: true });
     } catch (e) {
       console.error("Toggle Error:", e);
       alert("오류가 발생했습니다: " + e);
@@ -1862,7 +1873,7 @@ const App: React.FC = () => {
       }
     }
 
-    await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), updates);
+    await setDoc(doc(db, getCol('manualEntries', colPrefix), id), updates, { merge: true });
   };
 
   const handleManualImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1887,7 +1898,7 @@ const App: React.FC = () => {
         if (result.phone) ocrUpdates.emergencyContact = result.phone;
 
         if (Object.keys(ocrUpdates).length > 0) {
-          await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), ocrUpdates);
+          await setDoc(doc(db, getCol('manualEntries', colPrefix), id), ocrUpdates, { merge: true });
         }
       } catch (err) {
         console.error('[Upload OCR] 실패:', err);
@@ -3605,6 +3616,7 @@ const App: React.FC = () => {
                                           <th className="py-1.5 px-2 min-w-[130px]">가구매</th>
                                           <th className="py-1.5 px-2">반품</th>
                                           <th className="py-1.5 px-1">솔룻</th>
+                                          <th className="py-1.5 px-2 text-green-700">순수익</th>
                                         </tr>
                                       </thead>
                                       <tbody>
@@ -3648,6 +3660,9 @@ const App: React.FC = () => {
                                               <input type="number" className="w-14 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.solution || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'solution', Number(e.target.value) || 0)} />
                                             </td>
+                                            <td className="py-1 px-2 font-black" style={{color: ((entry.totalMargin||0) - (entry.adCost||0) - (entry.housePurchase||0) - (entry.refund||0) - (entry.solution||0)) >= 0 ? '#16a34a' : '#dc2626'}}>
+                                              {((entry.totalMargin||0) - (entry.adCost||0) - (entry.housePurchase||0) - (entry.refund||0) - (entry.solution||0)).toLocaleString()}
+                                            </td>
                                           </tr>
                                         ))}
                                       </tbody>
@@ -3662,6 +3677,9 @@ const App: React.FC = () => {
                                             <td className="py-1.5 px-2">{totals.housePurchase ? totals.housePurchase.toLocaleString() : '-'}</td>
                                             <td className="py-1.5 px-2">{totals.refund ? totals.refund.toLocaleString() : '-'}</td>
                                             <td className="py-1.5 px-1">{totals.solution ? totals.solution.toLocaleString() : '-'}</td>
+                                            <td className="py-1.5 px-2" style={{color: (totals.totalMargin - totals.adCost - totals.housePurchase - totals.refund - totals.solution) >= 0 ? '#16a34a' : '#dc2626'}}>
+                                              {(totals.totalMargin - totals.adCost - totals.housePurchase - totals.refund - totals.solution).toLocaleString()}
+                                            </td>
                                           </tr>
                                         </tfoot>
                                       )}
@@ -5286,6 +5304,16 @@ const App: React.FC = () => {
         );
       })()}
 
+      {quotaExceeded && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl px-8 py-7 mx-4 max-w-sm w-full text-center">
+            <div className="text-3xl mb-3">⚠️</div>
+            <p className="text-base font-bold text-gray-800 mb-1">Firebase 용량을 확인해주세요</p>
+            <p className="text-sm text-gray-500 mb-5">일일 무료 사용량이 초과되었습니다.<br/>잠시 후 다시 시도하거나 Firebase 콘솔을 확인해주세요.</p>
+            <button onClick={() => setQuotaExceeded(false)} className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-red-500 hover:bg-red-600">확인</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
