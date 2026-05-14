@@ -3660,8 +3660,8 @@ const App: React.FC = () => {
                                               <input type="number" className="w-14 text-center bg-transparent border-b border-transparent focus:border-gray-400 outline-none"
                                                 defaultValue={entry.solution || ''} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={e => salesUpdate(entry.id, 'solution', Number(e.target.value) || 0)} />
                                             </td>
-                                            <td className="py-1 px-2 font-black" style={{color: ((entry.totalMargin||0) - (entry.adCost||0) - (entry.housePurchase||0) - (entry.refund||0) - (entry.solution||0)) >= 0 ? '#16a34a' : '#dc2626'}}>
-                                              {((entry.totalMargin||0) - (entry.adCost||0) - (entry.housePurchase||0) - (entry.refund||0) - (entry.solution||0)).toLocaleString()}
+                                            <td className="py-1 px-2 font-black" style={{color: ((entry.totalMargin||0) + (entry.adCost||0) + (entry.housePurchase||0) + (entry.refund||0) + (entry.solution||0)) >= 0 ? '#16a34a' : '#dc2626'}}>
+                                              {((entry.totalMargin||0) + (entry.adCost||0) + (entry.housePurchase||0) + (entry.refund||0) + (entry.solution||0)).toLocaleString()}
                                             </td>
                                           </tr>
                                         ))}
@@ -3677,8 +3677,8 @@ const App: React.FC = () => {
                                             <td className="py-1.5 px-2">{totals.housePurchase ? totals.housePurchase.toLocaleString() : '-'}</td>
                                             <td className="py-1.5 px-2">{totals.refund ? totals.refund.toLocaleString() : '-'}</td>
                                             <td className="py-1.5 px-1">{totals.solution ? totals.solution.toLocaleString() : '-'}</td>
-                                            <td className="py-1.5 px-2" style={{color: (totals.totalMargin - totals.adCost - totals.housePurchase - totals.refund - totals.solution) >= 0 ? '#16a34a' : '#dc2626'}}>
-                                              {(totals.totalMargin - totals.adCost - totals.housePurchase - totals.refund - totals.solution).toLocaleString()}
+                                            <td className="py-1.5 px-2" style={{color: (totals.totalMargin + totals.adCost + totals.housePurchase + totals.refund + totals.solution) >= 0 ? '#16a34a' : '#dc2626'}}>
+                                              {(totals.totalMargin + totals.adCost + totals.housePurchase + totals.refund + totals.solution).toLocaleString()}
                                             </td>
                                           </tr>
                                         </tfoot>
