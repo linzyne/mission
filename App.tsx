@@ -3046,6 +3046,7 @@ const App: React.FC = () => {
                     <button onClick={() => setSalesSubTab('summary')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'summary' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>요약</button>
                     <button onClick={() => setSalesSubTab('profitLoss')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'profitLoss' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>손익표</button>
                     <button onClick={() => setSalesSubTab('salesDetail')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'salesDetail' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>품목별판매</button>
+                    <button onClick={() => setSalesSubTab('dailySum')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'dailySum' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>일별합계</button>
                   </div>
 
                   {salesSubTab === 'summary' ? (() => {
@@ -3525,6 +3526,75 @@ const App: React.FC = () => {
                               <span className="text-base font-black text-gray-900">순이익</span>
                               <span className={`text-xl font-black ${netProfit >= 0 ? 'text-blue-600' : 'text-red-500'}`}>{netProfit.toLocaleString()}</span>
                             </div>
+                          </div>
+                        </div>
+                      );
+                    })()
+                  ) : salesSubTab === 'dailySum' ? (
+                    /* ===== 일별합계 ===== */
+                    (() => {
+                      const filtered = salesDaily.filter(e => e.date?.startsWith(salesMonthStr));
+                      // 날짜별 품목별 순수익 집계
+                      const byDate: Record<string, Record<string, number>> = {};
+                      filtered.forEach(e => {
+                        if (!e.date) return;
+                        if (!byDate[e.date]) byDate[e.date] = {};
+                        const pName = normProductName(e.product);
+                        const net = (e.totalMargin || 0) + (e.adCost || 0) + (e.housePurchase || 0) + (e.solution || 0) + (e.refund || 0);
+                        byDate[e.date][pName] = (byDate[e.date][pName] || 0) + net;
+                      });
+                      const dates = Object.keys(byDate).sort();
+
+                      // 기간 합계
+                      const periodNet = filtered.reduce((s, e) => s + (e.totalMargin || 0) + (e.adCost || 0) + (e.housePurchase || 0) + (e.solution || 0) + (e.refund || 0), 0);
+                      const periodMargin = filtered.reduce((s, e) => s + (e.totalMargin || 0), 0);
+                      const overheadCats = (monthlyOverhead[salesMonthStr] || {}) as Record<string, number>;
+                      const monthOverheadAmt: number = Object.values(overheadCats).reduce((s: number, v: number) => s + v, 0);
+                      const manualOverheadAmt: number = (manualOverhead[salesMonthStr] || []).reduce((s: number, r) => s + (r.amount || 0), 0);
+                      const totalCost: number = monthOverheadAmt - manualOverheadAmt;
+                      const periodProfit: number = periodNet - monthOverheadAmt + manualOverheadAmt;
+
+                      // 날짜 포맷
+                      const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+                      const formatDate = (ds: string) => {
+                        const [y, m, d] = ds.split('-').map(Number);
+                        const dow = dayNames[new Date(y, m - 1, d).getDay()];
+                        return `${m}/${d} (${dow})`;
+                      };
+
+                      if (dates.length === 0) return <p className="text-gray-300 text-center py-16">데이터가 없습니다.</p>;
+
+                      return (
+                        <div className="bg-gray-950 rounded-2xl p-4 sm:p-5 space-y-4">
+                          {/* 기간 헤더 */}
+                          <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm font-black px-1">
+                            <span className="text-gray-400">기간 총 마진 <span className="text-white">{periodMargin.toLocaleString()}원</span></span>
+                            <span className="text-gray-400">비용 <span className="text-red-400">{totalCost ? `-${totalCost.toLocaleString()}원` : '-'}</span></span>
+                            <span className="text-gray-400">순수익 <span className={periodProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{periodProfit.toLocaleString()}원</span></span>
+                          </div>
+
+                          {/* 날짜 카드 그리드 */}
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                            {dates.map(date => {
+                              const items = Object.entries(byDate[date]).sort((a, b) => b[1] - a[1]);
+                              const dayTotal = items.reduce((s, [, v]) => s + v, 0);
+                              return (
+                                <div key={date} className="bg-gray-800/80 rounded-xl p-3 space-y-2">
+                                  <div className="flex justify-between items-baseline gap-2">
+                                    <span className="text-white font-black text-sm whitespace-nowrap">{formatDate(date)}</span>
+                                    <span className={`font-black text-sm whitespace-nowrap ${dayTotal >= 0 ? 'text-green-400' : 'text-red-400'}`}>{dayTotal.toLocaleString()}원</span>
+                                  </div>
+                                  <div className="space-y-1 pt-0.5 border-t border-gray-700">
+                                    {items.map(([product, net]) => (
+                                      <div key={product} className="flex justify-between items-baseline gap-1 text-xs">
+                                        <span className="text-violet-400 truncate">{product}</span>
+                                        <span className={`font-bold whitespace-nowrap ${net >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{net.toLocaleString()}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       );
