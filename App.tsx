@@ -3589,7 +3589,7 @@ const App: React.FC = () => {
                                   <div className="space-y-1 pt-0.5 border-t border-gray-700">
                                     {items.map(([product, { net, qty }]) => (
                                       <div key={product} className="flex justify-between items-baseline gap-1 text-xs">
-                                        <span className="text-violet-400 truncate">{product}{qty > 0 && <span className="text-gray-500 ml-1">({qty})</span>}</span>
+                                        <span className="text-violet-400 truncate">{product}{qty > 0 && <span className="text-gray-300 ml-1">({qty}개)</span>}</span>
                                         <span className={`font-bold whitespace-nowrap ${net >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{net.toLocaleString()}</span>
                                       </div>
                                     ))}
