@@ -480,7 +480,7 @@ const App: React.FC = () => {
     return () => unsub();
   }, [selectedBiz]);
 
-  const [newProductPrice, setNewProductPrice] = useState({ name: '', price: 0 });
+  const [newProductPrice, setNewProductPrice] = useState({ name: '', price: 0, exposureId: '' });
 
   // Firestore Sync: Sales Daily
   const [salesDaily, setSalesDaily] = useState<SalesDailyEntry[]>([]);
@@ -3908,6 +3908,16 @@ const App: React.FC = () => {
                   </div>
 
                   <div className="flex gap-2 mb-8 items-end bg-gray-50 p-6 rounded-2xl">
+                    <div className="w-32">
+                      <label className="block text-xs font-bold text-gray-400 mb-1">노출ID</label>
+                      <input
+                        type="text"
+                        value={newProductPrice.exposureId}
+                        onChange={(e) => setNewProductPrice({ ...newProductPrice, exposureId: e.target.value })}
+                        className="w-full px-4 py-3 bg-white rounded-xl text-sm font-bold border border-gray-200 outline-none focus:border-blue-500 transition-all"
+                        placeholder="예: A123"
+                      />
+                    </div>
                     <div className="flex-1">
                       <label className="block text-xs font-bold text-gray-400 mb-1">품목명</label>
                       <input
@@ -3931,8 +3941,8 @@ const App: React.FC = () => {
                     <button
                       onClick={async () => {
                         if (!newProductPrice.name || !newProductPrice.price) return alert("품목명과 가격을 입력해주세요.");
-                        await addDoc(collection(db, getCol('productPrices', colPrefix)), { name: newProductPrice.name, price: newProductPrice.price });
-                        setNewProductPrice({ name: '', price: 0 });
+                        await addDoc(collection(db, getCol('productPrices', colPrefix)), { name: newProductPrice.name, price: newProductPrice.price, exposureId: newProductPrice.exposureId });
+                        setNewProductPrice({ name: '', price: 0, exposureId: '' });
                       }}
                       className="px-6 py-3 bg-blue-600 text-white rounded-xl text-sm font-black hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
                     >
@@ -3960,14 +3970,25 @@ const App: React.FC = () => {
                           <tr key={price.id} className="hover:bg-gray-50 transition-colors">
                             <td className="py-1 px-3 text-gray-300">{idx + 1}</td>
                             <td className="py-1 px-3 text-left">
-                              <input
-                                type="text"
-                                defaultValue={price.name}
-                                key={`name-${price.id}-${price.name}`}
-                                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                                onBlur={(e) => { if (e.target.value !== price.name) updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { name: e.target.value }); }}
-                                className="w-full bg-transparent outline-none font-bold text-gray-900 border-b border-transparent focus:border-blue-500 transition-colors"
-                              />
+                              <div className="flex flex-col gap-0.5">
+                                <input
+                                  type="text"
+                                  defaultValue={price.exposureId || ''}
+                                  key={`exposureId-${price.id}-${price.exposureId}`}
+                                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                  onBlur={(e) => { if (e.target.value !== (price.exposureId || '')) updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { exposureId: e.target.value }); }}
+                                  className="w-full bg-transparent outline-none text-[10px] text-gray-400 font-normal border-b border-transparent focus:border-gray-400 transition-colors"
+                                  placeholder="노출ID"
+                                />
+                                <input
+                                  type="text"
+                                  defaultValue={price.name}
+                                  key={`name-${price.id}-${price.name}`}
+                                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                                  onBlur={(e) => { if (e.target.value !== price.name) updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { name: e.target.value }); }}
+                                  className="w-full bg-transparent outline-none font-bold text-gray-900 border-b border-transparent focus:border-blue-500 transition-colors"
+                                />
+                              </div>
                             </td>
                             <td className="py-1 px-3">
                               <input
