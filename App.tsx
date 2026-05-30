@@ -3295,61 +3295,8 @@ const App: React.FC = () => {
 
                       return (
                         <div>
-                          {dates.length === 0 ? (
-                            <p className="text-gray-300 text-center py-16">데이터가 없습니다.</p>
-                          ) : (
-                            <div className="overflow-x-auto mb-8">
-                              <table className="w-full text-xs">
-                                <thead className="bg-gray-100 text-gray-500 font-bold text-center">
-                                  <tr>
-                                    <th className="py-1.5 px-3">날짜</th>
-                                    <th className="py-1.5 px-3">마진</th>
-                                    <th className="py-1.5 px-3">광고비</th>
-                                    <th className="py-1.5 px-3">슬롯</th>
-                                    <th className="py-1.5 px-3">반품</th>
-                                    <th className="py-1.5 px-3">비용</th>
-                                    <th className="py-1.5 px-3 text-blue-600">순계</th>
-                                    <th className="py-1.5 px-3">비고</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {dates.map(date => {
-                                    const dayMargin = byDate[date].margin;
-                                    return (
-                                      <tr key={date} className="border-t hover:bg-gray-50 text-center">
-                                        <td className="py-1 px-3 text-gray-600 font-bold">{date.slice(5)}</td>
-                                        <td className="py-1 px-3 font-bold">{dayMargin.toLocaleString()}</td>
-                                        <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].adCost ? byDate[date].adCost.toLocaleString() : '-'}</td>
-                                        <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].solution ? byDate[date].solution.toLocaleString() : '-'}</td>
-                                        <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].refund ? byDate[date].refund.toLocaleString() : '-'}</td>
-                                        <td className="py-1 px-3 text-orange-500 font-bold">{byDate[date].manualCost ? byDate[date].manualCost.toLocaleString() : '-'}</td>
-                                        <td className="py-1 px-3 font-bold" style={{ color: (dayMargin + byDate[date].manualCost) >= 0 ? '#2563eb' : '#dc2626' }}>{(dayMargin + byDate[date].manualCost).toLocaleString()}</td>
-                                        <td className="py-1 px-3">
-                                          <input
-                                            type="text"
-                                            className="w-full bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-500 text-center text-xs"
-                                            defaultValue={dailyMemos[date] || ''}
-                                            onBlur={e => { const v = e.target.value; if (v !== (dailyMemos[date] || '')) handleSaveMemo(date, v); }}
-                                            placeholder="메모"
-                                          />
-                                        </td>
-                                      </tr>
-                                    );
-                                  })}
-                                  <tr className="border-t-2 border-gray-900 bg-gray-50 font-black text-center">
-                                    <td className="py-1.5 px-3">합계</td>
-                                    <td className="py-1.5 px-3" style={{ color: grandMargin >= 0 ? '#16a34a' : '#dc2626' }}>{grandMargin.toLocaleString()}</td>
-                                    <td></td><td></td><td></td><td></td>
-                                    <td className="py-1.5 px-3" style={{ color: grandNet >= 0 ? '#2563eb' : '#dc2626' }}>{grandNet.toLocaleString()}</td>
-                                    <td></td>
-                                  </tr>
-                                </tbody>
-                              </table>
-                            </div>
-                          )}
-
-                          {/* 손익계산서 */}
-                          <div className="border-2 border-gray-300 rounded-xl overflow-hidden">
+                          {/* 손익계산서 - 상단 */}
+                          <div className="border-2 border-gray-300 rounded-xl overflow-hidden mb-8">
                             <div className="bg-white border-b-2 border-gray-300 py-4 text-center">
                               <h3 className="text-xl font-black text-gray-900">{salesMonth.month}월 손익 계산서</h3>
                             </div>
@@ -3527,6 +3474,59 @@ const App: React.FC = () => {
                               <span className={`text-xl font-black ${netProfit >= 0 ? 'text-blue-600' : 'text-red-500'}`}>{netProfit.toLocaleString()}</span>
                             </div>
                           </div>
+
+                          {dates.length === 0 ? (
+                            <p className="text-gray-300 text-center py-16">데이터가 없습니다.</p>
+                          ) : (
+                            <div className="overflow-x-auto mb-8">
+                              <table className="w-full text-xs">
+                                <thead className="bg-gray-100 text-gray-500 font-bold text-center">
+                                  <tr>
+                                    <th className="py-1.5 px-3">날짜</th>
+                                    <th className="py-1.5 px-3">마진</th>
+                                    <th className="py-1.5 px-3">광고비</th>
+                                    <th className="py-1.5 px-3">슬롯</th>
+                                    <th className="py-1.5 px-3">반품</th>
+                                    <th className="py-1.5 px-3">비용</th>
+                                    <th className="py-1.5 px-3 text-blue-600">순계</th>
+                                    <th className="py-1.5 px-3">비고</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {dates.map(date => {
+                                    const dayMargin = byDate[date].margin;
+                                    return (
+                                      <tr key={date} className="border-t hover:bg-gray-50 text-center">
+                                        <td className="py-1 px-3 text-gray-600 font-bold">{date.slice(5)}</td>
+                                        <td className="py-1 px-3 font-bold">{dayMargin.toLocaleString()}</td>
+                                        <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].adCost ? byDate[date].adCost.toLocaleString() : '-'}</td>
+                                        <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].solution ? byDate[date].solution.toLocaleString() : '-'}</td>
+                                        <td className="py-1 px-3 text-red-500 font-bold">{byDate[date].refund ? byDate[date].refund.toLocaleString() : '-'}</td>
+                                        <td className="py-1 px-3 text-orange-500 font-bold">{byDate[date].manualCost ? byDate[date].manualCost.toLocaleString() : '-'}</td>
+                                        <td className="py-1 px-3 font-bold" style={{ color: (dayMargin + byDate[date].manualCost) >= 0 ? '#2563eb' : '#dc2626' }}>{(dayMargin + byDate[date].manualCost).toLocaleString()}</td>
+                                        <td className="py-1 px-3">
+                                          <input
+                                            type="text"
+                                            className="w-full bg-transparent border-b border-transparent focus:border-gray-400 outline-none text-gray-500 text-center text-xs"
+                                            defaultValue={dailyMemos[date] || ''}
+                                            onBlur={e => { const v = e.target.value; if (v !== (dailyMemos[date] || '')) handleSaveMemo(date, v); }}
+                                            placeholder="메모"
+                                          />
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                  <tr className="border-t-2 border-gray-900 bg-gray-50 font-black text-center">
+                                    <td className="py-1.5 px-3">합계</td>
+                                    <td className="py-1.5 px-3" style={{ color: grandMargin >= 0 ? '#16a34a' : '#dc2626' }}>{grandMargin.toLocaleString()}</td>
+                                    <td></td><td></td><td></td><td></td>
+                                    <td className="py-1.5 px-3" style={{ color: grandNet >= 0 ? '#2563eb' : '#dc2626' }}>{grandNet.toLocaleString()}</td>
+                                    <td></td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
                         </div>
                       );
                     })()
