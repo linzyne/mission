@@ -27,6 +27,29 @@ function getCol(baseName: string, prefix: string): string {
   return prefix ? `${prefix}${baseName}` : baseName;
 }
 
+const BIZ_DEFAULT_COLORS: Record<string, string> = {
+  angun: '#3B82F6',
+  zoe: '#EC4899',
+};
+
+const PRESET_COLORS = [
+  '#3B82F6', // blue
+  '#EC4899', // pink
+  '#10B981', // green
+  '#8B5CF6', // purple
+  '#F97316', // orange
+  '#14B8A6', // teal
+  '#EF4444', // red
+  '#F59E0B', // amber
+];
+
+function hexWithAlpha(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 function normProductName(s: string | undefined | null): string {
   return (s || '').normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim().replace(/\s+/g, ' ');
 }
@@ -113,7 +136,19 @@ const App: React.FC = () => {
   const colPrefix = bizInfo?.collectionPrefix ?? '';
 
   const [addBizModal, setAddBizModal] = useState(false);
-  const [newBizForm, setNewBizForm] = useState({ name: '', phone: '', address: '', accountInfo: '' });
+  const [newBizForm, setNewBizForm] = useState({ name: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
+
+  const [bizColors, setBizColors] = useState<Record<string, string>>(() => {
+    try { const s = localStorage.getItem('bizColors'); return s ? JSON.parse(s) : {}; } catch { return {}; }
+  });
+  const getBizColor = (id: string) => bizColors[id] || BIZ_DEFAULT_COLORS[id] || PRESET_COLORS[0];
+  const currentColor = selectedBiz ? getBizColor(selectedBiz) : '#94A3B8';
+
+  const saveBizColor = (bizId: string, color: string) => {
+    const updated = { ...bizColors, [bizId]: color };
+    localStorage.setItem('bizColors', JSON.stringify(updated));
+    setBizColors(updated);
+  };
 
   const saveCustomBiz = (bizId: string, biz: BusinessInfo) => {
     const updated = { ...customBusinesses, [bizId]: biz };
@@ -142,7 +177,8 @@ const App: React.FC = () => {
       collectionPrefix: bizId + '_',
     };
     saveCustomBiz(bizId, newBiz);
-    setNewBizForm({ name: '', phone: '', address: '', accountInfo: '' });
+    if (newBizForm.color) saveBizColor(bizId, newBizForm.color);
+    setNewBizForm({ name: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
     setAddBizModal(false);
     setSelectedBiz(bizId);
   };
@@ -2495,7 +2531,7 @@ const App: React.FC = () => {
   const selectedProduct = products.find(p => p.id === selectedProductId);
 
   return (
-    <div className={`min-h-screen font-sans text-[#1D1D1F] antialiased ${selectedBiz === 'zoe' ? 'bg-[#FFF0F3]' : selectedBiz === 'angun' ? 'bg-[#EFF6FF]' : 'bg-[#FBFBFD]'}`}>
+    <div className="min-h-screen font-sans text-[#1D1D1F] antialiased" style={{ backgroundColor: hexWithAlpha(currentColor, 0.08) }}>
       {/* Lightbox Modal */}
       {previewImage && (
         <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setPreviewImage(null)}>
@@ -2518,19 +2554,30 @@ const App: React.FC = () => {
                 className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
               <input type="text" placeholder="계좌정보" value={newBizForm.accountInfo} onChange={e => setNewBizForm(f => ({ ...f, accountInfo: e.target.value }))}
                 className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-gray-500">테마 색상</p>
+                <div className="flex gap-2 flex-wrap">
+                  {PRESET_COLORS.map(c => (
+                    <button key={c} onClick={() => setNewBizForm(f => ({ ...f, color: c }))}
+                      className="w-8 h-8 rounded-full transition-all"
+                      style={{ backgroundColor: c, boxShadow: newBizForm.color === c ? `0 0 0 3px white, 0 0 0 5px ${c}` : 'none' }} />
+                  ))}
+                </div>
+              </div>
             </div>
             <div className="flex gap-3 pt-1">
               <button onClick={() => setAddBizModal(false)}
                 className="flex-1 py-3 rounded-xl font-bold text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 transition-all">취소</button>
               <button onClick={handleAddBiz} disabled={!newBizForm.name.trim()}
-                className="flex-1 py-3 rounded-xl font-bold text-sm bg-blue-600 hover:bg-blue-700 text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed">추가</button>
+                className="flex-1 py-3 rounded-xl font-bold text-sm text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ backgroundColor: newBizForm.color }}>추가</button>
             </div>
           </div>
         </div>
       )}
 
       {/* Nav */}
-      <nav className={`border-b sticky top-0 z-50 ${selectedBiz === 'zoe' ? 'bg-[#FFF0F3] border-pink-200' : selectedBiz === 'angun' ? 'bg-[#EFF6FF] border-blue-200' : 'bg-white border-gray-100'}`}>
+      <nav className="border-b sticky top-0 z-50" style={{ backgroundColor: hexWithAlpha(currentColor, 0.08), borderColor: hexWithAlpha(currentColor, 0.3) }}>
         <div className="max-w-[1500px] mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3 cursor-pointer" onClick={resetCustomerFlow}>
             <div className="w-8 h-8 bg-[#0071E3] rounded-lg flex items-center justify-center text-white font-black">M</div>
@@ -2539,14 +2586,17 @@ const App: React.FC = () => {
           <div className="flex items-center gap-3">
             {mode === 'admin' && isAdminAuthenticated && selectedBiz && (
               <div className="flex bg-white/80 p-1 rounded-xl border border-gray-200 gap-0.5">
-                {Object.values(allBusinesses).map(biz => (
-                  <button key={biz.id} onClick={() => setSelectedBiz(biz.id)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                      selectedBiz === biz.id
-                        ? biz.id === 'zoe' ? 'bg-pink-500 text-white shadow-sm' : 'bg-blue-500 text-white shadow-sm'
-                        : 'text-gray-400 hover:text-gray-600'
-                    }`}>{biz.name}</button>
-                ))}
+                {Object.values(allBusinesses).map(biz => {
+                  const bc = getBizColor(biz.id);
+                  const isActive = selectedBiz === biz.id;
+                  return (
+                    <button key={biz.id} onClick={() => setSelectedBiz(biz.id)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
+                      style={isActive ? { backgroundColor: bc, color: '#fff', boxShadow: `0 1px 4px ${hexWithAlpha(bc, 0.4)}` } : { color: '#9CA3AF' }}>
+                      {biz.name}
+                    </button>
+                  );
+                })}
                 <button onClick={() => setAddBizModal(true)}
                   className="px-2 py-1.5 rounded-lg text-xs font-bold text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-all">+</button>
               </div>
@@ -2558,7 +2608,7 @@ const App: React.FC = () => {
           </div>
         </div>
         {selectedBiz && mode === 'admin' && isAdminAuthenticated && (
-          <div className={`text-center py-1.5 text-sm font-black ${selectedBiz === 'zoe' ? 'bg-pink-100 text-pink-700' : 'bg-blue-100 text-blue-700'}`}>
+          <div className="text-center py-1.5 text-sm font-black" style={{ backgroundColor: hexWithAlpha(currentColor, 0.15), color: currentColor }}>
             여기는 {bizInfo?.name}입니다
           </div>
         )}
@@ -2581,19 +2631,28 @@ const App: React.FC = () => {
               <div className="bg-white p-10 rounded-[32px] shadow-xl border border-gray-100 w-full max-w-md space-y-8 text-center">
                 <h2 className="text-2xl font-black tracking-tighter">사업장 선택</h2>
                 <div className="grid grid-cols-1 gap-4">
-                  {Object.values(allBusinesses).map(biz => (
-                    <div key={biz.id} className="relative group">
-                      <button onClick={() => setSelectedBiz(biz.id)}
-                        className="w-full p-6 bg-gray-50 rounded-2xl hover:bg-blue-50 hover:border-blue-500 border-2 border-transparent transition-all text-left">
-                        <h3 className="text-xl font-black">{biz.name}</h3>
-                        {biz.phone && <p className="text-sm text-gray-400 mt-1">{biz.phone}</p>}
-                      </button>
-                      {customBusinesses[biz.id] && (
-                        <button onClick={() => { if (window.confirm(`'${biz.name}'을(를) 삭제할까요?`)) deleteCustomBiz(biz.id); }}
-                          className="absolute top-3 right-3 w-6 h-6 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white text-gray-400 text-xs font-black opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">×</button>
-                      )}
-                    </div>
-                  ))}
+                  {Object.values(allBusinesses).map(biz => {
+                    const bc = getBizColor(biz.id);
+                    return (
+                      <div key={biz.id} className="relative group">
+                        <button onClick={() => setSelectedBiz(biz.id)}
+                          className="w-full p-6 bg-gray-50 rounded-2xl border-2 border-transparent transition-all text-left flex items-center gap-4"
+                          style={{ ['--hover-border' as any]: bc }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = hexWithAlpha(bc, 0.5); (e.currentTarget as HTMLElement).style.backgroundColor = hexWithAlpha(bc, 0.07); }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'transparent'; (e.currentTarget as HTMLElement).style.backgroundColor = ''; }}>
+                          <div className="w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: bc }} />
+                          <div className="text-left">
+                            <h3 className="text-xl font-black">{biz.name}</h3>
+                            {biz.phone && <p className="text-sm text-gray-400 mt-0.5">{biz.phone}</p>}
+                          </div>
+                        </button>
+                        {customBusinesses[biz.id] && (
+                          <button onClick={() => { if (window.confirm(`'${biz.name}'을(를) 삭제할까요?`)) deleteCustomBiz(biz.id); }}
+                            className="absolute top-3 right-3 w-6 h-6 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white text-gray-400 text-xs font-black opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">×</button>
+                        )}
+                      </div>
+                    );
+                  })}
                   <button onClick={() => setAddBizModal(true)}
                     className="p-4 border-2 border-dashed border-gray-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50 transition-all text-gray-400 hover:text-blue-500 font-bold text-sm">
                     + 사업자 추가
@@ -2640,6 +2699,21 @@ const App: React.FC = () => {
                         <div className={`absolute top-1 left-1 w-6 h-6 bg-white rounded-full transition-transform shadow-sm ${settings.isApplyActive ? 'translate-x-6' : 'translate-x-0'}`} />
                       </div>
                     </div>
+                    {selectedBiz && (
+                      <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
+                        <div className="space-y-1">
+                          <h3 className="font-bold">사업자 테마 색상</h3>
+                          <p className="text-xs text-gray-400">배경, 네비게이션, 배너 색상에 반영됩니다.</p>
+                        </div>
+                        <div className="flex gap-2 flex-wrap justify-end">
+                          {PRESET_COLORS.map(c => (
+                            <button key={c} onClick={() => saveBizColor(selectedBiz, c)}
+                              className="w-7 h-7 rounded-full transition-all"
+                              style={{ backgroundColor: c, boxShadow: currentColor === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : 'none' }} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </section>
                   <section className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm space-y-8">
                     <h2 className="text-xl font-black text-gray-900">미션 등록/편집</h2>
