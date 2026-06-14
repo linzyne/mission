@@ -4,7 +4,7 @@ import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs } from 'firebase/firestore';
 
-const BUSINESSES: Record<string, BusinessInfo> = {
+const BASE_BUSINESSES: Record<string, BusinessInfo> = {
   angun: {
     id: 'angun',
     name: '안군농원',
@@ -105,8 +105,47 @@ const App: React.FC = () => {
 
   // Multi-tenant: 선택된 사업자
   const [selectedBiz, setSelectedBiz] = useState<string | null>(null);
-  const bizInfo = selectedBiz ? BUSINESSES[selectedBiz] : null;
+  const [customBusinesses, setCustomBusinesses] = useState<Record<string, BusinessInfo>>(() => {
+    try { const s = localStorage.getItem('customBusinesses'); return s ? JSON.parse(s) : {}; } catch { return {}; }
+  });
+  const allBusinesses: Record<string, BusinessInfo> = { ...BASE_BUSINESSES, ...customBusinesses };
+  const bizInfo = selectedBiz ? allBusinesses[selectedBiz] : null;
   const colPrefix = bizInfo?.collectionPrefix ?? '';
+
+  const [addBizModal, setAddBizModal] = useState(false);
+  const [newBizForm, setNewBizForm] = useState({ name: '', phone: '', address: '', accountInfo: '' });
+
+  const saveCustomBiz = (bizId: string, biz: BusinessInfo) => {
+    const updated = { ...customBusinesses, [bizId]: biz };
+    localStorage.setItem('customBusinesses', JSON.stringify(updated));
+    setCustomBusinesses(updated);
+  };
+
+  const deleteCustomBiz = (bizId: string) => {
+    const updated = { ...customBusinesses };
+    delete updated[bizId];
+    localStorage.setItem('customBusinesses', JSON.stringify(updated));
+    setCustomBusinesses(updated);
+    if (selectedBiz === bizId) setSelectedBiz('angun');
+  };
+
+  const handleAddBiz = () => {
+    const name = newBizForm.name.trim();
+    if (!name) return;
+    const bizId = 'biz_' + Date.now();
+    const newBiz: BusinessInfo = {
+      id: bizId,
+      name,
+      phone: newBizForm.phone.trim(),
+      address: newBizForm.address.trim(),
+      accountInfo: newBizForm.accountInfo.trim(),
+      collectionPrefix: bizId + '_',
+    };
+    saveCustomBiz(bizId, newBiz);
+    setNewBizForm({ name: '', phone: '', address: '', accountInfo: '' });
+    setAddBizModal(false);
+    setSelectedBiz(bizId);
+  };
 
   // proofImage는 localStorage에만 저장 (Firestore 데이터 전송 비용 절감)
   const proofKey = (id: string) => `proof_${colPrefix || 'angun'}_${id}`;
@@ -128,7 +167,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const bizParam = params.get('biz');
-    setSelectedBiz(bizParam && BUSINESSES[bizParam] ? bizParam : 'angun');
+    setSelectedBiz(bizParam && allBusinesses[bizParam] ? bizParam : 'angun');
   }, []);
 
   const [adminPassword, setAdminPassword] = useState('1234');
@@ -2465,6 +2504,31 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* 사업자 추가 모달 */}
+      {addBizModal && (
+        <div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) setAddBizModal(false); }}>
+          <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-sm p-8 space-y-5">
+            <h2 className="text-xl font-black tracking-tight">새 사업자 추가</h2>
+            <div className="space-y-3">
+              <input type="text" placeholder="사업자명 *" value={newBizForm.name} onChange={e => setNewBizForm(f => ({ ...f, name: e.target.value }))}
+                className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
+              <input type="text" placeholder="전화번호" value={newBizForm.phone} onChange={e => setNewBizForm(f => ({ ...f, phone: e.target.value }))}
+                className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
+              <input type="text" placeholder="주소" value={newBizForm.address} onChange={e => setNewBizForm(f => ({ ...f, address: e.target.value }))}
+                className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
+              <input type="text" placeholder="계좌정보" value={newBizForm.accountInfo} onChange={e => setNewBizForm(f => ({ ...f, accountInfo: e.target.value }))}
+                className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setAddBizModal(false)}
+                className="flex-1 py-3 rounded-xl font-bold text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 transition-all">취소</button>
+              <button onClick={handleAddBiz} disabled={!newBizForm.name.trim()}
+                className="flex-1 py-3 rounded-xl font-bold text-sm bg-blue-600 hover:bg-blue-700 text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed">추가</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Nav */}
       <nav className={`border-b sticky top-0 z-50 ${selectedBiz === 'zoe' ? 'bg-[#FFF0F3] border-pink-200' : selectedBiz === 'angun' ? 'bg-[#EFF6FF] border-blue-200' : 'bg-white border-gray-100'}`}>
         <div className="max-w-[1500px] mx-auto px-6 h-16 flex items-center justify-between">
@@ -2474,8 +2538,8 @@ const App: React.FC = () => {
           </div>
           <div className="flex items-center gap-3">
             {mode === 'admin' && isAdminAuthenticated && selectedBiz && (
-              <div className="flex bg-white/80 p-1 rounded-xl border border-gray-200">
-                {Object.values(BUSINESSES).map(biz => (
+              <div className="flex bg-white/80 p-1 rounded-xl border border-gray-200 gap-0.5">
+                {Object.values(allBusinesses).map(biz => (
                   <button key={biz.id} onClick={() => setSelectedBiz(biz.id)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
                       selectedBiz === biz.id
@@ -2483,6 +2547,8 @@ const App: React.FC = () => {
                         : 'text-gray-400 hover:text-gray-600'
                     }`}>{biz.name}</button>
                 ))}
+                <button onClick={() => setAddBizModal(true)}
+                  className="px-2 py-1.5 rounded-lg text-xs font-bold text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-all">+</button>
               </div>
             )}
             <div className="flex bg-gray-100 p-1 rounded-xl">
@@ -2515,13 +2581,23 @@ const App: React.FC = () => {
               <div className="bg-white p-10 rounded-[32px] shadow-xl border border-gray-100 w-full max-w-md space-y-8 text-center">
                 <h2 className="text-2xl font-black tracking-tighter">사업장 선택</h2>
                 <div className="grid grid-cols-1 gap-4">
-                  {Object.values(BUSINESSES).map(biz => (
-                    <button key={biz.id} onClick={() => setSelectedBiz(biz.id)}
-                      className="p-6 bg-gray-50 rounded-2xl hover:bg-blue-50 hover:border-blue-500 border-2 border-transparent transition-all text-left">
-                      <h3 className="text-xl font-black">{biz.name}</h3>
-                      {biz.phone && <p className="text-sm text-gray-400 mt-1">{biz.phone}</p>}
-                    </button>
+                  {Object.values(allBusinesses).map(biz => (
+                    <div key={biz.id} className="relative group">
+                      <button onClick={() => setSelectedBiz(biz.id)}
+                        className="w-full p-6 bg-gray-50 rounded-2xl hover:bg-blue-50 hover:border-blue-500 border-2 border-transparent transition-all text-left">
+                        <h3 className="text-xl font-black">{biz.name}</h3>
+                        {biz.phone && <p className="text-sm text-gray-400 mt-1">{biz.phone}</p>}
+                      </button>
+                      {customBusinesses[biz.id] && (
+                        <button onClick={() => { if (window.confirm(`'${biz.name}'을(를) 삭제할까요?`)) deleteCustomBiz(biz.id); }}
+                          className="absolute top-3 right-3 w-6 h-6 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white text-gray-400 text-xs font-black opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">×</button>
+                      )}
+                    </div>
                   ))}
+                  <button onClick={() => setAddBizModal(true)}
+                    className="p-4 border-2 border-dashed border-gray-200 rounded-2xl hover:border-blue-400 hover:bg-blue-50 transition-all text-gray-400 hover:text-blue-500 font-bold text-sm">
+                    + 사업자 추가
+                  </button>
                 </div>
               </div>
             </div>
@@ -4224,7 +4300,7 @@ const App: React.FC = () => {
                                   const wb = XLSX.utils.book_new();
                                   XLSX.utils.book_append_sheet(wb, ws, tpl.sheetName);
                                   const dateStr = toLocalDateStr().replace(/-/g,'');
-                                  const bizPrefix = selectedBiz === 'zoe' ? '조에' : '안군';
+                                  const bizPrefix = bizInfo?.name || selectedBiz || '사업자';
                                   const fileName = tpl.id === 'delivery'
                                     ? `${bizPrefix}_롯데대행 운송장_${dateStr}.xlsx`
                                     : `${tpl.filePrefix}_${dateStr}.xlsx`;
@@ -4324,7 +4400,7 @@ const App: React.FC = () => {
                                   const ws = XLSX.utils.aoa_to_sheet(newRows);
                                   const wb = XLSX.utils.book_new();
                                   XLSX.utils.book_append_sheet(wb, ws, sheet.platformName);
-                                  const bizPfx = selectedBiz === 'zoe' ? '조에' : '안군';
+                                  const bizPfx = bizInfo?.name || selectedBiz || '사업자';
                                   XLSX.writeFile(wb, `${bizPfx}_롯데대행 운송장_${toLocalDateStr().replace(/-/g,'')}.xlsx`);
                                 }} className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-bold text-[11px]">
                                   ⬇ {sheet.platformName} ({filledCount}건)
