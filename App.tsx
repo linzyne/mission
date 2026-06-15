@@ -138,6 +138,17 @@ const App: React.FC = () => {
         const data = d.data().businesses as Record<string, BusinessInfo> || {};
         setCustomBusinesses(data);
         localStorage.setItem('customBusinesses', JSON.stringify(data));
+      } else {
+        // Firebase에 아직 없으면 localStorage 데이터를 Firebase로 올림 (최초 1회 마이그레이션)
+        try {
+          const s = localStorage.getItem('customBusinesses');
+          if (s) {
+            const local = JSON.parse(s) as Record<string, BusinessInfo>;
+            if (Object.keys(local).length > 0) {
+              setDoc(doc(db, 'settings', 'customBusinesses'), { businesses: local });
+            }
+          }
+        } catch {}
       }
     }, onFbError);
     return () => unsub();
