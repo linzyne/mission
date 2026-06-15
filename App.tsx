@@ -131,6 +131,17 @@ const App: React.FC = () => {
   const [customBusinesses, setCustomBusinesses] = useState<Record<string, BusinessInfo>>(() => {
     try { const s = localStorage.getItem('customBusinesses'); return s ? JSON.parse(s) : {}; } catch { return {}; }
   });
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, 'settings', 'customBusinesses'), (d) => {
+      if (d.exists()) {
+        const data = d.data().businesses as Record<string, BusinessInfo> || {};
+        setCustomBusinesses(data);
+        localStorage.setItem('customBusinesses', JSON.stringify(data));
+      }
+    }, onFbError);
+    return () => unsub();
+  }, []);
   const allBusinesses: Record<string, BusinessInfo> = { ...BASE_BUSINESSES, ...customBusinesses };
   const bizInfo = selectedBiz ? allBusinesses[selectedBiz] : null;
   const colPrefix = bizInfo?.collectionPrefix ?? '';
@@ -154,6 +165,7 @@ const App: React.FC = () => {
     const updated = { ...customBusinesses, [bizId]: biz };
     localStorage.setItem('customBusinesses', JSON.stringify(updated));
     setCustomBusinesses(updated);
+    setDoc(doc(db, 'settings', 'customBusinesses'), { businesses: updated });
   };
 
   const deleteCustomBiz = (bizId: string) => {
@@ -162,6 +174,7 @@ const App: React.FC = () => {
     localStorage.setItem('customBusinesses', JSON.stringify(updated));
     setCustomBusinesses(updated);
     if (selectedBiz === bizId) setSelectedBiz('angun');
+    setDoc(doc(db, 'settings', 'customBusinesses'), { businesses: updated });
   };
 
   const handleAddBiz = () => {
