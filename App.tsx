@@ -159,6 +159,8 @@ const App: React.FC = () => {
 
   const [addBizModal, setAddBizModal] = useState(false);
   const [newBizForm, setNewBizForm] = useState({ name: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
+  const [editBizModal, setEditBizModal] = useState<string | null>(null); // editing bizId
+  const [editBizForm, setEditBizForm] = useState({ name: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
 
   const [bizColors, setBizColors] = useState<Record<string, string>>(() => {
     try { const s = localStorage.getItem('bizColors'); return s ? JSON.parse(s) : {}; } catch { return {}; }
@@ -205,6 +207,36 @@ const App: React.FC = () => {
     setNewBizForm({ name: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
     setAddBizModal(false);
     setSelectedBiz(bizId);
+  };
+
+  const openEditBizModal = (bizId: string) => {
+    const biz = allBusinesses[bizId];
+    if (!biz) return;
+    setEditBizForm({
+      name: biz.name,
+      phone: biz.phone || '',
+      address: biz.address || '',
+      accountInfo: biz.accountInfo || '',
+      color: getBizColor(bizId),
+    });
+    setEditBizModal(bizId);
+  };
+
+  const handleEditBiz = () => {
+    if (!editBizModal) return;
+    const name = editBizForm.name.trim();
+    if (!name) return;
+    const existing = allBusinesses[editBizModal];
+    const updated: BusinessInfo = {
+      ...existing,
+      name,
+      phone: editBizForm.phone.trim(),
+      address: editBizForm.address.trim(),
+      accountInfo: editBizForm.accountInfo.trim(),
+    };
+    saveCustomBiz(editBizModal, updated);
+    saveBizColor(editBizModal, editBizForm.color);
+    setEditBizModal(null);
   };
 
   // proofImage는 localStorage에만 저장 (Firestore 데이터 전송 비용 절감)
@@ -2600,6 +2632,42 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* 사업자 수정 모달 */}
+      {editBizModal && (
+        <div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) setEditBizModal(null); }}>
+          <div className="bg-white rounded-[28px] shadow-2xl w-full max-w-sm p-8 space-y-5">
+            <h2 className="text-xl font-black tracking-tight">사업자 수정</h2>
+            <div className="space-y-3">
+              <input type="text" placeholder="사업자명 *" value={editBizForm.name} onChange={e => setEditBizForm(f => ({ ...f, name: e.target.value }))}
+                className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
+              <input type="text" placeholder="전화번호" value={editBizForm.phone} onChange={e => setEditBizForm(f => ({ ...f, phone: e.target.value }))}
+                className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
+              <input type="text" placeholder="주소" value={editBizForm.address} onChange={e => setEditBizForm(f => ({ ...f, address: e.target.value }))}
+                className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
+              <input type="text" placeholder="계좌정보" value={editBizForm.accountInfo} onChange={e => setEditBizForm(f => ({ ...f, accountInfo: e.target.value }))}
+                className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-gray-500">테마 색상</p>
+                <div className="flex gap-2 flex-wrap">
+                  {PRESET_COLORS.map(c => (
+                    <button key={c} onClick={() => setEditBizForm(f => ({ ...f, color: c }))}
+                      className="w-8 h-8 rounded-full transition-all"
+                      style={{ backgroundColor: c, boxShadow: editBizForm.color === c ? `0 0 0 3px white, 0 0 0 5px ${c}` : 'none' }} />
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-1">
+              <button onClick={() => setEditBizModal(null)}
+                className="flex-1 py-3 rounded-xl font-bold text-sm bg-gray-100 hover:bg-gray-200 text-gray-600 transition-all">취소</button>
+              <button onClick={handleEditBiz} disabled={!editBizForm.name.trim()}
+                className="flex-1 py-3 rounded-xl font-bold text-sm text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ backgroundColor: editBizForm.color }}>저장</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Nav */}
       <nav className="border-b sticky top-0 z-50" style={{ backgroundColor: hexWithAlpha(currentColor, 0.08), borderColor: hexWithAlpha(currentColor, 0.3) }}>
         <div className="max-w-[1500px] mx-auto px-6 h-16 flex items-center justify-between">
@@ -2671,8 +2739,12 @@ const App: React.FC = () => {
                           </div>
                         </button>
                         {customBusinesses[biz.id] && (
-                          <button onClick={() => { if (window.confirm(`'${biz.name}'을(를) 삭제할까요?`)) deleteCustomBiz(biz.id); }}
-                            className="absolute top-3 right-3 w-6 h-6 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white text-gray-400 text-xs font-black opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">×</button>
+                          <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                            <button onClick={e => { e.stopPropagation(); openEditBizModal(biz.id); }}
+                              className="w-6 h-6 rounded-full bg-gray-200 hover:bg-blue-500 hover:text-white text-gray-400 text-xs font-black flex items-center justify-center" title="수정">✎</button>
+                            <button onClick={e => { e.stopPropagation(); if (window.confirm(`'${biz.name}'을(를) 삭제할까요?`)) deleteCustomBiz(biz.id); }}
+                              className="w-6 h-6 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white text-gray-400 text-xs font-black flex items-center justify-center" title="삭제">×</button>
+                          </div>
                         )}
                       </div>
                     );
