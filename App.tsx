@@ -531,6 +531,8 @@ const App: React.FC = () => {
           const orderNum = data.orderNumber?.toString().trim() ?? '';
           if (!data.name1?.toString().trim() || !orderNum) return;
           if (!orderNum.includes('실배') && !/\d/.test(orderNum)) return;
+          const entryDate = data.date?.toString().trim() ?? '';
+          if (!entryDate || entryDate < toLocalDateStr()) return;
           result.push({
             id: d.id,
             bizId,
