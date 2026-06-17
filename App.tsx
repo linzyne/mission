@@ -2804,14 +2804,14 @@ const App: React.FC = () => {
                             {biz.phone && <p className="text-sm text-gray-400 mt-0.5">{biz.phone}</p>}
                           </div>
                         </button>
-                        {customBusinesses[biz.id] && (
-                          <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                            <button onClick={e => { e.stopPropagation(); openEditBizModal(biz.id); }}
-                              className="w-6 h-6 rounded-full bg-gray-200 hover:bg-blue-500 hover:text-white text-gray-400 text-xs font-black flex items-center justify-center" title="수정">✎</button>
+                        <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                          <button onClick={e => { e.stopPropagation(); openEditBizModal(biz.id); }}
+                            className="w-6 h-6 rounded-full bg-gray-200 hover:bg-blue-500 hover:text-white text-gray-400 text-xs font-black flex items-center justify-center" title="수정">✎</button>
+                          {customBusinesses[biz.id] && (
                             <button onClick={e => { e.stopPropagation(); if (window.confirm(`'${biz.name}'을(를) 삭제할까요?`)) deleteCustomBiz(biz.id); }}
                               className="w-6 h-6 rounded-full bg-gray-200 hover:bg-red-500 hover:text-white text-gray-400 text-xs font-black flex items-center justify-center" title="삭제">×</button>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -2864,19 +2864,31 @@ const App: React.FC = () => {
                       </div>
                     </div>
                     {selectedBiz && (
-                      <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
-                        <div className="space-y-1">
-                          <h3 className="font-bold">사업자 테마 색상</h3>
-                          <p className="text-xs text-gray-400">배경, 네비게이션, 배너 색상에 반영됩니다.</p>
+                      <>
+                        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
+                          <div className="space-y-1">
+                            <h3 className="font-bold">사업자 정보</h3>
+                            <p className="text-xs text-gray-400">{bizInfo?.name}{bizInfo?.phone ? ` · ${bizInfo.phone}` : ''}</p>
+                          </div>
+                          <button onClick={() => openEditBizModal(selectedBiz)}
+                            className="px-4 py-2 bg-gray-200 hover:bg-blue-500 hover:text-white text-gray-600 rounded-xl text-xs font-bold transition-all">
+                            수정
+                          </button>
                         </div>
-                        <div className="flex gap-2 flex-wrap justify-end">
-                          {PRESET_COLORS.map(c => (
-                            <button key={c} onClick={() => saveBizColor(selectedBiz, c)}
-                              className="w-7 h-7 rounded-full transition-all"
-                              style={{ backgroundColor: c, boxShadow: currentColor === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : 'none' }} />
-                          ))}
+                        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl">
+                          <div className="space-y-1">
+                            <h3 className="font-bold">사업자 테마 색상</h3>
+                            <p className="text-xs text-gray-400">배경, 네비게이션, 배너 색상에 반영됩니다.</p>
+                          </div>
+                          <div className="flex gap-2 flex-wrap justify-end">
+                            {PRESET_COLORS.map(c => (
+                              <button key={c} onClick={() => saveBizColor(selectedBiz, c)}
+                                className="w-7 h-7 rounded-full transition-all"
+                                style={{ backgroundColor: c, boxShadow: currentColor === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : 'none' }} />
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      </>
                     )}
                   </section>
                   <section className="bg-white p-8 rounded-[32px] border border-gray-100 shadow-sm space-y-8">
