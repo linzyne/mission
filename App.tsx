@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, SalesSubTab, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource, PlatformConfig } from './types';
 import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
-import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs, where } from 'firebase/firestore';
 
 const BASE_BUSINESSES: Record<string, BusinessInfo> = {
   angun: {
@@ -521,10 +521,13 @@ const App: React.FC = () => {
   const loadAllBizPendingEntries = async () => {
     setAllBizPendingLoaded(false);
     const result: Array<ManualEntry & { bizId: string; bizName: string }> = [];
+    const today = toLocalDateStr();
+    const tenDaysAgo = toLocalDateStr(new Date(Date.now() - 9 * 24 * 60 * 60 * 1000));
     for (const [bizId, biz] of Object.entries(allBusinesses)) {
       const colName = getCol('manualEntries', biz.collectionPrefix);
       try {
-        const snapshot = await getDocs(collection(db, colName));
+        const q = query(collection(db, colName), where('date', '>=', tenDaysAgo), where('date', '<=', today));
+        const snapshot = await getDocs(q);
         snapshot.docs.forEach(d => {
           const data = d.data();
           if (data.reservationComplete) return;
@@ -532,11 +535,6 @@ const App: React.FC = () => {
           const orderNum = data.orderNumber?.toString().trim() ?? '';
           if (!data.name1?.toString().trim() || !orderNum) return;
           if (!orderNum.includes('실배') && !/\d/.test(orderNum)) return;
-          const entryDate = data.date?.toString().trim() ?? '';
-          if (!entryDate) return;
-          const today = toLocalDateStr();
-          const tenDaysAgo = toLocalDateStr(new Date(Date.now() - 9 * 24 * 60 * 60 * 1000));
-          if (entryDate < tenDaysAgo || entryDate > today) return;
           result.push({
             id: d.id,
             bizId,
