@@ -66,7 +66,7 @@ export interface ReviewEntry {
   date: string;
 }
 
-export type AdminTab = 'dashboard' | 'manual' | 'deposit' | 'reviewComplete' | 'productPrices' | 'sales';
+export type AdminTab = 'dashboard' | 'manual' | 'deposit' | 'reviewComplete' | 'productPrices' | 'sales' | 'reservationPending';
 
 export interface SalesDailyEntry {
   id: string;

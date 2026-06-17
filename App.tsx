@@ -513,6 +513,65 @@ const App: React.FC = () => {
     return () => unsub();
   }, [selectedBiz]);
 
+  // 예약완료 미처리 전체 사업자 목록
+  const [allBizPendingEntries, setAllBizPendingEntries] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
+  const [allBizPendingLoaded, setAllBizPendingLoaded] = useState(false);
+  const [selectedPendingIds, setSelectedPendingIds] = useState<Set<string>>(new Set());
+
+  const loadAllBizPendingEntries = async () => {
+    setAllBizPendingLoaded(false);
+    const result: Array<ManualEntry & { bizId: string; bizName: string }> = [];
+    for (const [bizId, biz] of Object.entries(allBusinesses)) {
+      const colName = getCol('manualEntries', biz.collectionPrefix);
+      try {
+        const snapshot = await getDocs(collection(db, colName));
+        snapshot.docs.forEach(d => {
+          const data = d.data();
+          if (data.reservationComplete) return;
+          result.push({
+            id: d.id,
+            bizId,
+            bizName: biz.name,
+            count: data.count ?? 0,
+            paymentAmount: data.paymentAmount ?? 0,
+            beforeDeposit: data.beforeDeposit ?? false,
+            afterDeposit: data.afterDeposit ?? false,
+            proofImage: '',
+            product: data.product ?? '',
+            date: data.date ?? '',
+            name1: data.name1 ?? '',
+            name2: data.name2 ?? '',
+            ordererName: data.ordererName ?? '',
+            orderNumber: data.orderNumber != null ? String(data.orderNumber) : '',
+            address: data.address ?? '',
+            memo: data.memo ?? '',
+            emergencyContact: data.emergencyContact ?? '',
+            accountNumber: data.accountNumber ?? '',
+            trackingNumber: data.trackingNumber ?? '',
+            reservationComplete: false,
+            createdAt: data.createdAt,
+          } as ManualEntry & { bizId: string; bizName: string });
+        });
+      } catch (e) { console.error('[reservationPending] load error:', bizId, e); }
+    }
+    result.sort((a, b) => {
+      const bizCmp = a.bizName.localeCompare(b.bizName, 'ko');
+      if (bizCmp !== 0) return bizCmp;
+      const dateCmp = (b.date || '').localeCompare(a.date || '');
+      if (dateCmp !== 0) return dateCmp;
+      return (a.createdAt || 0) - (b.createdAt || 0);
+    });
+    setAllBizPendingEntries(result);
+    setAllBizPendingLoaded(true);
+  };
+
+  useEffect(() => {
+    if (adminTab === 'reservationPending') {
+      loadAllBizPendingEntries();
+      setSelectedPendingIds(new Set());
+    }
+  }, [adminTab]);
+
   // Firestore Sync: Manual Entries
   const [manualEntries, setManualEntries] = useState<ManualEntry[]>([]);
   const [manualEntriesLoaded, setManualEntriesLoaded] = useState(false);
@@ -2766,12 +2825,14 @@ const App: React.FC = () => {
                   { key: 'productPrices', label: '품목', icon: '~', color: 'blue' },
                   { key: 'deposit', label: '입금', icon: '~', color: 'blue' },
                   { key: 'sales', label: '매출', icon: '~', color: 'green' },
+                  { key: 'reservationPending', label: '예약미완료', icon: '~', color: 'pink' },
                 ] as { key: typeof adminTab; label: string; icon: string; color: string }[]).map(tab => (
                   <button key={tab.key} onClick={() => setAdminTab(tab.key)}
                     className={`flex-shrink-0 px-4 py-2 rounded-2xl text-xs font-black transition-all ${
                       adminTab === tab.key
                         ? tab.color === 'orange' ? 'bg-orange-500 text-white shadow-md shadow-orange-200'
                         : tab.color === 'green' ? 'bg-green-600 text-white shadow-md shadow-green-200'
+                        : tab.color === 'pink' ? 'bg-pink-500 text-white shadow-md shadow-pink-200'
                         : 'bg-blue-600 text-white shadow-md shadow-blue-200'
                         : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                     }`}
@@ -4322,6 +4383,108 @@ const App: React.FC = () => {
                     </table>
                   </div>
 
+                </section>
+              ) : adminTab === 'reservationPending' ? (
+                <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl p-6 animate-in slide-in-from-right-10 duration-500">
+                  <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+                    <h2 className="text-xl font-black text-gray-900">예약완료 미처리 목록</h2>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-gray-500">{allBizPendingLoaded ? `전체 ${allBizPendingEntries.length}건` : '불러오는 중...'}</span>
+                      <button
+                        onClick={() => { loadAllBizPendingEntries(); setSelectedPendingIds(new Set()); }}
+                        className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
+                      >새로고침</button>
+                    </div>
+                  </div>
+
+                  {!allBizPendingLoaded ? (
+                    <div className="flex items-center justify-center py-20 text-gray-400 text-sm font-bold">불러오는 중...</div>
+                  ) : allBizPendingEntries.length === 0 ? (
+                    <div className="flex items-center justify-center py-20 text-gray-400 text-sm font-bold">예약완료 미처리 항목이 없습니다.</div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-3 mb-3 px-1 flex-wrap">
+                        <label className="flex items-center gap-2 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 accent-pink-500"
+                            checked={selectedPendingIds.size === allBizPendingEntries.length && allBizPendingEntries.length > 0}
+                            onChange={e => {
+                              if (e.target.checked) setSelectedPendingIds(new Set(allBizPendingEntries.map(en => en.bizId + '_' + en.id)));
+                              else setSelectedPendingIds(new Set());
+                            }}
+                          />
+                          <span className="text-sm font-bold text-gray-600">전체선택</span>
+                        </label>
+                        {selectedPendingIds.size > 0 && (
+                          <>
+                            <span className="text-sm font-black text-pink-600">{selectedPendingIds.size}개 선택</span>
+                            <button
+                              onClick={() => {
+                                const selected = allBizPendingEntries.filter(en => selectedPendingIds.has(en.bizId + '_' + en.id));
+                                const text = selected.map(en => `${en.bizName}_${en.name1 || en.ordererName || ''}_${en.orderNumber || ''}`).join('\n');
+                                navigator.clipboard.writeText(text).then(() => alert(`${selected.length}건 복사 완료`));
+                              }}
+                              className="px-4 py-1.5 bg-pink-500 text-white rounded-xl text-sm font-black hover:bg-pink-600"
+                            >복사</button>
+                            <button
+                              onClick={() => setSelectedPendingIds(new Set())}
+                              className="px-3 py-1.5 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold hover:bg-gray-200"
+                            >선택해제</button>
+                          </>
+                        )}
+                      </div>
+                      <div className="overflow-x-auto rounded-2xl border border-gray-100">
+                        <table className="w-full text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-gray-50 text-gray-500 font-bold">
+                              <th className="p-2 w-8 text-center"></th>
+                              <th className="p-2 text-left whitespace-nowrap">사업자</th>
+                              <th className="p-2 text-left whitespace-nowrap">날짜</th>
+                              <th className="p-2 text-left whitespace-nowrap">이름1</th>
+                              <th className="p-2 text-left whitespace-nowrap">주문번호</th>
+                              <th className="p-2 text-left whitespace-nowrap">품목</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {allBizPendingEntries.map(en => {
+                              const key = en.bizId + '_' + en.id;
+                              const checked = selectedPendingIds.has(key);
+                              return (
+                                <tr
+                                  key={key}
+                                  className={`border-t border-gray-100 cursor-pointer hover:bg-pink-50 transition-colors ${checked ? 'bg-pink-50' : ''}`}
+                                  onClick={() => {
+                                    const next = new Set(selectedPendingIds);
+                                    checked ? next.delete(key) : next.add(key);
+                                    setSelectedPendingIds(next);
+                                  }}
+                                >
+                                  <td className="p-2 text-center" onClick={e => e.stopPropagation()}>
+                                    <input
+                                      type="checkbox"
+                                      className="w-3.5 h-3.5 accent-pink-500"
+                                      checked={checked}
+                                      onChange={e => {
+                                        const next = new Set(selectedPendingIds);
+                                        e.target.checked ? next.add(key) : next.delete(key);
+                                        setSelectedPendingIds(next);
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="p-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
+                                  <td className="p-2 text-gray-500 whitespace-nowrap">{en.date || '-'}</td>
+                                  <td className="p-2 font-bold text-gray-800 whitespace-nowrap">{en.name1 || en.ordererName || '-'}</td>
+                                  <td className="p-2 text-gray-700 whitespace-nowrap font-mono">{en.orderNumber || '-'}</td>
+                                  <td className="p-2 text-gray-500 whitespace-nowrap">{en.product || '-'}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
                 </section>
               ) : (
                 <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl animate-in slide-in-from-right-10 duration-500">
