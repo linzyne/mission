@@ -533,7 +533,10 @@ const App: React.FC = () => {
           if (!data.name1?.toString().trim() || !orderNum) return;
           if (!orderNum.includes('실배') && !/\d/.test(orderNum)) return;
           const entryDate = data.date?.toString().trim() ?? '';
-          if (!entryDate || entryDate < toLocalDateStr()) return;
+          if (!entryDate) return;
+          const today = toLocalDateStr();
+          const tenDaysAgo = toLocalDateStr(new Date(Date.now() - 9 * 24 * 60 * 60 * 1000));
+          if (entryDate < tenDaysAgo || entryDate > today) return;
           result.push({
             id: d.id,
             bizId,
