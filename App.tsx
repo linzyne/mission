@@ -4420,10 +4420,23 @@ const App: React.FC = () => {
                           <>
                             <span className="text-sm font-black text-pink-600">{selectedPendingIds.size}개 선택</span>
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 const selected = allBizPendingEntries.filter(en => selectedPendingIds.has(en.bizId + '_' + en.id));
                                 const text = selected.map(en => `${en.bizName}_${en.name1 || en.ordererName || ''}_${en.orderNumber || ''}`).join('\n');
-                                navigator.clipboard.writeText(text).then(() => alert(`${selected.length}건 복사 완료`));
+                                await navigator.clipboard.writeText(text);
+                                if (!window.confirm(`${selected.length}건을 예약완료 처리하시겠습니까?`)) return;
+                                try {
+                                  const batch = writeBatch(db);
+                                  selected.forEach(en => {
+                                    const biz = allBusinesses[en.bizId];
+                                    if (!biz) return;
+                                    const colName = getCol('manualEntries', biz.collectionPrefix);
+                                    batch.update(doc(db, colName, en.id), { reservationComplete: true });
+                                  });
+                                  await batch.commit();
+                                  setAllBizPendingEntries(prev => prev.filter(en => !selectedPendingIds.has(en.bizId + '_' + en.id)));
+                                  setSelectedPendingIds(new Set());
+                                } catch (e) { console.error(e); alert('오류: ' + e); }
                               }}
                               className="px-4 py-1.5 bg-pink-500 text-white rounded-xl text-sm font-black hover:bg-pink-600"
                             >복사</button>
