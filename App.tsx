@@ -528,6 +528,7 @@ const App: React.FC = () => {
         snapshot.docs.forEach(d => {
           const data = d.data();
           if (data.reservationComplete) return;
+          if (!data.name1?.toString().trim() || !data.orderNumber?.toString().trim()) return;
           result.push({
             id: d.id,
             bizId,
