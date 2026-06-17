@@ -528,6 +528,7 @@ const App: React.FC = () => {
         snapshot.docs.forEach(d => {
           const data = d.data();
           if (data.reservationComplete) return;
+          if (data.hiddenFromPending) return;
           const orderNum = data.orderNumber?.toString().trim() ?? '';
           if (!data.name1?.toString().trim() || !orderNum) return;
           if (!orderNum.includes('실배') && !/\d/.test(orderNum)) return;
@@ -4445,6 +4446,24 @@ const App: React.FC = () => {
                               }}
                               className="px-4 py-1.5 bg-pink-500 text-white rounded-xl text-sm font-black hover:bg-pink-600"
                             >복사</button>
+                            <button
+                              onClick={async () => {
+                                const selected = allBizPendingEntries.filter(en => selectedPendingIds.has(en.bizId + '_' + en.id));
+                                if (!window.confirm(`${selected.length}건을 목록에서 제외하시겠습니까?\n(구매 목록에는 유지됩니다)`)) return;
+                                try {
+                                  const batch = writeBatch(db);
+                                  selected.forEach(en => {
+                                    const biz = allBusinesses[en.bizId];
+                                    if (!biz) return;
+                                    batch.update(doc(db, getCol('manualEntries', biz.collectionPrefix), en.id), { hiddenFromPending: true });
+                                  });
+                                  await batch.commit();
+                                  setAllBizPendingEntries(prev => prev.filter(en => !selectedPendingIds.has(en.bizId + '_' + en.id)));
+                                  setSelectedPendingIds(new Set());
+                                } catch (e) { console.error(e); alert('오류: ' + e); }
+                              }}
+                              className="px-3 py-1.5 bg-red-100 text-red-500 rounded-xl text-xs font-bold hover:bg-red-200"
+                            >삭제</button>
                             <button
                               onClick={() => setSelectedPendingIds(new Set())}
                               className="px-3 py-1.5 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold hover:bg-gray-200"
