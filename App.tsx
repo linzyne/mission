@@ -528,7 +528,9 @@ const App: React.FC = () => {
         snapshot.docs.forEach(d => {
           const data = d.data();
           if (data.reservationComplete) return;
-          if (!data.name1?.toString().trim() || !data.orderNumber?.toString().trim()) return;
+          const orderNum = data.orderNumber?.toString().trim() ?? '';
+          if (!data.name1?.toString().trim() || !orderNum) return;
+          if (!orderNum.includes('실배') && !/\d/.test(orderNum)) return;
           result.push({
             id: d.id,
             bizId,
