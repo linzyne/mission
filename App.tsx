@@ -517,25 +517,29 @@ const App: React.FC = () => {
   const [allBizPendingEntries, setAllBizPendingEntries] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
   const [allBizPendingLoaded, setAllBizPendingLoaded] = useState(false);
   const [selectedPendingIds, setSelectedPendingIds] = useState<Set<string>>(new Set());
+  const [pendingUndoStack, setPendingUndoStack] = useState<Array<{
+    type: 'reservationComplete' | 'hiddenFromPending';
+    entries: Array<ManualEntry & { bizId: string; bizName: string }>;
+  }>>([]);
 
   const loadAllBizPendingEntries = async () => {
     setAllBizPendingLoaded(false);
-    const result: Array<ManualEntry & { bizId: string; bizName: string }> = [];
     const today = toLocalDateStr();
     const tenDaysAgo = toLocalDateStr(new Date(Date.now() - 9 * 24 * 60 * 60 * 1000));
-    for (const [bizId, biz] of Object.entries(allBusinesses)) {
+    const bizEntries = Object.entries(allBusinesses);
+    const perBizResults = await Promise.all(bizEntries.map(async ([bizId, biz]) => {
       const colName = getCol('manualEntries', biz.collectionPrefix);
       try {
         const q = query(collection(db, colName), where('date', '>=', tenDaysAgo), where('date', '<=', today));
         const snapshot = await getDocs(q);
-        snapshot.docs.forEach(d => {
+        return snapshot.docs.flatMap(d => {
           const data = d.data();
-          if (data.reservationComplete) return;
-          if (data.hiddenFromPending) return;
+          if (data.reservationComplete) return [];
+          if (data.hiddenFromPending) return [];
           const orderNum = data.orderNumber?.toString().trim() ?? '';
-          if (!data.name1?.toString().trim() || !orderNum) return;
-          if (!orderNum.includes('실배') && !/\d/.test(orderNum)) return;
-          result.push({
+          if (!data.name1?.toString().trim() || !orderNum) return [];
+          if (!orderNum.includes('실배') && !/\d/.test(orderNum)) return [];
+          return [{
             id: d.id,
             bizId,
             bizName: biz.name,
@@ -557,10 +561,11 @@ const App: React.FC = () => {
             trackingNumber: data.trackingNumber ?? '',
             reservationComplete: false,
             createdAt: data.createdAt,
-          } as ManualEntry & { bizId: string; bizName: string });
+          } as ManualEntry & { bizId: string; bizName: string }];
         });
-      } catch (e) { console.error('[reservationPending] load error:', bizId, e); }
-    }
+      } catch (e) { console.error('[reservationPending] load error:', bizId, e); return []; }
+    }));
+    const result = perBizResults.flat();
     result.sort((a, b) => {
       const bizCmp = a.bizName.localeCompare(b.bizName, 'ko');
       if (bizCmp !== 0) return bizCmp;
@@ -3123,6 +3128,47 @@ const App: React.FC = () => {
                           }} className="px-3 py-2 rounded-xl text-sm font-black bg-purple-600 text-white hover:bg-purple-700 transition-all">
                             조에
                           </button>}
+                          {selectedBiz && selectedBiz !== 'angun' && selectedBiz !== 'zoe' && bizInfo && <button onClick={async () => {
+                            const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
+                            if (beforeItems.length === 0) return alert("다운로드할 데이터가 없습니다.");
+                            const XLSX = await import('xlsx');
+                            const BANKS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일','새마을','우체국','농협','국민','신한','하나','우리','기업','수협','신협','대구','부산','경남','광주','전북','제주','IBK','KB','NH'];
+                            const parseAccount = (raw: string): [string, string, string] => {
+                              if (!raw || !raw.trim()) return ['', '', ''];
+                              const str = raw.trim();
+                              let bank = '';
+                              for (const b of BANKS) { if (str.includes(b)) { bank = b; break; } }
+                              const m = str.match(/\d[\d\-\s]*\d|\d+/);
+                              const account = m ? m[0].trim() : '';
+                              let remaining = str;
+                              if (bank) remaining = remaining.replace(bank, '');
+                              if (account) remaining = remaining.replace(account, '');
+                              remaining = remaining.replace(/[\d\-\s]/g, '');
+                              const BANK_WORDS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일은행','새마을금고','우체국','카카오','토스','은행','뱅크','금고','NH','IBK','KB','SC'];
+                              for (const w of BANK_WORDS) { remaining = remaining.split(w).join(''); }
+                              return [bank, account, remaining.trim()];
+                            };
+                            const label = `${bizInfo.name}환불`;
+                            const allRows = beforeItems.map(e => {
+                              const [bank, account] = parseAccount(e.accountNumber);
+                              return [bank, account, e.paymentAmount || '', e.name1 || e.name2 || '', label];
+                            });
+                            const chunkSize = 15;
+                            const today = toLocalDateStr();
+                            for (let i = 0; i < allRows.length; i += chunkSize) {
+                              const chunk = allRows.slice(i, i + chunkSize);
+                              const ws = XLSX.utils.aoa_to_sheet(chunk);
+                              const wb = XLSX.utils.book_new();
+                              XLSX.utils.book_append_sheet(wb, ws, '환불');
+                              XLSX.writeFile(wb, `${today} ${bizInfo.name}환불_${(i / chunkSize) + 1}.xlsx`);
+                            }
+                            const wsAll = XLSX.utils.aoa_to_sheet(allRows);
+                            const wbAll = XLSX.utils.book_new();
+                            XLSX.utils.book_append_sheet(wbAll, wsAll, '환불');
+                            XLSX.writeFile(wbAll, `${today} ${bizInfo.name}환불_통합.xlsx`);
+                          }} className="px-3 py-2 rounded-xl text-sm font-black bg-indigo-600 text-white hover:bg-indigo-700 transition-all">
+                            {bizInfo.name}
+                          </button>}
                           <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl">
                             <input type="date" value={depositActionDate} onChange={e => setDepositActionDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none px-2 text-gray-600" />
                             <button
@@ -4409,8 +4455,40 @@ const App: React.FC = () => {
                     <h2 className="text-xl font-black text-gray-900">예약완료 미처리 목록</h2>
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-bold text-gray-500">{allBizPendingLoaded ? `전체 ${allBizPendingEntries.length}건` : '불러오는 중...'}</span>
+                      {pendingUndoStack.length > 0 && (
+                        <button
+                          onClick={async () => {
+                            const last = pendingUndoStack[pendingUndoStack.length - 1];
+                            try {
+                              const batch = writeBatch(db);
+                              last.entries.forEach(en => {
+                                const biz = allBusinesses[en.bizId];
+                                if (!biz) return;
+                                const colName = getCol('manualEntries', biz.collectionPrefix);
+                                if (last.type === 'reservationComplete') {
+                                  batch.update(doc(db, colName, en.id), { reservationComplete: false });
+                                } else {
+                                  batch.update(doc(db, colName, en.id), { hiddenFromPending: false });
+                                }
+                              });
+                              await batch.commit();
+                              setPendingUndoStack(prev => prev.slice(0, -1));
+                              setAllBizPendingEntries(prev => {
+                                const existingIds = new Set(prev.map(e => e.id));
+                                const restored = last.entries.filter(e => !existingIds.has(e.id));
+                                return [...restored, ...prev].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+                              });
+                            } catch (e) { console.error(e); alert('오류: ' + e); }
+                          }}
+                          className="flex items-center gap-1 px-3 py-1.5 bg-orange-100 text-orange-600 rounded-xl text-xs font-bold hover:bg-orange-200"
+                          title={`되돌리기: ${pendingUndoStack[pendingUndoStack.length - 1]?.type === 'reservationComplete' ? '예약완료 처리' : '목록 제외'} ${pendingUndoStack[pendingUndoStack.length - 1]?.entries.length}건`}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg>
+                          되돌리기
+                        </button>
+                      )}
                       <button
-                        onClick={() => { loadAllBizPendingEntries(); setSelectedPendingIds(new Set()); }}
+                        onClick={() => { loadAllBizPendingEntries(); setSelectedPendingIds(new Set()); setPendingUndoStack([]); }}
                         className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
                       >새로고침</button>
                     </div>
@@ -4453,6 +4531,7 @@ const App: React.FC = () => {
                                     batch.update(doc(db, colName, en.id), { reservationComplete: true });
                                   });
                                   await batch.commit();
+                                  setPendingUndoStack(prev => [...prev, { type: 'reservationComplete', entries: selected }]);
                                   setAllBizPendingEntries(prev => prev.filter(en => !selectedPendingIds.has(en.bizId + '_' + en.id)));
                                   setSelectedPendingIds(new Set());
                                 } catch (e) { console.error(e); alert('오류: ' + e); }
@@ -4471,6 +4550,7 @@ const App: React.FC = () => {
                                     batch.update(doc(db, getCol('manualEntries', biz.collectionPrefix), en.id), { hiddenFromPending: true });
                                   });
                                   await batch.commit();
+                                  setPendingUndoStack(prev => [...prev, { type: 'hiddenFromPending', entries: selected }]);
                                   setAllBizPendingEntries(prev => prev.filter(en => !selectedPendingIds.has(en.bizId + '_' + en.id)));
                                   setSelectedPendingIds(new Set());
                                 } catch (e) { console.error(e); alert('오류: ' + e); }
