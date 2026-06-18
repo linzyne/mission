@@ -159,6 +159,7 @@ export type ExportFieldSource =
   | 'emergencyContact' | 'product' | 'memo' | 'trackingNumber' | 'accountNumber'
   | 'paymentAmount' | 'count' | 'date'
   | 'bizName' | 'bizPhone' | 'bizAddress'
+  | 'parsedBank' | 'parsedAccount' | 'parsedAccountName'
   | 'fixed' | 'empty' | 'masterCol';
 
 export interface ExportColumn {
@@ -185,4 +186,6 @@ export interface ExportTemplate {
   filePrefix: string;
   columns: ExportColumn[];
   color: string;
+  chunkSize?: number;
+  includeHeader?: boolean;
 }

@@ -63,7 +63,31 @@ const FIELD_SOURCE_LABELS: Record<ExportFieldSource, string> = {
   address: '주소', emergencyContact: '전화번호', product: '품목', memo: '비고',
   trackingNumber: '운송장번호', accountNumber: '계좌번호', paymentAmount: '결제금액',
   count: '갯수', date: '날짜', bizName: '업체명', bizPhone: '업체전화', bizAddress: '업체주소',
+  parsedBank: '파싱-은행명', parsedAccount: '파싱-계좌번호', parsedAccountName: '파싱-예금주',
   fixed: '고정값', empty: '빈칸', masterCol: '마스터시트',
+};
+
+const DEPOSIT_FIELD_SOURCES: ExportFieldSource[] = [
+  'parsedBank', 'parsedAccount', 'parsedAccountName',
+  'accountNumber', 'paymentAmount', 'name1', 'name2', 'ordererName',
+  'orderNumber', 'date', 'memo', 'product', 'bizName', 'fixed', 'empty',
+];
+
+const parseDepositAccount = (raw: string): [string, string, string] => {
+  if (!raw || !raw.trim()) return ['', '', ''];
+  const str = raw.trim();
+  const BANKS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일','새마을','우체국','농협','국민','신한','하나','우리','기업','수협','신협','대구','부산','경남','광주','전북','제주','IBK','KB','NH'];
+  let bank = '';
+  for (const b of BANKS) { if (str.includes(b)) { bank = b; break; } }
+  const m = str.match(/\d[\d\-\s]*\d|\d+/);
+  const account = m ? m[0].trim() : '';
+  let remaining = str;
+  if (bank) remaining = remaining.replace(bank, '');
+  if (account) remaining = remaining.replace(account, '');
+  remaining = remaining.replace(/[\d\-\s]/g, '');
+  const BANK_WORDS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일은행','새마을금고','우체국','카카오','토스','은행','뱅크','금고','NH','IBK','KB','SC'];
+  for (const w of BANK_WORDS) { remaining = remaining.split(w).join(''); }
+  return [bank, account, remaining.trim()];
 };
 
 const DEFAULT_EXPORT_TEMPLATES: ExportTemplate[] = [
@@ -120,6 +144,23 @@ const DEFAULT_EXPORT_TEMPLATES: ExportTemplate[] = [
     ],
   },
 ];
+
+const DEFAULT_DEPOSIT_TEMPLATE: ExportTemplate = {
+  id: 'deposit',
+  name: '입금 다운로드',
+  sheetName: '환불입금',
+  filePrefix: '환불입금',
+  color: 'blue',
+  chunkSize: 15,
+  includeHeader: false,
+  columns: [
+    { header: '은행', source: 'parsedBank' },
+    { header: '계좌번호', source: 'parsedAccount' },
+    { header: '금액', source: 'paymentAmount' },
+    { header: '이름', source: 'name1' },
+    { header: '구분', source: 'fixed', fixedValue: '환불' },
+  ],
+};
 
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('customer');
@@ -322,6 +363,23 @@ const App: React.FC = () => {
 
   const saveExportTemplates = async (templates: ExportTemplate[]) => {
     await setDoc(doc(db, getCol('settings', colPrefix), 'exportTemplates'), { templates });
+  };
+
+  // Firestore Sync: Deposit Template
+  const [depositTemplate, setDepositTemplate] = useState<ExportTemplate>(DEFAULT_DEPOSIT_TEMPLATE);
+  const [depositTemplateModal, setDepositTemplateModal] = useState<ExportTemplate | null>(null);
+
+  useEffect(() => {
+    if (!selectedBiz) { setDepositTemplate(DEFAULT_DEPOSIT_TEMPLATE); return; }
+    const unsub = onSnapshot(doc(db, getCol('settings', colPrefix), 'depositTemplate'), (d) => {
+      if (d.exists()) setDepositTemplate(d.data().template as ExportTemplate || DEFAULT_DEPOSIT_TEMPLATE);
+      else setDepositTemplate(DEFAULT_DEPOSIT_TEMPLATE);
+    }, onFbError);
+    return () => unsub();
+  }, [selectedBiz]);
+
+  const saveDepositTemplate = async (tpl: ExportTemplate) => {
+    await setDoc(doc(db, getCol('settings', colPrefix), 'depositTemplate'), { template: tpl });
   };
 
   // Firestore Sync: Platform Configs
@@ -2296,61 +2354,37 @@ const App: React.FC = () => {
     return () => document.removeEventListener('copy', handleCopy);
   }, []);
 
-  const downloadBeforeDepositCsv = async () => {
+  const downloadDepositExcel = async () => {
     const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
     if (beforeItems.length === 0) return alert("다운로드할 데이터가 없습니다.");
-
     const XLSX = await import('xlsx');
-    const chunkSize = 15;
+    const tpl = depositTemplate;
+    const chunkSize = tpl.chunkSize ?? 15;
     const today = toLocalDateStr();
-
-    // 은행명 (긴 이름 우선 매칭)
-    const BANKS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일','새마을','우체국','농협','국민','신한','하나','우리','기업','수협','신협','대구','부산','경남','광주','전북','제주','IBK','KB','NH'];
-    const parseAccount = (raw: string): [string, string, string] => {
-      if (!raw || !raw.trim()) return ['', '', ''];
-      const str = raw.trim();
-      // 은행명 찾기
-      let bank = '';
-      for (const b of BANKS) {
-        if (str.includes(b)) { bank = b; break; }
+    const headerRow = tpl.columns.map(c => c.header);
+    const getRow = (e: ManualEntry): string[] => tpl.columns.map(col => {
+      if (col.source === 'parsedBank' || col.source === 'parsedAccount' || col.source === 'parsedAccountName') {
+        const [bank, account, accountName] = parseDepositAccount(e.accountNumber || '');
+        if (col.source === 'parsedBank') return bank;
+        if (col.source === 'parsedAccount') return account;
+        return accountName || e.name1 || e.name2 || '';
       }
-      // 계좌번호: 숫자+하이픈+공백 연속 구간만 추출
-      const m = str.match(/\d[\d\-\s]*\d|\d+/);
-      const account = m ? m[0].trim() : '';
-      // 이름: 은행명, 계좌번호, 은행관련 키워드 모두 제거한 나머지 한글
-      let remaining = str;
-      if (bank) remaining = remaining.replace(bank, '');
-      if (account) remaining = remaining.replace(account, '');
-      remaining = remaining.replace(/[\d\-\s]/g, '');
-      // 잔여 은행 관련 키워드 제거
-      const BANK_WORDS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일은행','새마을금고','우체국','카카오','토스','은행','뱅크','금고','NH','IBK','KB','SC'];
-      for (const w of BANK_WORDS) {
-        remaining = remaining.split(w).join('');
-      }
-      const name = remaining.trim();
-      return [bank, account, name];
-    };
-
-    const allRows = beforeItems.map(e => {
-      const [bank, account, accountName] = parseAccount(e.accountNumber);
-      return [bank, account, e.paymentAmount || '', accountName || e.name1 || e.name2, `${bizInfo?.name || ''}환불`];
+      return getExportCellValue(e, col);
     });
-
-    // 15개씩 분할 다운로드
-    for (let i = 0; i < allRows.length; i += chunkSize) {
-      const chunk = allRows.slice(i, i + chunkSize);
-      const ws = XLSX.utils.aoa_to_sheet(chunk);
+    const dataRows = beforeItems.map(getRow);
+    for (let i = 0; i < dataRows.length; i += chunkSize) {
+      const chunk = dataRows.slice(i, i + chunkSize);
+      const sheetData = tpl.includeHeader ? [headerRow, ...chunk] : chunk;
+      const ws = XLSX.utils.aoa_to_sheet(sheetData);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, '환불입금');
-      const fileIndex = (i / chunkSize) + 1;
-      XLSX.writeFile(wb, `${today} 환불입금내역_${fileIndex}.xlsx`);
+      XLSX.utils.book_append_sheet(wb, ws, tpl.sheetName || '환불');
+      XLSX.writeFile(wb, `${today} ${tpl.filePrefix}_${Math.floor(i / chunkSize) + 1}.xlsx`);
     }
-
-    // 통합본 다운로드
-    const wsAll = XLSX.utils.aoa_to_sheet(allRows);
+    const allSheetData = tpl.includeHeader ? [headerRow, ...dataRows] : dataRows;
+    const wsAll = XLSX.utils.aoa_to_sheet(allSheetData);
     const wbAll = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wbAll, wsAll, '환불입금');
-    XLSX.writeFile(wbAll, `${today} 환불입금내역_통합.xlsx`);
+    XLSX.utils.book_append_sheet(wbAll, wsAll, tpl.sheetName || '환불');
+    XLSX.writeFile(wbAll, `${today} ${tpl.filePrefix}_통합.xlsx`);
   };
 
   const downloadManualCsv = () => {
@@ -3085,89 +3119,11 @@ const App: React.FC = () => {
                       </div>
                       {depositSubTab === 'before' && manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit).length > 0 && (
                         <div className="flex gap-2">
-                          {selectedBiz === 'angun' && <button onClick={downloadBeforeDepositCsv} className="px-3 py-2 rounded-xl text-sm font-black bg-green-600 text-white hover:bg-green-700 transition-all">
-                            안군
-                          </button>}
-                          {selectedBiz === 'zoe' && <button onClick={async () => {
-                            const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
-                            if (beforeItems.length === 0) return alert("다운로드할 데이터가 없습니다.");
-                            const XLSX = await import('xlsx');
-                            const BANKS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일','새마을','우체국','농협','국민','신한','하나','우리','기업','수협','신협','대구','부산','경남','광주','전북','제주','IBK','KB','NH'];
-                            const parseAccount = (raw: string): [string, string, string] => {
-                              if (!raw || !raw.trim()) return ['', '', ''];
-                              const str = raw.trim();
-                              let bank = '';
-                              for (const b of BANKS) { if (str.includes(b)) { bank = b; break; } }
-                              const m = str.match(/\d[\d\-\s]*\d|\d+/);
-                              const account = m ? m[0].trim() : '';
-                              let remaining = str;
-                              if (bank) remaining = remaining.replace(bank, '');
-                              if (account) remaining = remaining.replace(account, '');
-                              remaining = remaining.replace(/[\d\-\s]/g, '');
-                              const BANK_WORDS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일은행','새마을금고','우체국','카카오','토스','은행','뱅크','금고','NH','IBK','KB','SC'];
-                              for (const w of BANK_WORDS) { remaining = remaining.split(w).join(''); }
-                              return [bank, account, remaining.trim()];
-                            };
-                            const allRows = beforeItems.map(e => {
-                              const [bank, account] = parseAccount(e.accountNumber);
-                              return [bank, account, e.paymentAmount || '', e.name1 || e.name2 || '', '조에농원환불'];
-                            });
-                            const chunkSize = 15;
-                            const today = toLocalDateStr();
-                            for (let i = 0; i < allRows.length; i += chunkSize) {
-                              const chunk = allRows.slice(i, i + chunkSize);
-                              const ws = XLSX.utils.aoa_to_sheet(chunk);
-                              const wb = XLSX.utils.book_new();
-                              XLSX.utils.book_append_sheet(wb, ws, '조에환불');
-                              XLSX.writeFile(wb, `${today} 조에환불_${(i / chunkSize) + 1}.xlsx`);
-                            }
-                            const wsAll = XLSX.utils.aoa_to_sheet(allRows);
-                            const wbAll = XLSX.utils.book_new();
-                            XLSX.utils.book_append_sheet(wbAll, wsAll, '조에환불');
-                            XLSX.writeFile(wbAll, `${today} 조에환불_통합.xlsx`);
-                          }} className="px-3 py-2 rounded-xl text-sm font-black bg-purple-600 text-white hover:bg-purple-700 transition-all">
-                            조에
-                          </button>}
-                          {selectedBiz && selectedBiz !== 'angun' && selectedBiz !== 'zoe' && bizInfo && <button onClick={async () => {
-                            const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
-                            if (beforeItems.length === 0) return alert("다운로드할 데이터가 없습니다.");
-                            const XLSX = await import('xlsx');
-                            const BANKS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일','새마을','우체국','농협','국민','신한','하나','우리','기업','수협','신협','대구','부산','경남','광주','전북','제주','IBK','KB','NH'];
-                            const parseAccount = (raw: string): [string, string, string] => {
-                              if (!raw || !raw.trim()) return ['', '', ''];
-                              const str = raw.trim();
-                              let bank = '';
-                              for (const b of BANKS) { if (str.includes(b)) { bank = b; break; } }
-                              const m = str.match(/\d[\d\-\s]*\d|\d+/);
-                              const account = m ? m[0].trim() : '';
-                              let remaining = str;
-                              if (bank) remaining = remaining.replace(bank, '');
-                              if (account) remaining = remaining.replace(account, '');
-                              remaining = remaining.replace(/[\d\-\s]/g, '');
-                              const BANK_WORDS = ['카카오뱅크','토스뱅크','케이뱅크','우리은행','SC제일은행','새마을금고','우체국','카카오','토스','은행','뱅크','금고','NH','IBK','KB','SC'];
-                              for (const w of BANK_WORDS) { remaining = remaining.split(w).join(''); }
-                              return [bank, account, remaining.trim()];
-                            };
-                            const label = `${bizInfo.name}환불`;
-                            const allRows = beforeItems.map(e => {
-                              const [bank, account] = parseAccount(e.accountNumber);
-                              return [bank, account, e.paymentAmount || '', e.name1 || e.name2 || '', label];
-                            });
-                            const chunkSize = 15;
-                            const today = toLocalDateStr();
-                            for (let i = 0; i < allRows.length; i += chunkSize) {
-                              const chunk = allRows.slice(i, i + chunkSize);
-                              const ws = XLSX.utils.aoa_to_sheet(chunk);
-                              const wb = XLSX.utils.book_new();
-                              XLSX.utils.book_append_sheet(wb, ws, '환불');
-                              XLSX.writeFile(wb, `${today} ${bizInfo.name}환불_${(i / chunkSize) + 1}.xlsx`);
-                            }
-                            const wsAll = XLSX.utils.aoa_to_sheet(allRows);
-                            const wbAll = XLSX.utils.book_new();
-                            XLSX.utils.book_append_sheet(wbAll, wsAll, '환불');
-                            XLSX.writeFile(wbAll, `${today} ${bizInfo.name}환불_통합.xlsx`);
-                          }} className="px-3 py-2 rounded-xl text-sm font-black bg-indigo-600 text-white hover:bg-indigo-700 transition-all">
+                          {bizInfo && <button onClick={downloadDepositExcel} className="px-3 py-2 rounded-xl text-sm font-black bg-blue-600 text-white hover:bg-blue-700 transition-all">
                             {bizInfo.name}
+                          </button>}
+                          {bizInfo && <button onClick={() => setDepositTemplateModal({ ...depositTemplate })} className="px-2.5 py-2 rounded-xl text-sm bg-gray-100 text-gray-500 hover:bg-gray-200 transition-all" title="다운로드 양식 설정">
+                            ⚙
                           </button>}
                           <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl">
                             <input type="date" value={depositActionDate} onChange={e => setDepositActionDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none px-2 text-gray-600" />
@@ -5768,6 +5724,109 @@ const App: React.FC = () => {
         </div>
       )}
 
+
+      {/* 입금 다운로드 양식 설정 모달 */}
+      {depositTemplateModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setDepositTemplateModal(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-gray-800">입금 다운로드 양식 설정</h3>
+              <button onClick={() => setDepositTemplateModal(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+            </div>
+            <div className="p-4 space-y-4 overflow-y-auto flex-1">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-gray-500 mb-1 block">시트 이름</label>
+                  <input value={depositTemplateModal.sheetName} onChange={e => setDepositTemplateModal({ ...depositTemplateModal, sheetName: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-500 mb-1 block">파일명 접두사</label>
+                  <input value={depositTemplateModal.filePrefix} onChange={e => setDepositTemplateModal({ ...depositTemplateModal, filePrefix: e.target.value })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-500 mb-1 block">파일당 행 수 (분할 크기)</label>
+                  <input type="number" min={1} max={500} value={depositTemplateModal.chunkSize ?? 15} onChange={e => setDepositTemplateModal({ ...depositTemplateModal, chunkSize: parseInt(e.target.value) || 15 })} className="w-full px-3 py-2 border rounded-lg text-sm" />
+                </div>
+                <div className="flex items-center gap-2 pt-5">
+                  <input type="checkbox" id="dtIncludeHeader" checked={depositTemplateModal.includeHeader ?? false} onChange={e => setDepositTemplateModal({ ...depositTemplateModal, includeHeader: e.target.checked })} className="w-4 h-4 accent-blue-600" />
+                  <label htmlFor="dtIncludeHeader" className="text-sm font-bold text-gray-600 cursor-pointer">헤더 행 포함</label>
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-bold text-gray-500">열 설정 ({depositTemplateModal.columns.length}열)</label>
+                  <button onClick={() => setDepositTemplateModal({ ...depositTemplateModal, columns: [...depositTemplateModal.columns, { header: '', source: 'empty' }] })} className="px-2 py-1 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg">+ 열 추가</button>
+                </div>
+                <div className="space-y-1.5 max-h-[40vh] overflow-y-auto">
+                  {depositTemplateModal.columns.map((col, idx) => (
+                    <div key={idx} className="flex items-center gap-2 p-2 bg-gray-50 rounded-lg text-sm">
+                      <span className="text-[10px] text-gray-400 font-mono w-5 text-center">{idx + 1}</span>
+                      <input
+                        value={col.header}
+                        onChange={e => {
+                          const cols = [...depositTemplateModal.columns];
+                          cols[idx] = { ...cols[idx], header: e.target.value };
+                          setDepositTemplateModal({ ...depositTemplateModal, columns: cols });
+                        }}
+                        placeholder="헤더명"
+                        className="flex-1 px-2 py-1.5 border rounded text-xs min-w-0"
+                      />
+                      <select
+                        value={col.source}
+                        onChange={e => {
+                          const cols = [...depositTemplateModal.columns];
+                          cols[idx] = { ...cols[idx], source: e.target.value as ExportFieldSource };
+                          setDepositTemplateModal({ ...depositTemplateModal, columns: cols });
+                        }}
+                        className="px-2 py-1.5 border rounded text-xs w-36"
+                      >
+                        {DEPOSIT_FIELD_SOURCES.map(k => (
+                          <option key={k} value={k}>{FIELD_SOURCE_LABELS[k]}</option>
+                        ))}
+                      </select>
+                      {col.source === 'fixed' && (
+                        <input
+                          value={col.fixedValue || ''}
+                          onChange={e => {
+                            const cols = [...depositTemplateModal.columns];
+                            cols[idx] = { ...cols[idx], fixedValue: e.target.value };
+                            setDepositTemplateModal({ ...depositTemplateModal, columns: cols });
+                          }}
+                          placeholder="고정값"
+                          className="px-2 py-1.5 border rounded text-xs w-24"
+                        />
+                      )}
+                      <div className="flex gap-0.5">
+                        <button disabled={idx === 0} onClick={() => {
+                          const cols = [...depositTemplateModal.columns];
+                          [cols[idx - 1], cols[idx]] = [cols[idx], cols[idx - 1]];
+                          setDepositTemplateModal({ ...depositTemplateModal, columns: cols });
+                        }} className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30">▲</button>
+                        <button disabled={idx === depositTemplateModal.columns.length - 1} onClick={() => {
+                          const cols = [...depositTemplateModal.columns];
+                          [cols[idx], cols[idx + 1]] = [cols[idx + 1], cols[idx]];
+                          setDepositTemplateModal({ ...depositTemplateModal, columns: cols });
+                        }} className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30">▼</button>
+                      </div>
+                      <button onClick={() => {
+                        setDepositTemplateModal({ ...depositTemplateModal, columns: depositTemplateModal.columns.filter((_, i) => i !== idx) });
+                      }} className="p-1 text-red-400 hover:text-red-600 text-xs">✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="p-4 border-t border-gray-100 flex gap-2">
+              <button onClick={() => setDepositTemplateModal(null)} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-500 bg-gray-100 hover:bg-gray-200">취소</button>
+              <button onClick={async () => {
+                if (depositTemplateModal.columns.length === 0) { alert('열이 최소 1개 이상 필요합니다.'); return; }
+                await saveDepositTemplate(depositTemplateModal);
+                setDepositTemplateModal(null);
+              }} className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600">저장</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 플랫폼 설정 모달 */}
       {platformConfigModal && (() => {
