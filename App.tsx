@@ -2378,13 +2378,13 @@ const App: React.FC = () => {
       const ws = XLSX.utils.aoa_to_sheet(sheetData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, tpl.sheetName || '환불');
-      XLSX.writeFile(wb, `${today} ${tpl.filePrefix}_${Math.floor(i / chunkSize) + 1}.xlsx`);
+      XLSX.writeFile(wb, `${today} ${bizInfo?.name ? bizInfo.name + '_' : ''}${tpl.filePrefix}_${Math.floor(i / chunkSize) + 1}.xlsx`);
     }
     const allSheetData = tpl.includeHeader ? [headerRow, ...dataRows] : dataRows;
     const wsAll = XLSX.utils.aoa_to_sheet(allSheetData);
     const wbAll = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wbAll, wsAll, tpl.sheetName || '환불');
-    XLSX.writeFile(wbAll, `${today} ${tpl.filePrefix}_통합.xlsx`);
+    XLSX.writeFile(wbAll, `${today} ${bizInfo?.name ? bizInfo.name + '_' : ''}${tpl.filePrefix}_통합.xlsx`);
   };
 
   const downloadManualCsv = () => {
