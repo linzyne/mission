@@ -1450,6 +1450,7 @@ const App: React.FC = () => {
   const [manualCalMonth, setManualCalMonth] = useState(new Date());
   const [depositCalOpen, setDepositCalOpen] = useState(false);
   const [depositCalMonth, setDepositCalMonth] = useState(new Date());
+  const depositCalBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // (localEdits removed - using uncontrolled inputs now)
 
@@ -2519,7 +2520,8 @@ const App: React.FC = () => {
     selected: string, onSelect: (d: string) => void,
     isOpen: boolean, setOpen: (b: boolean) => void,
     viewMonth: Date, setViewMonth: (d: Date) => void,
-    dateCounts: Record<string, number>
+    dateCounts: Record<string, number>,
+    btnRef?: React.MutableRefObject<HTMLButtonElement | null>
   ) => {
     const year = viewMonth.getFullYear();
     const month = viewMonth.getMonth();
@@ -2529,10 +2531,14 @@ const App: React.FC = () => {
     for (let i = 0; i < firstDay; i++) days.push(null);
     for (let i = 1; i <= daysInMonth; i++) days.push(i);
     const todayStr = toLocalDateStr();
+    const fixedStyle = btnRef?.current ? (() => {
+      const rect = btnRef.current!.getBoundingClientRect();
+      return { top: rect.bottom + 8, left: rect.left };
+    })() : undefined;
     return (
       <div className="relative inline-block">
         <div className="flex gap-2 items-center">
-          <button onClick={() => setOpen(!isOpen)} className="flex items-center gap-2 px-4 py-1.5 bg-white border border-gray-200 rounded-xl text-xs font-bold hover:border-blue-500 transition-all">
+          <button ref={btnRef} onClick={() => setOpen(!isOpen)} className="flex items-center gap-2 px-4 py-1.5 bg-white border border-gray-200 rounded-xl text-xs font-bold hover:border-blue-500 transition-all">
             <span>📅</span>
             <span>{selected === 'all' ? '전체' : selected}</span>
             <span className="text-gray-300 text-[10px]">▼</span>
@@ -2543,7 +2549,7 @@ const App: React.FC = () => {
         </div>
         {isOpen && (<>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute top-full left-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 p-4 z-50 w-64">
+          <div className={btnRef ? 'fixed bg-white rounded-2xl shadow-2xl border border-gray-100 p-4 z-50 w-64' : 'absolute top-full left-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 p-4 z-50 w-64'} style={fixedStyle}>
             <div className="flex items-center justify-between mb-3">
               <button onClick={() => setViewMonth(new Date(year, month - 1, 1))} className="p-1 hover:bg-gray-100 rounded-lg text-gray-400 font-bold text-xs">◀</button>
               <span className="font-black text-xs">{year}년 {month + 1}월</span>
@@ -3171,7 +3177,8 @@ const App: React.FC = () => {
                       manualEntries.filter(e => depositSubTab === 'before' ? (e.beforeDeposit && !e.afterDeposit) : e.afterDeposit).reduce((acc, e) => {
                         if (e.date) acc[e.date] = (acc[e.date] || 0) + 1;
                         return acc;
-                      }, {} as Record<string, number>)
+                      }, {} as Record<string, number>),
+                      depositCalBtnRef
                     )}
                   </div>
                   <div className="overflow-x-auto" onMouseUp={() => { isDraggingRef.current = false; }} onMouseLeave={() => { isDraggingRef.current = false; }}>
