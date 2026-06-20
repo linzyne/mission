@@ -2388,6 +2388,27 @@ const App: React.FC = () => {
     XLSX.writeFile(wbAll, `${today} ${bizInfo?.name ? bizInfo.name + '_' : ''}${tpl.filePrefix}_통합.xlsx`);
   };
 
+  const copyDepositToClipboard = async () => {
+    const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
+    if (beforeItems.length === 0) return alert("복사할 데이터가 없습니다.");
+    const tpl = depositTemplate;
+    const headerRow = tpl.columns.map(c => c.header);
+    const getRow = (e: ManualEntry): string[] => tpl.columns.map(col => {
+      if (col.source === 'parsedBank' || col.source === 'parsedAccount' || col.source === 'parsedAccountName') {
+        const [bank, account, accountName] = parseDepositAccount(e.accountNumber || '');
+        if (col.source === 'parsedBank') return bank;
+        if (col.source === 'parsedAccount') return account;
+        return accountName || e.name1 || e.name2 || '';
+      }
+      return getExportCellValue(e, col);
+    });
+    const dataRows = beforeItems.map(getRow);
+    const allRows = tpl.includeHeader ? [headerRow, ...dataRows] : dataRows;
+    const tsv = allRows.map(row => row.join('\t')).join('\n');
+    await navigator.clipboard.writeText(tsv);
+    alert(`${beforeItems.length}건 복사 완료`);
+  };
+
   const downloadManualCsv = () => {
     const entriesToExport = selectedManualIds.size > 0
       ? manualEntries.filter(e => selectedManualIds.has(e.id))
@@ -3127,6 +3148,9 @@ const App: React.FC = () => {
                         <div className="flex gap-2">
                           {bizInfo && <button onClick={downloadDepositExcel} className="px-3 py-2 rounded-xl text-sm font-black bg-blue-600 text-white hover:bg-blue-700 transition-all">
                             {bizInfo.name}
+                          </button>}
+                          {bizInfo && <button onClick={copyDepositToClipboard} className="px-3 py-2 rounded-xl text-sm font-black bg-blue-100 text-blue-600 hover:bg-blue-200 transition-all">
+                            복사
                           </button>}
                           {bizInfo && <button onClick={() => setDepositTemplateModal({ ...depositTemplate })} className="px-2.5 py-2 rounded-xl text-sm bg-gray-100 text-gray-500 hover:bg-gray-200 transition-all" title="다운로드 양식 설정">
                             ⚙
