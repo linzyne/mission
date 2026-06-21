@@ -46,6 +46,7 @@ export interface ManualEntry {
   beforeDeposit: boolean;
   afterDeposit: boolean;
   depositDate?: string;
+  beforeDepositCheckedAt?: number;
   couponApplied?: boolean;
   isManualCheck?: boolean;
   reservationComplete?: boolean;

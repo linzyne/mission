@@ -58,6 +58,17 @@ function toLocalDateStr(d: Date = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function formatCheckDate(ts: number | undefined): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const yy = String(d.getFullYear()).slice(2);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${yy}.${mm}.${dd} ${hh}:${min}`;
+}
+
 const FIELD_SOURCE_LABELS: Record<ExportFieldSource, string> = {
   orderNumber: '주문번호', name1: '이름1', name2: '이름2/받는사람', ordererName: '주문자명',
   address: '주소', emergencyContact: '전화번호', product: '품목', memo: '비고',
@@ -1970,6 +1981,7 @@ const App: React.FC = () => {
       };
 
       if (!currentVal) {
+        updates.beforeDepositCheckedAt = Date.now();
         const entry = manualEntries.find(e => e.id === id);
         if (entry && !entry.paymentAmount) {
           const matchedPrice = productPrices.find(p => p.name === entry.product);
@@ -2498,7 +2510,7 @@ const App: React.FC = () => {
         if (extractedOrderNumber) {
           const matchedEntry = manualEntries.find(entry => entry.orderNumber === extractedOrderNumber);
           if (matchedEntry) {
-            await updateDoc(doc(db, getCol('manualEntries', colPrefix), matchedEntry.id), { beforeDeposit: true });
+            await updateDoc(doc(db, getCol('manualEntries', colPrefix), matchedEntry.id), { beforeDeposit: true, beforeDepositCheckedAt: Date.now() });
             console.log(`[OCR 매칭 성공] 주문번호 [${extractedOrderNumber}] → 입금 대기 상태로 변경`);
           } else {
             console.log(`[OCR 매칭 실패] 주문번호 [${extractedOrderNumber}] → 매칭되는 주문 내역 없음`);
@@ -3030,7 +3042,7 @@ const App: React.FC = () => {
 
                             const promises = manualEntries
                               .filter(e => targetOrderNumbers.has((e.orderNumber || '').trim()))
-                              .map(e => updateDoc(doc(db, getCol('manualEntries', colPrefix), e.id), { beforeDeposit: true, afterDeposit: false }));
+                              .map(e => updateDoc(doc(db, getCol('manualEntries', colPrefix), e.id), { beforeDeposit: true, afterDeposit: false, beforeDepositCheckedAt: Date.now() }));
 
                             await Promise.all(promises);
                             setSelectedReviewIds(new Set());
@@ -3243,6 +3255,7 @@ const App: React.FC = () => {
                                   }
                                 }} />
                               </th>
+                              <th className="py-0.5 px-2">체크날짜</th>
                               <th className="py-0.5 px-2">날짜</th>
                               <th className="py-0.5 px-2">이름1</th>
                               <th className="py-0.5 px-2">이름2</th>
@@ -3266,6 +3279,7 @@ const App: React.FC = () => {
                                     setSelectedDepositIds(next);
                                   }} />
                                 </td>
+                                <td className="py-0 px-2 text-gray-500">{formatCheckDate(entry.beforeDepositCheckedAt)}</td>
                                 <td className="py-0 px-2">
                                   {entry.isManualCheck && <span className="inline-block px-1 rounded bg-orange-100 text-orange-600 text-[8px] font-black mr-0.5">수동</span>}
                                   {entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''}
@@ -3287,7 +3301,7 @@ const App: React.FC = () => {
                                 const subtotal = groupItems.reduce((sum, e) => sum + (e.paymentAmount || 0), 0);
                                 rows.push(
                                   <tr key={`subtotal-${idx}`} className="border-t-2 border-yellow-400 bg-yellow-50">
-                                    <td colSpan={5} className="py-0.5 px-2 text-right text-[10px] font-black text-yellow-700">
+                                    <td colSpan={6} className="py-0.5 px-2 text-right text-[10px] font-black text-yellow-700">
                                       소계 ({start + 1}~{idx + 1})
                                     </td>
                                     <td colSpan={3} className="py-0.5 px-2 text-left text-[10px] font-black text-yellow-700">
@@ -3299,7 +3313,7 @@ const App: React.FC = () => {
                               return rows;
                             })}
                             {beforeItems.length === 0 && (
-                              <tr><td colSpan={8} className="p-16 text-gray-300 font-bold">
+                              <tr><td colSpan={9} className="p-16 text-gray-300 font-bold">
                                 {debouncedDepositSearch ? `"${debouncedDepositSearch}" 검색 결과가 없습니다.` : '입금 대기 항목이 없습니다.'}
                               </td></tr>
                             )}
