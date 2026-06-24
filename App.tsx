@@ -1885,7 +1885,7 @@ const App: React.FC = () => {
     try {
       const batch = writeBatch(db);
       selectedDepositIds.forEach(id => {
-        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { afterDeposit: true, depositDate: toLocalDateStr() });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { afterDeposit: true, depositDate: toLocalDateStr(), depositedAt: Date.now() });
       });
       await batch.commit();
       setSelectedDepositIds(new Set());
@@ -2000,9 +2000,12 @@ const App: React.FC = () => {
 
   const toggleAfterDeposit = async (id: string, currentVal: boolean) => {
     try {
-      await setDoc(doc(db, getCol('manualEntries', colPrefix), id), {
-        afterDeposit: !currentVal
-      }, { merge: true });
+      const updates: Record<string, any> = { afterDeposit: !currentVal };
+      if (!currentVal) {
+        updates.depositDate = toLocalDateStr();
+        updates.depositedAt = Date.now();
+      }
+      await setDoc(doc(db, getCol('manualEntries', colPrefix), id), updates, { merge: true });
     } catch (e) {
       console.error("Toggle Error:", e);
       alert("오류가 발생했습니다: " + e);
@@ -3343,7 +3346,12 @@ const App: React.FC = () => {
                         }
                         return depositAfterDate === 'all' || e.date === depositAfterDate;
                       });
-                      afterItems.sort((a, b) => (b.depositDate || '').localeCompare(a.depositDate || ''));
+                      afterItems.sort((a, b) => {
+                        const aTime = a.depositedAt || 0;
+                        const bTime = b.depositedAt || 0;
+                        if (aTime !== bTime) return bTime - aTime;
+                        return (b.depositDate || '').localeCompare(a.depositDate || '');
+                      });
                       const allAfterSelected = afterItems.length > 0 && afterItems.every(e => selectedDepositIds.has(e.id));
                       return (
                         <table className="w-full text-xs text-center">
@@ -3359,7 +3367,7 @@ const App: React.FC = () => {
                                 }} />
                               </th>
                               <th className="py-1 px-2">구매날짜</th>
-                              <th className="py-1 px-2 text-blue-600">입금날짜</th>
+                              <th className="py-1 px-2 text-blue-600">입금일시</th>
                               <th className="py-1 px-2">이름1</th>
                               <th className="py-1 px-2">이름2</th>
                               <th className="py-1 px-2 hidden md:table-cell">주문번호</th>
@@ -3381,7 +3389,7 @@ const App: React.FC = () => {
                                   }} />
                                 </td>
                                 <td className="py-0.5 px-2">{entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''}</td>
-                                <td className="py-0.5 px-2 text-blue-600">{entry.depositDate ? entry.depositDate.slice(2).replace(/-/g, '.') : '-'}</td>
+                                <td className="py-0.5 px-2 text-blue-600">{entry.depositedAt ? formatCheckDate(entry.depositedAt) : entry.depositDate ? entry.depositDate.slice(2).replace(/-/g, '.') : '-'}</td>
                                 <td className="py-0.5 px-2">{entry.name1}</td>
                                 <td className="py-0.5 px-2">{entry.name2}</td>
                                 <td className="py-0.5 px-2 text-blue-600 font-black hidden md:table-cell">{entry.orderNumber}</td>
