@@ -162,7 +162,7 @@ export type ExportFieldSource =
   | 'paymentAmount' | 'count' | 'date'
   | 'bizName' | 'bizPhone' | 'bizAddress'
   | 'parsedBank' | 'parsedAccount' | 'parsedAccountName'
-  | 'fixed' | 'empty' | 'masterCol';
+  | 'fixed' | 'bizNameFixed' | 'empty' | 'masterCol';
 
 export interface ExportColumn {
   header: string;

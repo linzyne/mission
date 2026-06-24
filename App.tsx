@@ -75,7 +75,7 @@ const FIELD_SOURCE_LABELS: Record<ExportFieldSource, string> = {
   trackingNumber: '운송장번호', accountNumber: '계좌번호', paymentAmount: '결제금액',
   count: '갯수', date: '날짜', bizName: '업체명', bizPhone: '업체전화', bizAddress: '업체주소',
   parsedBank: '파싱-은행명', parsedAccount: '파싱-계좌번호', parsedAccountName: '파싱-예금주',
-  fixed: '고정값', empty: '빈칸', masterCol: '마스터시트',
+  fixed: '고정값', bizNameFixed: '업체명+고정값', empty: '빈칸', masterCol: '마스터시트',
 };
 
 const DEPOSIT_FIELD_SOURCES: ExportFieldSource[] = [
@@ -169,7 +169,8 @@ const DEFAULT_DEPOSIT_TEMPLATE: ExportTemplate = {
     { header: '계좌번호', source: 'parsedAccount' },
     { header: '금액', source: 'paymentAmount' },
     { header: '이름', source: 'name1' },
-    { header: '구분', source: 'fixed', fixedValue: '환불' },
+    { header: '구분', source: 'bizNameFixed', fixedValue: '환불' },
+    { header: '구분2', source: 'bizNameFixed', fixedValue: '환불' },
   ],
 };
 
@@ -483,6 +484,7 @@ const App: React.FC = () => {
       case 'bizPhone': return bizInfo?.phone || '';
       case 'bizAddress': return bizInfo?.address || '';
       case 'fixed': return col.fixedValue || '';
+      case 'bizNameFixed': return [bizInfo?.name, col.fixedValue].filter(Boolean).join(' ');
       case 'masterCol': return col.masterColName ? (masterRow?.[col.masterColName] ?? '') : '';
       case 'empty': return '';
       default: return '';
@@ -2370,11 +2372,20 @@ const App: React.FC = () => {
     return () => document.removeEventListener('copy', handleCopy);
   }, []);
 
+  const migrateTpl = (tpl: typeof depositTemplate) => ({
+    ...tpl,
+    columns: tpl.columns.map(col =>
+      col.source === 'fixed' && col.fixedValue === '환불'
+        ? { ...col, source: 'bizNameFixed' as const }
+        : col
+    ),
+  });
+
   const downloadDepositExcel = async () => {
     const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
     if (beforeItems.length === 0) return alert("다운로드할 데이터가 없습니다.");
     const XLSX = await import('xlsx');
-    const tpl = depositTemplate;
+    const tpl = migrateTpl(depositTemplate);
     const chunkSize = tpl.chunkSize ?? 15;
     const today = toLocalDateStr();
     const headerRow = tpl.columns.map(c => c.header);
@@ -2406,7 +2417,7 @@ const App: React.FC = () => {
   const copyDepositToClipboard = async () => {
     const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
     if (beforeItems.length === 0) return alert("복사할 데이터가 없습니다.");
-    const tpl = depositTemplate;
+    const tpl = migrateTpl(depositTemplate);
     const headerRow = tpl.columns.map(c => c.header);
     const getRow = (e: ManualEntry): string[] => tpl.columns.map(col => {
       if (col.source === 'parsedBank' || col.source === 'parsedAccount' || col.source === 'parsedAccountName') {
