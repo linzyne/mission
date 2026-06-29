@@ -597,7 +597,6 @@ const App: React.FC = () => {
   const [allBizBeforeDepositEntries, setAllBizBeforeDepositEntries] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
   const [allBizBeforeDepositLoaded, setAllBizBeforeDepositLoaded] = useState(false);
   const [selectedAllDepositIds, setSelectedAllDepositIds] = useState<Set<string>>(new Set());
-  const [wingupDepositActionDate, setWingupDepositActionDate] = useState(toLocalDateStr());
 
   const loadAllBizPendingEntries = async () => {
     setAllBizPendingLoaded(false);
@@ -1347,7 +1346,6 @@ const App: React.FC = () => {
 
   const [depositBeforeDate, setDepositBeforeDate] = useState<string>('all');
   const [depositAfterDate, setDepositAfterDate] = useState<string>(toLocalDateStr());
-  const [depositActionDate, setDepositActionDate] = useState<string>(toLocalDateStr());
 
   const [manualSearch, setManualSearch] = useState('');
 
@@ -1938,12 +1936,14 @@ const App: React.FC = () => {
   // ✅ Deposit Management Robust Handlers
   const handleBulkDepositComplete = async () => {
     if (selectedDepositIds.size === 0) return;
-    if (!window.confirm(`${selectedDepositIds.size}건을 입금완료 처리하시겠습니까?`)) return;
+    const dateInput = window.prompt(`${selectedDepositIds.size}건 입금완료 처리\n입금 날짜를 입력해주세요`, toLocalDateStr());
+    if (dateInput === null) return;
+    const depositDate = dateInput.trim() || toLocalDateStr();
 
     try {
       const batch = writeBatch(db);
       selectedDepositIds.forEach(id => {
-        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { afterDeposit: true, depositDate: toLocalDateStr(), depositedAt: Date.now() });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { afterDeposit: true, depositDate, depositedAt: Date.now() });
       });
       await batch.commit();
       setSelectedDepositIds(new Set());
@@ -2519,14 +2519,16 @@ const App: React.FC = () => {
   const handleAllBizDepositComplete = async () => {
     const selected = allBizBeforeDepositEntries.filter(en => selectedAllDepositIds.has(en.bizId + '_' + en.id));
     if (selected.length === 0) return;
-    if (!window.confirm(`${selected.length}건을 입금완료 처리하시겠습니까?`)) return;
+    const dateInput = window.prompt(`${selected.length}건 입금완료 처리\n입금 날짜를 입력해주세요`, toLocalDateStr());
+    if (dateInput === null) return;
+    const depositDate = dateInput.trim() || toLocalDateStr();
     try {
       const batch = writeBatch(db);
       selected.forEach(en => {
         const biz = allBusinesses[en.bizId];
         if (!biz) return;
         const colName = getCol('manualEntries', biz.collectionPrefix);
-        batch.update(doc(db, colName, en.id), { afterDeposit: true, depositDate: wingupDepositActionDate, depositedAt: Date.now() });
+        batch.update(doc(db, colName, en.id), { afterDeposit: true, depositDate, depositedAt: Date.now() });
       });
       await batch.commit();
       setAllBizBeforeDepositEntries(prev => prev.filter(en => !selectedAllDepositIds.has(en.bizId + '_' + en.id)));
@@ -3284,15 +3286,12 @@ const App: React.FC = () => {
                           {bizInfo && <button onClick={() => setDepositTemplateModal({ ...depositTemplate })} className="px-2.5 py-2 rounded-xl text-sm bg-gray-100 text-gray-500 hover:bg-gray-200 transition-all" title="다운로드 양식 설정">
                             ⚙
                           </button>}
-                          <div className="flex items-center gap-2 bg-gray-50 p-1 rounded-xl">
-                            <input type="date" value={depositActionDate} onChange={e => setDepositActionDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none px-2 text-gray-600" />
-                            <button
-                              onClick={handleBulkDepositComplete}
-                              className={`px-5 py-2 rounded-xl text-sm font-black transition-all ${selectedDepositIds.size > 0 ? 'bg-gray-600 text-white hover:bg-gray-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
-                            >
-                              입금완료 ({selectedDepositIds.size}건)
-                            </button>
-                          </div>
+                          <button
+                            onClick={handleBulkDepositComplete}
+                            className={`px-5 py-2 rounded-xl text-sm font-black transition-all ${selectedDepositIds.size > 0 ? 'bg-gray-600 text-white hover:bg-gray-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                          >
+                            입금완료 ({selectedDepositIds.size}건)
+                          </button>
                         </div>
                       )}
                       {depositSubTab === 'after' && manualEntries.filter(e => e.afterDeposit).length > 0 && (
@@ -4767,13 +4766,10 @@ const App: React.FC = () => {
                     {selectedAllDepositIds.size > 0 && (
                       <div className="flex items-center gap-2 mb-3 flex-wrap">
                         <span className="text-xs font-black text-blue-600">{selectedAllDepositIds.size}건 선택</span>
-                        <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-xl">
-                          <input type="date" value={wingupDepositActionDate} onChange={e => setWingupDepositActionDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none text-gray-600" />
-                          <button
-                            onClick={handleAllBizDepositComplete}
-                            className="px-3 py-1 bg-gray-700 text-white rounded-lg text-xs font-black hover:bg-gray-800"
-                          >입금완료</button>
-                        </div>
+                        <button
+                          onClick={handleAllBizDepositComplete}
+                          className="px-3 py-1 bg-gray-700 text-white rounded-lg text-xs font-black hover:bg-gray-800"
+                        >입금완료</button>
                         <button onClick={() => setSelectedAllDepositIds(new Set())} className="px-3 py-1 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold hover:bg-gray-200">해제</button>
                       </div>
                     )}
