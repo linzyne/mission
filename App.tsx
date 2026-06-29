@@ -593,6 +593,12 @@ const App: React.FC = () => {
     entries: Array<ManualEntry & { bizId: string; bizName: string }>;
   }>>([]);
 
+  // 윙업무: 전체 사업자 입금전 목록
+  const [allBizBeforeDepositEntries, setAllBizBeforeDepositEntries] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
+  const [allBizBeforeDepositLoaded, setAllBizBeforeDepositLoaded] = useState(false);
+  const [selectedAllDepositIds, setSelectedAllDepositIds] = useState<Set<string>>(new Set());
+  const [wingupDepositActionDate, setWingupDepositActionDate] = useState(toLocalDateStr());
+
   const loadAllBizPendingEntries = async () => {
     setAllBizPendingLoaded(false);
     const today = toLocalDateStr();
@@ -648,10 +654,60 @@ const App: React.FC = () => {
     setAllBizPendingLoaded(true);
   };
 
+  const loadAllBizBeforeDepositEntries = async () => {
+    setAllBizBeforeDepositLoaded(false);
+    const bizEntries = Object.entries(allBusinesses);
+    const perBizResults = await Promise.all(bizEntries.map(async ([bizId, biz]) => {
+      const colName = getCol('manualEntries', biz.collectionPrefix);
+      try {
+        const q = query(collection(db, colName), where('beforeDeposit', '==', true));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.flatMap(d => {
+          const data = d.data();
+          if (data.afterDeposit) return [];
+          return [{
+            id: d.id,
+            bizId,
+            bizName: biz.name,
+            count: data.count ?? 0,
+            paymentAmount: data.paymentAmount ?? 0,
+            beforeDeposit: true,
+            afterDeposit: false,
+            proofImage: '',
+            product: data.product ?? '',
+            date: data.date ?? '',
+            name1: data.name1 ?? '',
+            name2: data.name2 ?? '',
+            ordererName: data.ordererName ?? '',
+            orderNumber: data.orderNumber != null ? String(data.orderNumber) : '',
+            address: data.address ?? '',
+            memo: data.memo ?? '',
+            emergencyContact: data.emergencyContact ?? '',
+            accountNumber: data.accountNumber ?? '',
+            trackingNumber: data.trackingNumber ?? '',
+            reservationComplete: data.reservationComplete ?? false,
+            createdAt: data.createdAt,
+            beforeDepositCheckedAt: data.beforeDepositCheckedAt,
+          } as ManualEntry & { bizId: string; bizName: string }];
+        });
+      } catch (e) { console.error('[allBizBeforeDeposit] load error:', bizId, e); return []; }
+    }));
+    const result = perBizResults.flat();
+    result.sort((a, b) => {
+      const bizCmp = a.bizName.localeCompare(b.bizName, 'ko');
+      if (bizCmp !== 0) return bizCmp;
+      return (b.date || '').localeCompare(a.date || '');
+    });
+    setAllBizBeforeDepositEntries(result);
+    setAllBizBeforeDepositLoaded(true);
+  };
+
   useEffect(() => {
     if (adminTab === 'reservationPending') {
       loadAllBizPendingEntries();
       setSelectedPendingIds(new Set());
+      loadAllBizBeforeDepositEntries();
+      setSelectedAllDepositIds(new Set());
     }
   }, [adminTab]);
 
@@ -2435,6 +2491,53 @@ const App: React.FC = () => {
     alert(`${beforeItems.length}건 복사 완료`);
   };
 
+  const copyAllBizBeforeDepositToClipboard = async () => {
+    if (allBizBeforeDepositEntries.length === 0) return alert("복사할 데이터가 없습니다.");
+    const tpl = migrateTpl(DEFAULT_DEPOSIT_TEMPLATE);
+    const getRow = (e: ManualEntry & { bizId: string; bizName: string }): string[] => {
+      const biz = allBusinesses[e.bizId];
+      return tpl.columns.map(col => {
+        if (col.source === 'parsedBank' || col.source === 'parsedAccount' || col.source === 'parsedAccountName') {
+          const [bank, account, accountName] = parseDepositAccount(e.accountNumber || '');
+          if (col.source === 'parsedBank') return bank;
+          if (col.source === 'parsedAccount') return account;
+          return accountName || e.name1 || e.name2 || '';
+        }
+        if (col.source === 'bizName') return biz?.name || '';
+        if (col.source === 'bizPhone') return biz?.phone || '';
+        if (col.source === 'bizAddress') return biz?.address || '';
+        if (col.source === 'bizNameFixed') return [biz?.name, col.fixedValue].filter(Boolean).join(' ');
+        return getExportCellValue(e, col);
+      });
+    };
+    const dataRows = allBizBeforeDepositEntries.map(getRow);
+    const tsv = dataRows.map(row => row.join('\t')).join('\n');
+    await navigator.clipboard.writeText(tsv);
+    alert(`${allBizBeforeDepositEntries.length}건 복사 완료`);
+  };
+
+  const handleAllBizDepositComplete = async () => {
+    const selected = allBizBeforeDepositEntries.filter(en => selectedAllDepositIds.has(en.bizId + '_' + en.id));
+    if (selected.length === 0) return;
+    if (!window.confirm(`${selected.length}건을 입금완료 처리하시겠습니까?`)) return;
+    try {
+      const batch = writeBatch(db);
+      selected.forEach(en => {
+        const biz = allBusinesses[en.bizId];
+        if (!biz) return;
+        const colName = getCol('manualEntries', biz.collectionPrefix);
+        batch.update(doc(db, colName, en.id), { afterDeposit: true, depositDate: wingupDepositActionDate, depositedAt: Date.now() });
+      });
+      await batch.commit();
+      setAllBizBeforeDepositEntries(prev => prev.filter(en => !selectedAllDepositIds.has(en.bizId + '_' + en.id)));
+      setSelectedAllDepositIds(new Set());
+      alert("처리되었습니다.");
+    } catch (e) {
+      console.error(e);
+      alert("오류가 발생했습니다: " + e);
+    }
+  };
+
   const downloadManualCsv = () => {
     const entriesToExport = selectedManualIds.size > 0
       ? manualEntries.filter(e => selectedManualIds.has(e.id))
@@ -2924,7 +3027,7 @@ const App: React.FC = () => {
                   { key: 'productPrices', label: '품목', icon: '~', color: 'blue' },
                   { key: 'deposit', label: '입금', icon: '~', color: 'blue' },
                   { key: 'sales', label: '매출', icon: '~', color: 'green' },
-                  { key: 'reservationPending', label: '예약미완료', icon: '~', color: 'pink' },
+                  { key: 'reservationPending', label: '윙업무', icon: '~', color: 'pink' },
                 ] as { key: typeof adminTab; label: string; icon: string; color: string }[]).map(tab => (
                   <button key={tab.key} onClick={() => setAdminTab(tab.key)}
                     className={`flex-shrink-0 px-4 py-2 rounded-2xl text-xs font-black transition-all ${
@@ -4470,172 +4573,310 @@ const App: React.FC = () => {
 
                 </section>
               ) : adminTab === 'reservationPending' ? (
-                <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl p-6 animate-in slide-in-from-right-10 duration-500">
-                  <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
-                    <h2 className="text-xl font-black text-gray-900">예약완료 미처리 목록</h2>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-gray-500">{allBizPendingLoaded ? `전체 ${allBizPendingEntries.length}건` : '불러오는 중...'}</span>
-                      {pendingUndoStack.length > 0 && (
-                        <button
-                          onClick={async () => {
-                            const last = pendingUndoStack[pendingUndoStack.length - 1];
-                            try {
-                              const batch = writeBatch(db);
-                              last.entries.forEach(en => {
-                                const biz = allBusinesses[en.bizId];
-                                if (!biz) return;
-                                const colName = getCol('manualEntries', biz.collectionPrefix);
-                                if (last.type === 'reservationComplete') {
-                                  batch.update(doc(db, colName, en.id), { reservationComplete: false });
-                                } else {
-                                  batch.update(doc(db, colName, en.id), { hiddenFromPending: false });
-                                }
-                              });
-                              await batch.commit();
-                              setPendingUndoStack(prev => prev.slice(0, -1));
-                              setAllBizPendingEntries(prev => {
-                                const existingIds = new Set(prev.map(e => e.id));
-                                const restored = last.entries.filter(e => !existingIds.has(e.id));
-                                return [...restored, ...prev].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-                              });
-                            } catch (e) { console.error(e); alert('오류: ' + e); }
-                          }}
-                          className="flex items-center gap-1 px-3 py-1.5 bg-orange-100 text-orange-600 rounded-xl text-xs font-bold hover:bg-orange-200"
-                          title={`되돌리기: ${pendingUndoStack[pendingUndoStack.length - 1]?.type === 'reservationComplete' ? '예약완료 처리' : '목록 제외'} ${pendingUndoStack[pendingUndoStack.length - 1]?.entries.length}건`}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg>
-                          되돌리기
-                        </button>
-                      )}
-                      <button
-                        onClick={() => { loadAllBizPendingEntries(); setSelectedPendingIds(new Set()); setPendingUndoStack([]); }}
-                        className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
-                      >새로고침</button>
-                    </div>
-                  </div>
+                <div className="space-y-6 animate-in fade-in duration-500">
 
-                  {!allBizPendingLoaded ? (
-                    <div className="flex items-center justify-center py-20 text-gray-400 text-sm font-bold">불러오는 중...</div>
-                  ) : allBizPendingEntries.length === 0 ? (
-                    <div className="flex items-center justify-center py-20 text-gray-400 text-sm font-bold">예약완료 미처리 항목이 없습니다.</div>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-3 mb-3 px-1 flex-wrap">
-                        <label className="flex items-center gap-2 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            className="w-4 h-4 accent-pink-500"
-                            checked={selectedPendingIds.size === allBizPendingEntries.length && allBizPendingEntries.length > 0}
-                            onChange={e => {
-                              if (e.target.checked) setSelectedPendingIds(new Set(allBizPendingEntries.map(en => en.bizId + '_' + en.id)));
-                              else setSelectedPendingIds(new Set());
-                            }}
-                          />
-                          <span className="text-sm font-bold text-gray-600">전체선택</span>
-                        </label>
-                        {selectedPendingIds.size > 0 && (
-                          <>
-                            <span className="text-sm font-black text-pink-600">{selectedPendingIds.size}개 선택</span>
-                            <button
-                              onClick={async () => {
-                                const selected = allBizPendingEntries.filter(en => selectedPendingIds.has(en.bizId + '_' + en.id));
-                                const text = selected.map(en => `${en.bizName}_${en.name1 || en.ordererName || ''}_${en.orderNumber || ''}`).join('\n');
-                                await navigator.clipboard.writeText(text);
-                                if (!window.confirm(`${selected.length}건을 예약완료 처리하시겠습니까?`)) return;
-                                try {
-                                  const batch = writeBatch(db);
-                                  selected.forEach(en => {
-                                    const biz = allBusinesses[en.bizId];
-                                    if (!biz) return;
-                                    const colName = getCol('manualEntries', biz.collectionPrefix);
-                                    batch.update(doc(db, colName, en.id), { reservationComplete: true });
-                                  });
-                                  await batch.commit();
-                                  setPendingUndoStack(prev => [...prev, { type: 'reservationComplete', entries: selected }]);
-                                  setAllBizPendingEntries(prev => prev.filter(en => !selectedPendingIds.has(en.bizId + '_' + en.id)));
-                                  setSelectedPendingIds(new Set());
-                                } catch (e) { console.error(e); alert('오류: ' + e); }
-                              }}
-                              className="px-4 py-1.5 bg-pink-500 text-white rounded-xl text-sm font-black hover:bg-pink-600"
-                            >복사</button>
-                            <button
-                              onClick={async () => {
-                                const selected = allBizPendingEntries.filter(en => selectedPendingIds.has(en.bizId + '_' + en.id));
-                                if (!window.confirm(`${selected.length}건을 목록에서 제외하시겠습니까?\n(구매 목록에는 유지됩니다)`)) return;
-                                try {
-                                  const batch = writeBatch(db);
-                                  selected.forEach(en => {
-                                    const biz = allBusinesses[en.bizId];
-                                    if (!biz) return;
-                                    batch.update(doc(db, getCol('manualEntries', biz.collectionPrefix), en.id), { hiddenFromPending: true });
-                                  });
-                                  await batch.commit();
-                                  setPendingUndoStack(prev => [...prev, { type: 'hiddenFromPending', entries: selected }]);
-                                  setAllBizPendingEntries(prev => prev.filter(en => !selectedPendingIds.has(en.bizId + '_' + en.id)));
-                                  setSelectedPendingIds(new Set());
-                                } catch (e) { console.error(e); alert('오류: ' + e); }
-                              }}
-                              className="px-3 py-1.5 bg-red-100 text-red-500 rounded-xl text-xs font-bold hover:bg-red-200"
-                            >삭제</button>
-                            <button
-                              onClick={() => setSelectedPendingIds(new Set())}
-                              className="px-3 py-1.5 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold hover:bg-gray-200"
-                            >선택해제</button>
-                          </>
-                        )}
+                  {/* 섹션 1: 예약완료 미처리 목록 */}
+                  <section className="bg-white rounded-[32px] border border-gray-100 shadow-sm p-6">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                      <div>
+                        <h2 className="text-base font-black text-gray-900">예약완료 미처리</h2>
+                        <p className="text-xs text-gray-400 mt-0.5">최근 10일 이내 · {allBizPendingLoaded ? `${allBizPendingEntries.length}건` : '로딩 중...'}</p>
                       </div>
+                      <div className="flex items-center gap-2">
+                        {pendingUndoStack.length > 0 && (
+                          <button
+                            onClick={async () => {
+                              const last = pendingUndoStack[pendingUndoStack.length - 1];
+                              try {
+                                const batch = writeBatch(db);
+                                last.entries.forEach(en => {
+                                  const biz = allBusinesses[en.bizId];
+                                  if (!biz) return;
+                                  const colName = getCol('manualEntries', biz.collectionPrefix);
+                                  if (last.type === 'reservationComplete') {
+                                    batch.update(doc(db, colName, en.id), { reservationComplete: false });
+                                  } else {
+                                    batch.update(doc(db, colName, en.id), { hiddenFromPending: false });
+                                  }
+                                });
+                                await batch.commit();
+                                setPendingUndoStack(prev => prev.slice(0, -1));
+                                setAllBizPendingEntries(prev => {
+                                  const existingIds = new Set(prev.map(e => e.id));
+                                  const restored = last.entries.filter(e => !existingIds.has(e.id));
+                                  return [...restored, ...prev].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+                                });
+                              } catch (e) { console.error(e); alert('오류: ' + e); }
+                            }}
+                            className="flex items-center gap-1 px-3 py-1.5 bg-orange-100 text-orange-600 rounded-xl text-xs font-bold hover:bg-orange-200"
+                            title={`되돌리기: ${pendingUndoStack[pendingUndoStack.length - 1]?.type === 'reservationComplete' ? '예약완료 처리' : '목록 제외'} ${pendingUndoStack[pendingUndoStack.length - 1]?.entries.length}건`}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg>
+                            되돌리기
+                          </button>
+                        )}
+                        <button
+                          onClick={() => { loadAllBizPendingEntries(); setSelectedPendingIds(new Set()); setPendingUndoStack([]); }}
+                          className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
+                        >새로고침</button>
+                      </div>
+                    </div>
+
+                    {!allBizPendingLoaded ? (
+                      <div className="flex items-center justify-center py-12 text-gray-400 text-sm font-bold">불러오는 중...</div>
+                    ) : allBizPendingEntries.length === 0 ? (
+                      <div className="flex items-center justify-center py-12 text-gray-300 text-sm font-bold">예약완료 미처리 항목이 없습니다.</div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-3 mb-3 px-1 flex-wrap">
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              className="w-4 h-4 accent-pink-500"
+                              checked={selectedPendingIds.size === allBizPendingEntries.length && allBizPendingEntries.length > 0}
+                              onChange={e => {
+                                if (e.target.checked) setSelectedPendingIds(new Set(allBizPendingEntries.map(en => en.bizId + '_' + en.id)));
+                                else setSelectedPendingIds(new Set());
+                              }}
+                            />
+                            <span className="text-xs font-bold text-gray-500">전체선택</span>
+                          </label>
+                          {selectedPendingIds.size > 0 && (
+                            <>
+                              <span className="text-xs font-black text-pink-600">{selectedPendingIds.size}개 선택</span>
+                              <button
+                                onClick={async () => {
+                                  const selected = allBizPendingEntries.filter(en => selectedPendingIds.has(en.bizId + '_' + en.id));
+                                  const text = selected.map(en => `${en.bizName}_${en.name1 || en.ordererName || ''}_${en.orderNumber || ''}`).join('\n');
+                                  await navigator.clipboard.writeText(text);
+                                  if (!window.confirm(`${selected.length}건을 예약완료 처리하시겠습니까?`)) return;
+                                  try {
+                                    const batch = writeBatch(db);
+                                    selected.forEach(en => {
+                                      const biz = allBusinesses[en.bizId];
+                                      if (!biz) return;
+                                      const colName = getCol('manualEntries', biz.collectionPrefix);
+                                      batch.update(doc(db, colName, en.id), { reservationComplete: true });
+                                    });
+                                    await batch.commit();
+                                    setPendingUndoStack(prev => [...prev, { type: 'reservationComplete', entries: selected }]);
+                                    setAllBizPendingEntries(prev => prev.filter(en => !selectedPendingIds.has(en.bizId + '_' + en.id)));
+                                    setSelectedPendingIds(new Set());
+                                  } catch (e) { console.error(e); alert('오류: ' + e); }
+                                }}
+                                className="px-3 py-1 bg-pink-500 text-white rounded-xl text-xs font-black hover:bg-pink-600"
+                              >복사+처리</button>
+                              <button
+                                onClick={async () => {
+                                  const selected = allBizPendingEntries.filter(en => selectedPendingIds.has(en.bizId + '_' + en.id));
+                                  if (!window.confirm(`${selected.length}건을 목록에서 제외하시겠습니까?\n(구매 목록에는 유지됩니다)`)) return;
+                                  try {
+                                    const batch = writeBatch(db);
+                                    selected.forEach(en => {
+                                      const biz = allBusinesses[en.bizId];
+                                      if (!biz) return;
+                                      batch.update(doc(db, getCol('manualEntries', biz.collectionPrefix), en.id), { hiddenFromPending: true });
+                                    });
+                                    await batch.commit();
+                                    setPendingUndoStack(prev => [...prev, { type: 'hiddenFromPending', entries: selected }]);
+                                    setAllBizPendingEntries(prev => prev.filter(en => !selectedPendingIds.has(en.bizId + '_' + en.id)));
+                                    setSelectedPendingIds(new Set());
+                                  } catch (e) { console.error(e); alert('오류: ' + e); }
+                                }}
+                                className="px-3 py-1 bg-red-100 text-red-500 rounded-xl text-xs font-bold hover:bg-red-200"
+                              >제외</button>
+                              <button
+                                onClick={() => setSelectedPendingIds(new Set())}
+                                className="px-3 py-1 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold hover:bg-gray-200"
+                              >해제</button>
+                            </>
+                          )}
+                        </div>
+                        <div className="overflow-x-auto rounded-2xl border border-gray-100">
+                          <table className="w-full text-xs border-collapse">
+                            <thead>
+                              <tr className="bg-gray-50 text-gray-500 font-bold">
+                                <th className="p-2 w-8 text-center"></th>
+                                <th className="p-2 text-left whitespace-nowrap">사업자</th>
+                                <th className="p-2 text-left whitespace-nowrap">날짜</th>
+                                <th className="p-2 text-left whitespace-nowrap">이름1</th>
+                                <th className="p-2 text-left whitespace-nowrap">주문번호</th>
+                                <th className="p-2 text-left whitespace-nowrap">품목</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {allBizPendingEntries.map(en => {
+                                const key = en.bizId + '_' + en.id;
+                                const checked = selectedPendingIds.has(key);
+                                return (
+                                  <tr
+                                    key={key}
+                                    className={`border-t border-gray-100 cursor-pointer hover:bg-pink-50 transition-colors ${checked ? 'bg-pink-50' : ''}`}
+                                    onClick={() => {
+                                      const next = new Set(selectedPendingIds);
+                                      checked ? next.delete(key) : next.add(key);
+                                      setSelectedPendingIds(next);
+                                    }}
+                                  >
+                                    <td className="p-2 text-center" onClick={e => e.stopPropagation()}>
+                                      <input
+                                        type="checkbox"
+                                        className="w-3.5 h-3.5 accent-pink-500"
+                                        checked={checked}
+                                        onChange={e => {
+                                          const next = new Set(selectedPendingIds);
+                                          e.target.checked ? next.add(key) : next.delete(key);
+                                          setSelectedPendingIds(next);
+                                        }}
+                                      />
+                                    </td>
+                                    <td className="p-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
+                                    <td className="p-2 text-gray-500 whitespace-nowrap">{en.date || '-'}</td>
+                                    <td className="p-2 font-bold text-gray-800 whitespace-nowrap">{en.name1 || en.ordererName || '-'}</td>
+                                    <td className="p-2 text-gray-700 whitespace-nowrap font-mono">{en.orderNumber || '-'}</td>
+                                    <td className="p-2 text-gray-500 whitespace-nowrap">{en.product || '-'}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    )}
+                  </section>
+
+                  {/* 섹션 2: 전체 입금전 목록 + 복사 + 입금완료 */}
+                  <section className="bg-white rounded-[32px] border border-gray-100 shadow-sm p-6">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                      <div>
+                        <h2 className="text-base font-black text-gray-900">전체 입금전 목록</h2>
+                        <p className="text-xs text-gray-400 mt-0.5">모든 사업자 · {allBizBeforeDepositLoaded ? `${allBizBeforeDepositEntries.length}건` : '로딩 중...'}</p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={copyAllBizBeforeDepositToClipboard}
+                          className="px-3 py-1.5 bg-blue-100 text-blue-600 rounded-xl text-xs font-black hover:bg-blue-200"
+                        >전체 복사</button>
+                        <button
+                          onClick={() => { loadAllBizBeforeDepositEntries(); setSelectedAllDepositIds(new Set()); }}
+                          className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
+                        >새로고침</button>
+                      </div>
+                    </div>
+
+                    {selectedAllDepositIds.size > 0 && (
+                      <div className="flex items-center gap-2 mb-3 flex-wrap">
+                        <span className="text-xs font-black text-blue-600">{selectedAllDepositIds.size}건 선택</span>
+                        <div className="flex items-center gap-1.5 bg-gray-50 px-2 py-1 rounded-xl">
+                          <input type="date" value={wingupDepositActionDate} onChange={e => setWingupDepositActionDate(e.target.value)} className="bg-transparent text-xs font-bold outline-none text-gray-600" />
+                          <button
+                            onClick={handleAllBizDepositComplete}
+                            className="px-3 py-1 bg-gray-700 text-white rounded-lg text-xs font-black hover:bg-gray-800"
+                          >입금완료</button>
+                        </div>
+                        <button onClick={() => setSelectedAllDepositIds(new Set())} className="px-3 py-1 bg-gray-100 text-gray-500 rounded-xl text-xs font-bold hover:bg-gray-200">해제</button>
+                      </div>
+                    )}
+
+                    {!allBizBeforeDepositLoaded ? (
+                      <div className="flex items-center justify-center py-12 text-gray-400 text-sm font-bold">불러오는 중...</div>
+                    ) : allBizBeforeDepositEntries.length === 0 ? (
+                      <div className="flex items-center justify-center py-12 text-gray-300 text-sm font-bold">입금 대기 항목이 없습니다.</div>
+                    ) : (
                       <div className="overflow-x-auto rounded-2xl border border-gray-100">
                         <table className="w-full text-xs border-collapse">
                           <thead>
                             <tr className="bg-gray-50 text-gray-500 font-bold">
-                              <th className="p-2 w-8 text-center"></th>
+                              <th className="p-2 w-8 text-center">
+                                <input
+                                  type="checkbox"
+                                  className="w-3.5 h-3.5 accent-blue-600"
+                                  checked={selectedAllDepositIds.size === allBizBeforeDepositEntries.length && allBizBeforeDepositEntries.length > 0}
+                                  onChange={e => {
+                                    if (e.target.checked) setSelectedAllDepositIds(new Set(allBizBeforeDepositEntries.map(en => en.bizId + '_' + en.id)));
+                                    else setSelectedAllDepositIds(new Set());
+                                  }}
+                                />
+                              </th>
                               <th className="p-2 text-left whitespace-nowrap">사업자</th>
+                              <th className="p-2 text-left whitespace-nowrap">체크날짜</th>
                               <th className="p-2 text-left whitespace-nowrap">날짜</th>
                               <th className="p-2 text-left whitespace-nowrap">이름1</th>
-                              <th className="p-2 text-left whitespace-nowrap">주문번호</th>
-                              <th className="p-2 text-left whitespace-nowrap">품목</th>
+                              <th className="p-2 text-left whitespace-nowrap">이름2</th>
+                              <th className="p-2 text-left whitespace-nowrap">결제금액</th>
+                              <th className="p-2 text-left whitespace-nowrap">계좌번호</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {allBizPendingEntries.map(en => {
-                              const key = en.bizId + '_' + en.id;
-                              const checked = selectedPendingIds.has(key);
-                              return (
-                                <tr
-                                  key={key}
-                                  className={`border-t border-gray-100 cursor-pointer hover:bg-pink-50 transition-colors ${checked ? 'bg-pink-50' : ''}`}
-                                  onClick={() => {
-                                    const next = new Set(selectedPendingIds);
-                                    checked ? next.delete(key) : next.add(key);
-                                    setSelectedPendingIds(next);
-                                  }}
-                                >
-                                  <td className="p-2 text-center" onClick={e => e.stopPropagation()}>
-                                    <input
-                                      type="checkbox"
-                                      className="w-3.5 h-3.5 accent-pink-500"
-                                      checked={checked}
-                                      onChange={e => {
-                                        const next = new Set(selectedPendingIds);
-                                        e.target.checked ? next.add(key) : next.delete(key);
-                                        setSelectedPendingIds(next);
-                                      }}
-                                    />
-                                  </td>
-                                  <td className="p-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
-                                  <td className="p-2 text-gray-500 whitespace-nowrap">{en.date || '-'}</td>
-                                  <td className="p-2 font-bold text-gray-800 whitespace-nowrap">{en.name1 || en.ordererName || '-'}</td>
-                                  <td className="p-2 text-gray-700 whitespace-nowrap font-mono">{en.orderNumber || '-'}</td>
-                                  <td className="p-2 text-gray-500 whitespace-nowrap">{en.product || '-'}</td>
-                                </tr>
-                              );
-                            })}
+                            {(() => {
+                              const rows: React.ReactNode[] = [];
+                              let prevBizId = '';
+                              allBizBeforeDepositEntries.forEach((en, idx) => {
+                                const key = en.bizId + '_' + en.id;
+                                const checked = selectedAllDepositIds.has(key);
+                                if (en.bizId !== prevBizId) {
+                                  prevBizId = en.bizId;
+                                  rows.push(
+                                    <tr key={`header-${en.bizId}`} className="border-t-2 border-gray-200 bg-gray-50">
+                                      <td colSpan={8} className="px-3 py-1">
+                                        <span className="text-xs font-black" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</span>
+                                      </td>
+                                    </tr>
+                                  );
+                                }
+                                rows.push(
+                                  <tr
+                                    key={key}
+                                    className={`border-t border-gray-100 cursor-pointer hover:bg-blue-50 transition-colors ${checked ? 'bg-blue-50' : ''}`}
+                                    onClick={() => {
+                                      const next = new Set(selectedAllDepositIds);
+                                      checked ? next.delete(key) : next.add(key);
+                                      setSelectedAllDepositIds(next);
+                                    }}
+                                  >
+                                    <td className="p-2 text-center" onClick={e => e.stopPropagation()}>
+                                      <input
+                                        type="checkbox"
+                                        className="w-3.5 h-3.5 accent-blue-600"
+                                        checked={checked}
+                                        onChange={e => {
+                                          const next = new Set(selectedAllDepositIds);
+                                          e.target.checked ? next.add(key) : next.delete(key);
+                                          setSelectedAllDepositIds(next);
+                                        }}
+                                      />
+                                    </td>
+                                    <td className="p-2 text-xs font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
+                                    <td className="p-2 text-gray-400 whitespace-nowrap">{formatCheckDate((en as any).beforeDepositCheckedAt)}</td>
+                                    <td className="p-2 text-gray-500 whitespace-nowrap">{en.date ? en.date.slice(2).replace(/-/g, '.') : '-'}</td>
+                                    <td className="p-2 font-bold text-gray-800 whitespace-nowrap">{en.name1 || '-'}</td>
+                                    <td className="p-2 text-gray-600 whitespace-nowrap">{en.name2 || '-'}</td>
+                                    <td className="p-2 text-gray-700 whitespace-nowrap">{en.paymentAmount ? en.paymentAmount.toLocaleString() + '원' : '-'}</td>
+                                    <td className="p-2 text-blue-600 whitespace-nowrap">{en.accountNumber || '-'}</td>
+                                  </tr>
+                                );
+                                if ((idx + 1) % 15 === 0 || idx === allBizBeforeDepositEntries.length - 1 || allBizBeforeDepositEntries[idx + 1]?.bizId !== en.bizId) {
+                                  const bizItems = allBizBeforeDepositEntries.filter(e => e.bizId === en.bizId);
+                                  const subtotal = bizItems.reduce((sum, e) => sum + (e.paymentAmount || 0), 0);
+                                  if (idx === allBizBeforeDepositEntries.length - 1 || allBizBeforeDepositEntries[idx + 1]?.bizId !== en.bizId) {
+                                    rows.push(
+                                      <tr key={`subtotal-${key}`} className="border-t border-yellow-300 bg-yellow-50">
+                                        <td colSpan={6} className="py-0.5 px-3 text-right text-[10px] font-black text-yellow-700">소계 ({bizItems.length}건)</td>
+                                        <td colSpan={2} className="py-0.5 px-3 text-left text-[10px] font-black text-yellow-700">{subtotal.toLocaleString()}원</td>
+                                      </tr>
+                                    );
+                                  }
+                                }
+                              });
+                              return rows;
+                            })()}
                           </tbody>
                         </table>
                       </div>
-                    </>
-                  )}
-                </section>
+                    )}
+                  </section>
+
+                </div>
               ) : (
                 <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl animate-in slide-in-from-right-10 duration-500">
                   <div className="p-4 md:px-6 bg-white border-b sticky left-0 z-30 space-y-2">
