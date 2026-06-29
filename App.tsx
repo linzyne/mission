@@ -1360,100 +1360,114 @@ const App: React.FC = () => {
     e.target.value = '';
     setBatchUploadProcessing(true);
     const results: BatchBizItem[] = [];
-    const XLSX = await import('xlsx');
-    for (const file of Array.from(files) as File[]) {
-      const matchedBizId = matchBizFromFileName(file.name);
-      const data = await file.arrayBuffer();
-      const wb = XLSX.read(data, { cellDates: true });
-      const sheetName = wb.SheetNames.find((n: string) => n.includes('마진')) || wb.SheetNames[wb.SheetNames.length - 1];
-      const ws = wb.Sheets[sheetName];
-      const rows: any[] = XLSX.utils.sheet_to_json(ws);
-      const dateMatch = file.name.match(/(\d{4}-\d{2}-\d{2})/);
-      const uploadDate = dateMatch ? dateMatch[1] : toLocalDateStr(new Date());
+    try {
+      const XLSX = await import('xlsx');
+      for (const file of Array.from(files) as File[]) {
+        console.log('[일괄업무일지] 파일 처리 시작:', file.name);
+        const matchedBizId = matchBizFromFileName(file.name);
+        console.log('[일괄업무일지] 매칭된 사업자:', matchedBizId);
+        const data = await file.arrayBuffer();
+        const wb = XLSX.read(data, { cellDates: true });
+        console.log('[일괄업무일지] 시트 목록:', wb.SheetNames);
+        const sheetName = wb.SheetNames.find((n: string) => n.includes('마진')) || wb.SheetNames[wb.SheetNames.length - 1];
+        console.log('[일괄업무일지] 마진 시트:', sheetName);
+        const ws = wb.Sheets[sheetName];
+        const rows: any[] = XLSX.utils.sheet_to_json(ws);
+        console.log('[일괄업무일지] 마진 시트 행 수:', rows.length);
+        const dateMatch = file.name.match(/(\d{4}-\d{2}-\d{2})/);
+        const uploadDate = dateMatch ? dateMatch[1] : toLocalDateStr(new Date());
 
-      let existingSalesDaily: SalesDailyEntry[] = [];
-      if (matchedBizId) {
-        const bizColPrefix = allBusinesses[matchedBizId].collectionPrefix;
-        const snap = await getDocs(collection(db, getCol('salesDaily', bizColPrefix)));
-        existingSalesDaily = snap.docs.map(d => ({ id: d.id, ...d.data() } as SalesDailyEntry));
-      }
-
-      const merged: Record<string, { product: string; details: string[]; quantity: number; sellingPrice: number; supplyPrice: number; totalMargin: number }> = {};
-      for (const row of rows) {
-        const product = String(row['등록상품명'] || row['업체명'] || '').trim();
-        const productDetail = String(row['품목명'] || '').trim();
-        if (!product) continue;
-        if (!merged[product]) merged[product] = { product, details: [], quantity: 0, sellingPrice: 0, supplyPrice: 0, totalMargin: 0 };
-        if (productDetail && !merged[product].details.includes(productDetail)) merged[product].details.push(productDetail);
-        merged[product].quantity += Number(row['수량'] || 0);
-        merged[product].sellingPrice += Number(row['판매가'] || 0);
-        merged[product].supplyPrice += Number(row['공급가'] || 0);
-        merged[product].totalMargin += Number(row['총마진'] || 0);
-      }
-
-      type CostByProduct = { refund: number; adCost: number; solution: number };
-      const costByProductDate: Record<string, CostByProduct> = {};
-      const costSheetName = wb.SheetNames.find((n: string) => n.includes('품목별비용'));
-      if (costSheetName) {
-        const costWs = wb.Sheets[costSheetName];
-        const costRows: any[][] = XLSX.utils.sheet_to_json(costWs, { header: 1, defval: '' });
-        for (const row of costRows.slice(1)) {
-          const category = String(row[0] || '').trim();
-          const rawDate = row[1];
-          const date = rawDate instanceof Date ? toLocalDateStr(rawDate) : String(rawDate || '').trim();
-          const product = String(row[4] || '').trim();
-          const amount = Number(row[8] || 0);
-          if (!date || !product || !amount) continue;
-          const key = `${date}|||${normProductName(product)}`;
-          if (!costByProductDate[key]) costByProductDate[key] = { refund: 0, adCost: 0, solution: 0 };
-          if (category === '반품') costByProductDate[key].refund += amount;
-          else if (category === '광고비') costByProductDate[key].adCost += amount;
-          else if (category === '슬롯') costByProductDate[key].solution += amount;
+        let existingSalesDaily: SalesDailyEntry[] = [];
+        if (matchedBizId) {
+          const bizColPrefix = allBusinesses[matchedBizId].collectionPrefix;
+          const snap = await getDocs(collection(db, getCol('salesDaily', bizColPrefix)));
+          existingSalesDaily = snap.docs.map(d => ({ id: d.id, ...d.data() } as SalesDailyEntry));
         }
-      }
 
-      const overheadCategories: Record<string, number> = {};
-      const expenseSheetName = wb.SheetNames.find((n: string) => n.includes('비용시트'));
-      if (expenseSheetName) {
-        const expWs = wb.Sheets[expenseSheetName];
-        const expRows: any[][] = XLSX.utils.sheet_to_json(expWs, { header: 1, defval: '' });
-        for (const row of expRows.slice(1)) {
-          const category = String(row[0] || '').trim();
-          const amount = Number(row[1] || 0);
-          const linkedCompany = String(row[3] || '').trim();
-          if (!category || !amount) continue;
-          if (category === '합계') continue;
-          if (linkedCompany) continue;
-          overheadCategories[category] = (overheadCategories[category] || 0) + amount;
+        const merged: Record<string, { product: string; details: string[]; quantity: number; sellingPrice: number; supplyPrice: number; totalMargin: number }> = {};
+        for (const row of rows) {
+          const product = String(row['등록상품명'] || row['업체명'] || '').trim();
+          const productDetail = String(row['품목명'] || '').trim();
+          if (!product) continue;
+          if (!merged[product]) merged[product] = { product, details: [], quantity: 0, sellingPrice: 0, supplyPrice: 0, totalMargin: 0 };
+          if (productDetail && !merged[product].details.includes(productDetail)) merged[product].details.push(productDetail);
+          merged[product].quantity += Number(row['수량'] || 0);
+          merged[product].sellingPrice += Number(row['판매가'] || 0);
+          merged[product].supplyPrice += Number(row['공급가'] || 0);
+          merged[product].totalMargin += Number(row['총마진'] || 0);
         }
+        console.log('[일괄업무일지] 합산된 품목 수:', Object.keys(merged).length);
+
+        type CostByProduct = { refund: number; adCost: number; solution: number };
+        const costByProductDate: Record<string, CostByProduct> = {};
+        const costSheetName = wb.SheetNames.find((n: string) => n.includes('품목별비용'));
+        if (costSheetName) {
+          const costWs = wb.Sheets[costSheetName];
+          const costRows: any[][] = XLSX.utils.sheet_to_json(costWs, { header: 1, defval: '' });
+          for (const row of costRows.slice(1)) {
+            const category = String(row[0] || '').trim();
+            const rawDate = row[1];
+            const date = rawDate instanceof Date ? toLocalDateStr(rawDate) : String(rawDate || '').trim();
+            const product = String(row[4] || '').trim();
+            const amount = Number(row[8] || 0);
+            if (!date || !product || !amount) continue;
+            const key = `${date}|||${normProductName(product)}`;
+            if (!costByProductDate[key]) costByProductDate[key] = { refund: 0, adCost: 0, solution: 0 };
+            if (category === '반품') costByProductDate[key].refund += amount;
+            else if (category === '광고비') costByProductDate[key].adCost += amount;
+            else if (category === '슬롯') costByProductDate[key].solution += amount;
+          }
+        }
+
+        const overheadCategories: Record<string, number> = {};
+        const expenseSheetName = wb.SheetNames.find((n: string) => n.includes('비용시트'));
+        if (expenseSheetName) {
+          const expWs = wb.Sheets[expenseSheetName];
+          const expRows: any[][] = XLSX.utils.sheet_to_json(expWs, { header: 1, defval: '' });
+          for (const row of expRows.slice(1)) {
+            const category = String(row[0] || '').trim();
+            const amount = Number(row[1] || 0);
+            const linkedCompany = String(row[3] || '').trim();
+            if (!category || !amount) continue;
+            if (category === '합계') continue;
+            if (linkedCompany) continue;
+            overheadCategories[category] = (overheadCategories[category] || 0) + amount;
+          }
+        }
+
+        const salesItems = Object.values(merged).map(m => {
+          const existingSD = existingSalesDaily.find(entry => entry.date === uploadDate && normProductName(entry.product) === normProductName(m.product));
+          const cost = costByProductDate[`${uploadDate}|||${normProductName(m.product)}`];
+          return {
+            docId: existingSD?.id || `${uploadDate}_${m.product}`,
+            product: m.product,
+            productDetail: m.details.join(', '),
+            quantity: m.quantity,
+            sellingPrice: m.sellingPrice,
+            supplyPrice: m.supplyPrice,
+            marginPerUnit: m.quantity > 0 ? Math.round(m.totalMargin / m.quantity) : 0,
+            totalMargin: m.totalMargin,
+            adCost: cost ? cost.adCost : (existingSD?.adCost || 0),
+            housePurchase: existingSD?.housePurchase || 0,
+            solution: cost ? cost.solution : (existingSD?.solution || 0),
+            refund: cost ? cost.refund : (existingSD?.refund ?? 0),
+            hpManual: existingSD?.hpManual || false,
+          };
+        });
+
+        results.push({ fileName: file.name, uploadDate, bizId: matchedBizId, salesItems, overheadCategories });
       }
-
-      const salesItems = Object.values(merged).map(m => {
-        const existingSD = existingSalesDaily.find(entry => entry.date === uploadDate && normProductName(entry.product) === normProductName(m.product));
-        const cost = costByProductDate[`${uploadDate}|||${normProductName(m.product)}`];
-        return {
-          docId: existingSD?.id || `${uploadDate}_${m.product}`,
-          product: m.product,
-          productDetail: m.details.join(', '),
-          quantity: m.quantity,
-          sellingPrice: m.sellingPrice,
-          supplyPrice: m.supplyPrice,
-          marginPerUnit: m.quantity > 0 ? Math.round(m.totalMargin / m.quantity) : 0,
-          totalMargin: m.totalMargin,
-          adCost: cost ? cost.adCost : (existingSD?.adCost || 0),
-          housePurchase: existingSD?.housePurchase || 0,
-          solution: cost ? cost.solution : (existingSD?.solution || 0),
-          refund: cost ? cost.refund : (existingSD?.refund ?? 0),
-          hpManual: existingSD?.hpManual || false,
-        };
-      });
-
-      results.push({ fileName: file.name, uploadDate, bizId: matchedBizId, salesItems, overheadCategories });
-    }
-    setBatchUploadProcessing(false);
-    if (results.length > 0) {
-      setBatchUploadItems(results);
-      setBatchUploadModal(true);
+      if (results.length > 0) {
+        setBatchUploadItems(results);
+        setBatchUploadModal(true);
+      } else {
+        alert('처리할 수 있는 파일이 없습니다.');
+      }
+    } catch (err) {
+      console.error('[일괄업무일지] 오류:', err);
+      alert('파일 처리 중 오류가 발생했습니다:\n' + String(err));
+    } finally {
+      setBatchUploadProcessing(false);
     }
   };
 
