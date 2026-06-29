@@ -4874,6 +4874,7 @@ const App: React.FC = () => {
                         </table>
                       </div>
                     )}
+                    <p className="text-[10px] text-gray-400 mt-2 px-1">(윙_발주 앱에서 사업자명은 "사업자명 환불"에서 매칭합니다.)</p>
                   </section>
 
                 </div>
