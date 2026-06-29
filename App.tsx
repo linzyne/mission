@@ -874,6 +874,7 @@ const App: React.FC = () => {
   const [salesMonth, setSalesMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() + 1 }; });
   const salesMonthStr = `${salesMonth.year}-${String(salesMonth.month).padStart(2, '0')}`;
   const salesFileRef = useRef<HTMLInputElement>(null);
+  const batchUploadFileRef = useRef<HTMLInputElement>(null);
   const [salesSubTab, setSalesSubTab] = useState<SalesSubTab>('summary');
 
   // Auto-sync: 비활성화됨 (수동 관리)
@@ -1160,6 +1161,18 @@ const App: React.FC = () => {
   // 마지막 업로드 삭제용
   const [lastUploadInfo, setLastUploadInfo] = useState<{ uploadDate: string; salesDocIds: string[] } | null>(null);
 
+  // 일괄 업무일지 업로드 상태
+  type BatchBizItem = {
+    fileName: string;
+    uploadDate: string;
+    bizId: string | null;
+    salesItems: { docId: string; product: string; productDetail: string; quantity: number; sellingPrice: number; supplyPrice: number; marginPerUnit: number; totalMargin: number; adCost: number; housePurchase: number; solution: number; refund: number; hpManual: boolean }[];
+    overheadCategories: Record<string, number>;
+  };
+  const [batchUploadModal, setBatchUploadModal] = useState(false);
+  const [batchUploadItems, setBatchUploadItems] = useState<BatchBizItem[]>([]);
+  const [batchUploadProcessing, setBatchUploadProcessing] = useState(false);
+
   const handleSalesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1323,6 +1336,166 @@ const App: React.FC = () => {
     await reloadOverheadRef.current?.();
     alert(`${lastUploadInfo.uploadDate} 업로드 데이터가 삭제되었습니다.`);
     setLastUploadInfo(null);
+  };
+
+  const matchBizFromFileName = (fileName: string): string | null => {
+    const normalized = fileName.normalize('NFC');
+    let bestBizId: string | null = null;
+    let bestMatchLen = 0;
+    for (const [bizId, biz] of Object.entries(allBusinesses)) {
+      const candidates = [biz.name, bizId, biz.name.replace(/농원|농장|팜|그룹/g, '')].filter(s => s.length >= 2);
+      for (const s of candidates) {
+        if (normalized.includes(s) && s.length > bestMatchLen) {
+          bestBizId = bizId;
+          bestMatchLen = s.length;
+        }
+      }
+    }
+    return bestBizId;
+  };
+
+  const handleBatchUploadFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    e.target.value = '';
+    setBatchUploadProcessing(true);
+    const results: BatchBizItem[] = [];
+    const XLSX = await import('xlsx');
+    for (const file of Array.from(files) as File[]) {
+      const matchedBizId = matchBizFromFileName(file.name);
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data, { cellDates: true });
+      const sheetName = wb.SheetNames.find((n: string) => n.includes('마진')) || wb.SheetNames[wb.SheetNames.length - 1];
+      const ws = wb.Sheets[sheetName];
+      const rows: any[] = XLSX.utils.sheet_to_json(ws);
+      const dateMatch = file.name.match(/(\d{4}-\d{2}-\d{2})/);
+      const uploadDate = dateMatch ? dateMatch[1] : toLocalDateStr(new Date());
+
+      let existingSalesDaily: SalesDailyEntry[] = [];
+      if (matchedBizId) {
+        const bizColPrefix = allBusinesses[matchedBizId].collectionPrefix;
+        const snap = await getDocs(collection(db, getCol('salesDaily', bizColPrefix)));
+        existingSalesDaily = snap.docs.map(d => ({ id: d.id, ...d.data() } as SalesDailyEntry));
+      }
+
+      const merged: Record<string, { product: string; details: string[]; quantity: number; sellingPrice: number; supplyPrice: number; totalMargin: number }> = {};
+      for (const row of rows) {
+        const product = String(row['등록상품명'] || row['업체명'] || '').trim();
+        const productDetail = String(row['품목명'] || '').trim();
+        if (!product) continue;
+        if (!merged[product]) merged[product] = { product, details: [], quantity: 0, sellingPrice: 0, supplyPrice: 0, totalMargin: 0 };
+        if (productDetail && !merged[product].details.includes(productDetail)) merged[product].details.push(productDetail);
+        merged[product].quantity += Number(row['수량'] || 0);
+        merged[product].sellingPrice += Number(row['판매가'] || 0);
+        merged[product].supplyPrice += Number(row['공급가'] || 0);
+        merged[product].totalMargin += Number(row['총마진'] || 0);
+      }
+
+      type CostByProduct = { refund: number; adCost: number; solution: number };
+      const costByProductDate: Record<string, CostByProduct> = {};
+      const costSheetName = wb.SheetNames.find((n: string) => n.includes('품목별비용'));
+      if (costSheetName) {
+        const costWs = wb.Sheets[costSheetName];
+        const costRows: any[][] = XLSX.utils.sheet_to_json(costWs, { header: 1, defval: '' });
+        for (const row of costRows.slice(1)) {
+          const category = String(row[0] || '').trim();
+          const rawDate = row[1];
+          const date = rawDate instanceof Date ? toLocalDateStr(rawDate) : String(rawDate || '').trim();
+          const product = String(row[4] || '').trim();
+          const amount = Number(row[8] || 0);
+          if (!date || !product || !amount) continue;
+          const key = `${date}|||${normProductName(product)}`;
+          if (!costByProductDate[key]) costByProductDate[key] = { refund: 0, adCost: 0, solution: 0 };
+          if (category === '반품') costByProductDate[key].refund += amount;
+          else if (category === '광고비') costByProductDate[key].adCost += amount;
+          else if (category === '슬롯') costByProductDate[key].solution += amount;
+        }
+      }
+
+      const overheadCategories: Record<string, number> = {};
+      const expenseSheetName = wb.SheetNames.find((n: string) => n.includes('비용시트'));
+      if (expenseSheetName) {
+        const expWs = wb.Sheets[expenseSheetName];
+        const expRows: any[][] = XLSX.utils.sheet_to_json(expWs, { header: 1, defval: '' });
+        for (const row of expRows.slice(1)) {
+          const category = String(row[0] || '').trim();
+          const amount = Number(row[1] || 0);
+          const linkedCompany = String(row[3] || '').trim();
+          if (!category || !amount) continue;
+          if (category === '합계') continue;
+          if (linkedCompany) continue;
+          overheadCategories[category] = (overheadCategories[category] || 0) + amount;
+        }
+      }
+
+      const salesItems = Object.values(merged).map(m => {
+        const existingSD = existingSalesDaily.find(entry => entry.date === uploadDate && normProductName(entry.product) === normProductName(m.product));
+        const cost = costByProductDate[`${uploadDate}|||${normProductName(m.product)}`];
+        return {
+          docId: existingSD?.id || `${uploadDate}_${m.product}`,
+          product: m.product,
+          productDetail: m.details.join(', '),
+          quantity: m.quantity,
+          sellingPrice: m.sellingPrice,
+          supplyPrice: m.supplyPrice,
+          marginPerUnit: m.quantity > 0 ? Math.round(m.totalMargin / m.quantity) : 0,
+          totalMargin: m.totalMargin,
+          adCost: cost ? cost.adCost : (existingSD?.adCost || 0),
+          housePurchase: existingSD?.housePurchase || 0,
+          solution: cost ? cost.solution : (existingSD?.solution || 0),
+          refund: cost ? cost.refund : (existingSD?.refund ?? 0),
+          hpManual: existingSD?.hpManual || false,
+        };
+      });
+
+      results.push({ fileName: file.name, uploadDate, bizId: matchedBizId, salesItems, overheadCategories });
+    }
+    setBatchUploadProcessing(false);
+    if (results.length > 0) {
+      setBatchUploadItems(results);
+      setBatchUploadModal(true);
+    }
+  };
+
+  const handleConfirmBatchUpload = async () => {
+    const unmatched = batchUploadItems.filter(item => !item.bizId);
+    if (unmatched.length > 0) {
+      alert(`매칭되지 않은 파일이 있습니다. 사업자를 선택해주세요:\n${unmatched.map(i => i.fileName).join('\n')}`);
+      return;
+    }
+    setBatchUploadProcessing(true);
+    try {
+      for (const item of batchUploadItems) {
+        if (!item.bizId) continue;
+        const bizColPrefix = allBusinesses[item.bizId].collectionPrefix;
+        const batch = writeBatch(db);
+        for (const si of item.salesItems) {
+          batch.set(doc(db, getCol('salesDaily', bizColPrefix), si.docId), {
+            date: item.uploadDate, product: si.product, productDetail: si.productDetail,
+            quantity: si.quantity, sellingPrice: si.sellingPrice, supplyPrice: si.supplyPrice,
+            marginPerUnit: si.marginPerUnit, totalMargin: si.totalMargin, adCost: si.adCost,
+            housePurchase: si.housePurchase, solution: si.solution, refund: si.refund, hpManual: si.hpManual,
+          });
+        }
+        await batch.commit();
+        if (Object.keys(item.overheadCategories).length > 0) {
+          await setDoc(doc(db, getCol('monthlyOverhead', bizColPrefix), item.uploadDate), {
+            month: item.uploadDate.substring(0, 7),
+            categories: item.overheadCategories,
+          });
+        }
+      }
+      const summary = batchUploadItems.map(item => `${allBusinesses[item.bizId!].name}: ${item.salesItems.length}개 품목`).join('\n');
+      alert(`일괄 업로드 완료!\n${summary}`);
+      setBatchUploadModal(false);
+      setBatchUploadItems([]);
+      await reloadOverheadRef.current?.();
+    } catch (err) {
+      console.error(err);
+      alert('업로드 중 오류: ' + err);
+    } finally {
+      setBatchUploadProcessing(false);
+    }
   };
 
   const [showSuccess, setShowSuccess] = useState(false);
@@ -2956,6 +3129,18 @@ const App: React.FC = () => {
                   className="px-2 py-1.5 rounded-lg text-xs font-bold text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-all">+</button>
               </div>
             )}
+            {mode === 'admin' && isAdminAuthenticated && (
+              <>
+                <button
+                  onClick={() => batchUploadFileRef.current?.click()}
+                  disabled={batchUploadProcessing}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-500 text-white hover:bg-emerald-600 transition-colors disabled:opacity-50 whitespace-nowrap"
+                >
+                  {batchUploadProcessing ? '처리중...' : '일괄업무일지'}
+                </button>
+                <input ref={batchUploadFileRef} type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={handleBatchUploadFiles} />
+              </>
+            )}
             <div className="flex bg-gray-100 p-1 rounded-xl">
               <button onClick={() => setMode('customer')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${mode === 'customer' ? 'bg-white shadow-sm text-[#0071E3]' : 'text-gray-500'}`}>체험단</button>
               <button onClick={() => setMode('admin')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${mode === 'admin' ? 'bg-white shadow-sm text-[#0071E3]' : 'text-gray-500'}`}>관리자</button>
@@ -3479,6 +3664,7 @@ const App: React.FC = () => {
                                   }
                                 }} />
                               </th>
+                              <th className="py-1 px-2 text-gray-400">체크날짜</th>
                               <th className="py-1 px-2">구매날짜</th>
                               <th className="py-1 px-2 text-blue-600">입금일시</th>
                               <th className="py-1 px-2">이름1</th>
@@ -3501,6 +3687,7 @@ const App: React.FC = () => {
                                     setSelectedDepositIds(next);
                                   }} />
                                 </td>
+                                <td className="py-0.5 px-2 text-gray-400">{formatCheckDate(entry.beforeDepositCheckedAt)}</td>
                                 <td className="py-0.5 px-2">{entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''}</td>
                                 <td className="py-0.5 px-2 text-blue-600">{entry.depositedAt ? formatCheckDate(entry.depositedAt) : entry.depositDate ? entry.depositDate.slice(2).replace(/-/g, '.') : '-'}</td>
                                 <td className="py-0.5 px-2">{entry.name1}</td>
@@ -3515,7 +3702,7 @@ const App: React.FC = () => {
                               </tr>
                             ))}
                             {afterItems.length === 0 && (
-                              <tr><td colSpan={9} className="p-16 text-gray-300 font-bold">
+                              <tr><td colSpan={10} className="p-16 text-gray-300 font-bold">
                                 {debouncedDepositSearch ? `"${debouncedDepositSearch}" 검색 결과가 없습니다.` : '입금 완료된 항목이 없습니다.'}
                               </td></tr>
                             )}
@@ -5841,6 +6028,95 @@ const App: React.FC = () => {
                 disabled={pendingUpload.salesItems.length === 0}
                 className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 disabled:opacity-40 transition-colors">
                 저장
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 일괄 업무일지 업로드 모달 */}
+      {batchUploadModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => { if (!batchUploadProcessing) { setBatchUploadModal(false); setBatchUploadItems([]); } }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-gray-100">
+              <h3 className="text-lg font-bold text-gray-800">일괄 업무일지 업로드 미리보기</h3>
+              <p className="text-xs text-gray-500 mt-1">{batchUploadItems.length}개 파일 · 확인 후 저장하세요</p>
+            </div>
+            <div className="p-4 space-y-5">
+              {batchUploadItems.map((item, idx) => (
+                <div key={idx} className="border border-gray-200 rounded-xl overflow-hidden">
+                  <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border-b border-gray-200">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-gray-700 truncate">{item.fileName}</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">{item.uploadDate}</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-[11px] text-gray-500 font-bold">사업자:</span>
+                      <select
+                        value={item.bizId || ''}
+                        onChange={e => {
+                          const newBizId = e.target.value || null;
+                          setBatchUploadItems(prev => prev.map((it, i) => i === idx ? { ...it, bizId: newBizId } : it));
+                        }}
+                        className={`text-xs font-bold px-2 py-1 rounded-lg border ${item.bizId ? 'border-emerald-300 text-emerald-700 bg-emerald-50' : 'border-red-300 text-red-600 bg-red-50'}`}
+                      >
+                        <option value="">-- 선택 필요 --</option>
+                        {Object.values(allBusinesses).map(biz => (
+                          <option key={biz.id} value={biz.id}>{biz.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  {item.salesItems.length > 0 ? (
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-100">
+                          <th className="py-2 px-3 text-left text-gray-500 font-bold">품목</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">수량</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">총마진</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">광고비</th>
+                          <th className="py-2 px-3 text-right text-gray-500 font-bold">반품</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {item.salesItems.map((si, sidx) => (
+                          <tr key={sidx} className="border-b border-gray-50 last:border-0">
+                            <td className="py-1.5 px-3 text-gray-700">{si.product}</td>
+                            <td className="py-1.5 px-3 text-right text-gray-600">{si.quantity}</td>
+                            <td className="py-1.5 px-3 text-right font-bold">{si.totalMargin.toLocaleString()}</td>
+                            <td className="py-1.5 px-3 text-right text-red-500">{si.adCost ? si.adCost.toLocaleString() : '-'}</td>
+                            <td className="py-1.5 px-3 text-right text-red-500">{si.refund ? si.refund.toLocaleString() : '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-gray-50 font-bold border-t border-gray-200">
+                          <td className="py-2 px-3 text-gray-700">합계 ({item.salesItems.length}품목)</td>
+                          <td className="py-2 px-3 text-right text-gray-600">{item.salesItems.reduce((s, i) => s + i.quantity, 0)}</td>
+                          <td className="py-2 px-3 text-right">{item.salesItems.reduce((s, i) => s + i.totalMargin, 0).toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-red-500">{item.salesItems.reduce((s, i) => s + i.adCost, 0).toLocaleString()}</td>
+                          <td className="py-2 px-3 text-right text-red-500">{item.salesItems.reduce((s, i) => s + i.refund, 0).toLocaleString()}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  ) : (
+                    <p className="text-center text-gray-400 text-xs py-4">등록할 항목 없음</p>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-gray-100 flex gap-2">
+              <button
+                onClick={() => { setBatchUploadModal(false); setBatchUploadItems([]); }}
+                disabled={batchUploadProcessing}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-500 bg-gray-100 hover:bg-gray-200 transition-colors disabled:opacity-50"
+              >취소</button>
+              <button
+                onClick={handleConfirmBatchUpload}
+                disabled={batchUploadProcessing || batchUploadItems.length === 0}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 transition-colors"
+              >
+                {batchUploadProcessing ? '저장 중...' : `전체 저장 (${batchUploadItems.length}개 사업자)`}
               </button>
             </div>
           </div>
