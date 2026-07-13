@@ -1759,6 +1759,17 @@ const App: React.FC = () => {
     return '';
   };
 
+  // 주문번호 중복 체크: 동일 주문번호를 가진 다른 행이 있으면 이름과 함께 경고
+  const checkDuplicateOrderNumber = (entryId: string, newVal: string) => {
+    const trimmed = String(newVal || '').trim();
+    if (!trimmed) return;
+    const dup = manualEntries.find(e => e.id !== entryId && String(e.orderNumber || '').trim() === trimmed);
+    if (dup) {
+      const dupName = dup.name1 || dup.name2 || dup.ordererName || '이름없음';
+      alert(`중복된 주문번호입니다.\n중복 대상: ${dupName}`);
+    }
+  };
+
   const handleCellBlur = (e: React.FocusEvent<HTMLInputElement>, entry: ManualEntry, field: keyof ManualEntry) => {
     const rawVal = e.target.value;
     let newVal: any = rawVal;
@@ -1774,6 +1785,7 @@ const App: React.FC = () => {
     const oldVal = entry[field];
     if (String(newVal) !== String(oldVal != null ? oldVal : '')) {
       updateManualEntry(entry.id, field, newVal);
+      if (field === 'orderNumber') checkDuplicateOrderNumber(entry.id, newVal);
       // 값 변경 시 팝 효과
       if (rawVal) {
         e.target.classList.add('cell-pop');
@@ -1798,6 +1810,7 @@ const App: React.FC = () => {
       }
       if (String(newVal) !== String(entry[field] != null ? entry[field] : '')) {
         updateManualEntry(entry.id, field, newVal);
+        if (field === 'orderNumber') checkDuplicateOrderNumber(entry.id, newVal);
       }
       const nextInput = document.querySelector(`input[data-row="${idx + 1}"][data-col="${col}"]`) as HTMLInputElement;
       if (nextInput) nextInput.focus();
