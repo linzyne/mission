@@ -4860,7 +4860,7 @@ const App: React.FC = () => {
                               <button
                                 onClick={async () => {
                                   const selected = allBizPendingEntries.filter(en => selectedPendingIds.has(en.bizId + '_' + en.id));
-                                  const text = selected.map(en => `${en.bizName}_${en.name1 || en.ordererName || ''}_${en.orderNumber || ''}`).join('\n');
+                                  const text = selected.map(en => `${en.bizName}_${en.name2 || en.ordererName || ''}_${en.orderNumber || ''}`).join('\n');
                                   await navigator.clipboard.writeText(text);
                                   if (!window.confirm(`${selected.length}건을 예약완료 처리하시겠습니까?`)) return;
                                   try {
@@ -4909,12 +4909,12 @@ const App: React.FC = () => {
                           <table className="w-full text-xs border-collapse">
                             <thead>
                               <tr className="bg-gray-50 text-gray-500 font-bold">
-                                <th className="p-2 w-8 text-center"></th>
-                                <th className="p-2 text-left whitespace-nowrap">사업자</th>
-                                <th className="p-2 text-left whitespace-nowrap">날짜</th>
-                                <th className="p-2 text-left whitespace-nowrap">이름1</th>
-                                <th className="p-2 text-left whitespace-nowrap">주문번호</th>
-                                <th className="p-2 text-left whitespace-nowrap">품목</th>
+                                <th className="py-1 px-2 w-8 text-center"></th>
+                                <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
+                                <th className="py-1 px-2 text-left whitespace-nowrap">날짜</th>
+                                <th className="py-1 px-2 text-left whitespace-nowrap">받는사람</th>
+                                <th className="py-1 px-2 text-left whitespace-nowrap">주문번호</th>
+                                <th className="py-1 px-2 text-left whitespace-nowrap">품목</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -4931,7 +4931,7 @@ const App: React.FC = () => {
                                       setSelectedPendingIds(next);
                                     }}
                                   >
-                                    <td className="p-2 text-center" onClick={e => e.stopPropagation()}>
+                                    <td className="py-1 px-2 text-center" onClick={e => e.stopPropagation()}>
                                       <input
                                         type="checkbox"
                                         className="w-3.5 h-3.5 accent-pink-500"
@@ -4943,11 +4943,11 @@ const App: React.FC = () => {
                                         }}
                                       />
                                     </td>
-                                    <td className="p-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
-                                    <td className="p-2 text-gray-500 whitespace-nowrap">{en.date || '-'}</td>
-                                    <td className="p-2 font-bold text-gray-800 whitespace-nowrap">{en.name1 || en.ordererName || '-'}</td>
-                                    <td className="p-2 text-gray-700 whitespace-nowrap font-mono">{en.orderNumber || '-'}</td>
-                                    <td className="p-2 text-gray-500 whitespace-nowrap">{en.product || '-'}</td>
+                                    <td className="py-1 px-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
+                                    <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{en.date || '-'}</td>
+                                    <td className="py-1 px-2 font-bold text-gray-800 whitespace-nowrap">{en.name2 || en.ordererName || '-'}</td>
+                                    <td className="py-1 px-2 text-gray-700 whitespace-nowrap font-mono">{en.orderNumber || '-'}</td>
+                                    <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{en.product || '-'}</td>
                                   </tr>
                                 );
                               })}
@@ -4997,7 +4997,7 @@ const App: React.FC = () => {
                         <table className="w-full text-xs border-collapse">
                           <thead>
                             <tr className="bg-gray-50 text-gray-500 font-bold">
-                              <th className="p-2 w-8 text-center">
+                              <th className="py-1 px-2 w-8 text-center">
                                 <input
                                   type="checkbox"
                                   className="w-3.5 h-3.5 accent-blue-600"
@@ -5008,13 +5008,13 @@ const App: React.FC = () => {
                                   }}
                                 />
                               </th>
-                              <th className="p-2 text-left whitespace-nowrap">사업자</th>
-                              <th className="p-2 text-left whitespace-nowrap">체크날짜</th>
-                              <th className="p-2 text-left whitespace-nowrap">날짜</th>
-                              <th className="p-2 text-left whitespace-nowrap">이름1</th>
-                              <th className="p-2 text-left whitespace-nowrap">이름2</th>
-                              <th className="p-2 text-left whitespace-nowrap">결제금액</th>
-                              <th className="p-2 text-left whitespace-nowrap">계좌번호</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">체크날짜</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">날짜</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">이름1</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">이름2</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">결제금액</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">계좌번호</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -5028,7 +5028,7 @@ const App: React.FC = () => {
                                   prevBizId = en.bizId;
                                   rows.push(
                                     <tr key={`header-${en.bizId}`} className="border-t-2 border-gray-200 bg-gray-50">
-                                      <td colSpan={8} className="px-3 py-1">
+                                      <td colSpan={8} className="px-3 py-0.5">
                                         <span className="text-xs font-black" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</span>
                                       </td>
                                     </tr>
@@ -5044,7 +5044,7 @@ const App: React.FC = () => {
                                       setSelectedAllDepositIds(next);
                                     }}
                                   >
-                                    <td className="p-2 text-center" onClick={e => e.stopPropagation()}>
+                                    <td className="py-1 px-2 text-center" onClick={e => e.stopPropagation()}>
                                       <input
                                         type="checkbox"
                                         className="w-3.5 h-3.5 accent-blue-600"
@@ -5056,13 +5056,13 @@ const App: React.FC = () => {
                                         }}
                                       />
                                     </td>
-                                    <td className="p-2 text-xs font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
-                                    <td className="p-2 text-gray-400 whitespace-nowrap">{formatCheckDate((en as any).beforeDepositCheckedAt)}</td>
-                                    <td className="p-2 text-gray-500 whitespace-nowrap">{en.date ? en.date.slice(2).replace(/-/g, '.') : '-'}</td>
-                                    <td className="p-2 font-bold text-gray-800 whitespace-nowrap">{en.name1 || '-'}</td>
-                                    <td className="p-2 text-gray-600 whitespace-nowrap">{en.name2 || '-'}</td>
-                                    <td className="p-2 text-gray-700 whitespace-nowrap">{en.paymentAmount ? en.paymentAmount.toLocaleString() + '원' : '-'}</td>
-                                    <td className="p-2 text-blue-600 whitespace-nowrap">{en.accountNumber || '-'}</td>
+                                    <td className="py-1 px-2 text-xs font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
+                                    <td className="py-1 px-2 text-gray-400 whitespace-nowrap">{formatCheckDate((en as any).beforeDepositCheckedAt)}</td>
+                                    <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{en.date ? en.date.slice(2).replace(/-/g, '.') : '-'}</td>
+                                    <td className="py-1 px-2 font-bold text-gray-800 whitespace-nowrap">{en.name1 || '-'}</td>
+                                    <td className="py-1 px-2 text-gray-600 whitespace-nowrap">{en.name2 || '-'}</td>
+                                    <td className="py-1 px-2 text-gray-700 whitespace-nowrap">{en.paymentAmount ? en.paymentAmount.toLocaleString() + '원' : '-'}</td>
+                                    <td className="py-1 px-2 text-blue-600 whitespace-nowrap">{en.accountNumber || '-'}</td>
                                   </tr>
                                 );
                                 if ((idx + 1) % 15 === 0 || idx === allBizBeforeDepositEntries.length - 1 || allBizBeforeDepositEntries[idx + 1]?.bizId !== en.bizId) {
