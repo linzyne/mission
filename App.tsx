@@ -2670,6 +2670,27 @@ const App: React.FC = () => {
     XLSX.writeFile(wbAll, `${today} ${bizInfo?.name ? bizInfo.name + '_' : ''}${tpl.filePrefix}_통합.xlsx`);
   };
 
+  const downloadDepositAfterExcel = async () => {
+    const selected = manualEntries.filter(e => e.afterDeposit && selectedDepositIds.has(e.id));
+    if (selected.length === 0) return alert("선택된 항목이 없습니다.");
+    const XLSX = await import('xlsx');
+    const headerRow = ['체크날짜', '구매날짜', '입금일시', '이름1', '이름2', '주문번호', '결제금액', '계좌번호'];
+    const dataRows = selected.map(e => [
+      formatCheckDate(e.beforeDepositCheckedAt),
+      e.date || '',
+      e.depositedAt ? formatCheckDate(e.depositedAt) : (e.depositDate || ''),
+      e.name1 || '',
+      e.name2 || '',
+      e.orderNumber || '',
+      e.paymentAmount || 0,
+      e.accountNumber || '',
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '입금완료');
+    XLSX.writeFile(wb, `입금완료_${toLocalDateStr()}.xlsx`);
+  };
+
   const copyDepositToClipboard = async () => {
     const beforeItems = manualEntries.filter(e => e.beforeDeposit && !e.afterDeposit);
     if (beforeItems.length === 0) return alert("복사할 데이터가 없습니다.");
@@ -3507,12 +3528,21 @@ const App: React.FC = () => {
                         </div>
                       )}
                       {depositSubTab === 'after' && manualEntries.filter(e => e.afterDeposit).length > 0 && (
-                        <button
-                          onClick={handleBulkDepositCancel}
-                          className={`px-5 py-2 rounded-xl text-sm font-black transition-all ${selectedDepositIds.size > 0 ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
-                        >
-                          취소 ({selectedDepositIds.size}건)
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={downloadDepositAfterExcel}
+                            disabled={selectedDepositIds.size === 0}
+                            className={`px-5 py-2 rounded-xl text-sm font-black transition-all ${selectedDepositIds.size > 0 ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                          >
+                            엑셀 ({selectedDepositIds.size}건)
+                          </button>
+                          <button
+                            onClick={handleBulkDepositCancel}
+                            className={`px-5 py-2 rounded-xl text-sm font-black transition-all ${selectedDepositIds.size > 0 ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-gray-100 text-gray-300 cursor-not-allowed'}`}
+                          >
+                            취소 ({selectedDepositIds.size}건)
+                          </button>
+                        </div>
                       )}
                     </div>
 
