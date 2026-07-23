@@ -51,6 +51,7 @@ export interface ManualEntry {
   couponApplied?: boolean;
   isManualCheck?: boolean;
   reservationComplete?: boolean;
+  reservationCompletedAt?: number;
   textColor?: string;
   rowBgColor?: string;
   cellColors?: Record<string, string>;

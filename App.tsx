@@ -69,6 +69,26 @@ function formatCheckDate(ts: number | undefined): string {
   return `${yy}.${mm}.${dd} ${hh}:${min}`;
 }
 
+function formatCheckTime(ts: number | undefined): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${min}`;
+}
+
+function groupByLocalDate<T>(items: T[], getTs: (item: T) => number | undefined): Array<[string, T[]]> {
+  const groups: Record<string, T[]> = {};
+  items.forEach(item => {
+    const ts = getTs(item);
+    if (!ts) return;
+    const dateStr = toLocalDateStr(new Date(ts));
+    if (!groups[dateStr]) groups[dateStr] = [];
+    groups[dateStr].push(item);
+  });
+  return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+}
+
 const FIELD_SOURCE_LABELS: Record<ExportFieldSource, string> = {
   orderNumber: '주문번호', name1: '이름1', name2: '이름2/받는사람', ordererName: '주문자명',
   address: '주소', emergencyContact: '전화번호', product: '품목', memo: '비고',
@@ -598,6 +618,12 @@ const App: React.FC = () => {
   const [allBizBeforeDepositLoaded, setAllBizBeforeDepositLoaded] = useState(false);
   const [selectedAllDepositIds, setSelectedAllDepositIds] = useState<Set<string>>(new Set());
 
+  // 윙업무: 최근 3일 예약완료/입금완료 처리 이력
+  const [recentReservationHistory, setRecentReservationHistory] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
+  const [recentReservationHistoryLoaded, setRecentReservationHistoryLoaded] = useState(false);
+  const [recentDepositHistory, setRecentDepositHistory] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
+  const [recentDepositHistoryLoaded, setRecentDepositHistoryLoaded] = useState(false);
+
   const loadAllBizPendingEntries = async () => {
     setAllBizPendingLoaded(false);
     const today = toLocalDateStr();
@@ -701,11 +727,109 @@ const App: React.FC = () => {
     setAllBizBeforeDepositLoaded(true);
   };
 
+  const threeDaysAgoTs = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 2);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+
+  const loadRecentReservationHistory = async () => {
+    setRecentReservationHistoryLoaded(false);
+    const cutoff = threeDaysAgoTs();
+    const bizEntries = Object.entries(allBusinesses);
+    const perBizResults = await Promise.all(bizEntries.map(async ([bizId, biz]) => {
+      const colName = getCol('manualEntries', biz.collectionPrefix);
+      try {
+        const q = query(collection(db, colName), where('reservationCompletedAt', '>=', cutoff));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.flatMap(d => {
+          const data = d.data();
+          if (!data.reservationComplete) return [];
+          return [{
+            id: d.id,
+            bizId,
+            bizName: biz.name,
+            count: data.count ?? 0,
+            paymentAmount: data.paymentAmount ?? 0,
+            beforeDeposit: data.beforeDeposit ?? false,
+            afterDeposit: data.afterDeposit ?? false,
+            proofImage: '',
+            product: data.product ?? '',
+            date: data.date ?? '',
+            name1: data.name1 ?? '',
+            name2: data.name2 ?? '',
+            ordererName: data.ordererName ?? '',
+            orderNumber: data.orderNumber != null ? String(data.orderNumber) : '',
+            address: data.address ?? '',
+            memo: data.memo ?? '',
+            emergencyContact: data.emergencyContact ?? '',
+            accountNumber: data.accountNumber ?? '',
+            trackingNumber: data.trackingNumber ?? '',
+            reservationComplete: true,
+            reservationCompletedAt: data.reservationCompletedAt,
+            createdAt: data.createdAt,
+          } as ManualEntry & { bizId: string; bizName: string }];
+        });
+      } catch (e) { console.error('[recentReservationHistory] load error:', bizId, e); return []; }
+    }));
+    const result = perBizResults.flat();
+    result.sort((a, b) => (b.reservationCompletedAt || 0) - (a.reservationCompletedAt || 0));
+    setRecentReservationHistory(result);
+    setRecentReservationHistoryLoaded(true);
+  };
+
+  const loadRecentDepositHistory = async () => {
+    setRecentDepositHistoryLoaded(false);
+    const cutoff = threeDaysAgoTs();
+    const bizEntries = Object.entries(allBusinesses);
+    const perBizResults = await Promise.all(bizEntries.map(async ([bizId, biz]) => {
+      const colName = getCol('manualEntries', biz.collectionPrefix);
+      try {
+        const q = query(collection(db, colName), where('depositedAt', '>=', cutoff));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.flatMap(d => {
+          const data = d.data();
+          if (!data.afterDeposit) return [];
+          return [{
+            id: d.id,
+            bizId,
+            bizName: biz.name,
+            count: data.count ?? 0,
+            paymentAmount: data.paymentAmount ?? 0,
+            beforeDeposit: data.beforeDeposit ?? false,
+            afterDeposit: true,
+            proofImage: '',
+            product: data.product ?? '',
+            date: data.date ?? '',
+            name1: data.name1 ?? '',
+            name2: data.name2 ?? '',
+            ordererName: data.ordererName ?? '',
+            orderNumber: data.orderNumber != null ? String(data.orderNumber) : '',
+            address: data.address ?? '',
+            memo: data.memo ?? '',
+            emergencyContact: data.emergencyContact ?? '',
+            accountNumber: data.accountNumber ?? '',
+            trackingNumber: data.trackingNumber ?? '',
+            depositedAt: data.depositedAt,
+            createdAt: data.createdAt,
+          } as ManualEntry & { bizId: string; bizName: string }];
+        });
+      } catch (e) { console.error('[recentDepositHistory] load error:', bizId, e); return []; }
+    }));
+    const result = perBizResults.flat();
+    result.sort((a, b) => (b.depositedAt || 0) - (a.depositedAt || 0));
+    setRecentDepositHistory(result);
+    setRecentDepositHistoryLoaded(true);
+  };
+
   useEffect(() => {
     if (adminTab === 'reservationPending') {
       loadAllBizPendingEntries();
       setSelectedPendingIds(new Set());
       loadAllBizBeforeDepositEntries();
+      loadRecentReservationHistory();
+      loadRecentDepositHistory();
       setSelectedAllDepositIds(new Set());
     }
   }, [adminTab]);
@@ -2178,7 +2302,7 @@ const App: React.FC = () => {
     try {
       const batch = writeBatch(db);
       selectedManualIds.forEach(id => {
-        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { reservationComplete: true });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { reservationComplete: true, reservationCompletedAt: Date.now() });
       });
       await batch.commit();
       setSelectedManualIds(new Set());
@@ -2195,7 +2319,7 @@ const App: React.FC = () => {
     try {
       const batch = writeBatch(db);
       selectedManualIds.forEach(id => {
-        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { reservationComplete: false });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { reservationComplete: false, reservationCompletedAt: deleteField() });
       });
       await batch.commit();
       setSelectedManualIds(new Set());
@@ -4837,7 +4961,7 @@ const App: React.FC = () => {
                                   if (!biz) return;
                                   const colName = getCol('manualEntries', biz.collectionPrefix);
                                   if (last.type === 'reservationComplete') {
-                                    batch.update(doc(db, colName, en.id), { reservationComplete: false });
+                                    batch.update(doc(db, colName, en.id), { reservationComplete: false, reservationCompletedAt: deleteField() });
                                   } else {
                                     batch.update(doc(db, colName, en.id), { hiddenFromPending: false });
                                   }
@@ -4899,7 +5023,7 @@ const App: React.FC = () => {
                                       const biz = allBusinesses[en.bizId];
                                       if (!biz) return;
                                       const colName = getCol('manualEntries', biz.collectionPrefix);
-                                      batch.update(doc(db, colName, en.id), { reservationComplete: true });
+                                      batch.update(doc(db, colName, en.id), { reservationComplete: true, reservationCompletedAt: Date.now() });
                                     });
                                     await batch.commit();
                                     setPendingUndoStack(prev => [...prev, { type: 'reservationComplete', entries: selected }]);
@@ -5115,6 +5239,118 @@ const App: React.FC = () => {
                       </div>
                     )}
                     <p className="text-[10px] text-gray-400 mt-2 px-1">(윙_발주 앱에서 사업자명은 "사업자명 환불"에서 매칭합니다.)</p>
+                  </section>
+
+                  {/* 섹션 3: 최근 3일 예약완료 처리 이력 */}
+                  <section className="bg-white rounded-[32px] border border-gray-100 shadow-sm p-6">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                      <div>
+                        <h2 className="text-base font-black text-gray-900">예약완료 이력</h2>
+                        <p className="text-xs text-gray-400 mt-0.5">최근 3일 · {recentReservationHistoryLoaded ? `${recentReservationHistory.length}건` : '로딩 중...'}</p>
+                      </div>
+                      <button
+                        onClick={loadRecentReservationHistory}
+                        className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
+                      >새로고침</button>
+                    </div>
+
+                    {!recentReservationHistoryLoaded ? (
+                      <div className="flex items-center justify-center py-12 text-gray-400 text-sm font-bold">불러오는 중...</div>
+                    ) : recentReservationHistory.length === 0 ? (
+                      <div className="flex items-center justify-center py-12 text-gray-300 text-sm font-bold">최근 3일간 예약완료 처리 내역이 없습니다.</div>
+                    ) : (
+                      <div className="space-y-4">
+                        {(() => {
+                          const groups: Array<[string, Array<ManualEntry & { bizId: string; bizName: string }>]> = groupByLocalDate(recentReservationHistory, en => en.reservationCompletedAt);
+                          return groups.map(([dateStr, entries]) => (
+                          <div key={dateStr}>
+                            <div className="text-xs font-black text-pink-500 mb-1.5 px-1">{dateStr} <span className="text-gray-400 font-bold">({entries.length}건)</span></div>
+                            <div className="overflow-x-auto rounded-2xl border border-gray-100">
+                              <table className="w-full text-xs border-collapse">
+                                <thead>
+                                  <tr className="bg-gray-50 text-gray-500 font-bold">
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">처리시각</th>
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">받는사람</th>
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">주문번호</th>
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">품목</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {entries.map(en => (
+                                    <tr key={en.bizId + '_' + en.id} className="border-t border-gray-100">
+                                      <td className="py-1 px-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
+                                      <td className="py-1 px-2 text-gray-400 whitespace-nowrap">{formatCheckTime(en.reservationCompletedAt)}</td>
+                                      <td className="py-1 px-2 font-bold text-gray-800 whitespace-nowrap">{en.name2 || en.ordererName || '-'}</td>
+                                      <td className="py-1 px-2 text-gray-700 whitespace-nowrap font-mono">{en.orderNumber || '-'}</td>
+                                      <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{en.product || '-'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                          ));
+                        })()}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* 섹션 4: 최근 3일 입금완료 처리 이력 */}
+                  <section className="bg-white rounded-[32px] border border-gray-100 shadow-sm p-6">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                      <div>
+                        <h2 className="text-base font-black text-gray-900">입금완료 이력</h2>
+                        <p className="text-xs text-gray-400 mt-0.5">최근 3일 · {recentDepositHistoryLoaded ? `${recentDepositHistory.length}건` : '로딩 중...'}</p>
+                      </div>
+                      <button
+                        onClick={loadRecentDepositHistory}
+                        className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
+                      >새로고침</button>
+                    </div>
+
+                    {!recentDepositHistoryLoaded ? (
+                      <div className="flex items-center justify-center py-12 text-gray-400 text-sm font-bold">불러오는 중...</div>
+                    ) : recentDepositHistory.length === 0 ? (
+                      <div className="flex items-center justify-center py-12 text-gray-300 text-sm font-bold">최근 3일간 입금완료 처리 내역이 없습니다.</div>
+                    ) : (
+                      <div className="space-y-4">
+                        {(() => {
+                          const groups: Array<[string, Array<ManualEntry & { bizId: string; bizName: string }>]> = groupByLocalDate(recentDepositHistory, en => en.depositedAt);
+                          return groups.map(([dateStr, entries]) => (
+                          <div key={dateStr}>
+                            <div className="text-xs font-black text-blue-500 mb-1.5 px-1">{dateStr} <span className="text-gray-400 font-bold">({entries.length}건)</span></div>
+                            <div className="overflow-x-auto rounded-2xl border border-gray-100">
+                              <table className="w-full text-xs border-collapse">
+                                <thead>
+                                  <tr className="bg-gray-50 text-gray-500 font-bold">
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">처리시각</th>
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">이름1</th>
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">이름2</th>
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">결제금액</th>
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">계좌번호</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {entries.map(en => (
+                                    <tr key={en.bizId + '_' + en.id} className="border-t border-gray-100">
+                                      <td className="py-1 px-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
+                                      <td className="py-1 px-2 text-gray-400 whitespace-nowrap">{formatCheckTime(en.depositedAt)}</td>
+                                      <td className="py-1 px-2 font-bold text-gray-800 whitespace-nowrap">{en.name1 || '-'}</td>
+                                      <td className="py-1 px-2 text-gray-600 whitespace-nowrap">{en.name2 || '-'}</td>
+                                      <td className="py-1 px-2 text-gray-700 whitespace-nowrap">{en.paymentAmount ? en.paymentAmount.toLocaleString() + '원' : '-'}</td>
+                                      <td className="py-1 px-2 text-blue-600 whitespace-nowrap">{en.accountNumber || '-'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                          ));
+                        })()}
+                      </div>
+                    )}
                   </section>
 
                 </div>
