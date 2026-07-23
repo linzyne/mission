@@ -2298,11 +2298,14 @@ const App: React.FC = () => {
 
   const handleReservationComplete = async () => {
     if (selectedManualIds.size === 0) return;
-    if (!window.confirm(`${selectedManualIds.size}건을 예약완료 처리하시겠습니까?`)) return;
+    const dateInput = window.prompt(`${selectedManualIds.size}건 예약완료 처리\n예약완료 날짜를 입력해주세요`, toLocalDateStr());
+    if (dateInput === null) return;
+    const reservationCompleteDate = dateInput.trim() || toLocalDateStr();
+
     try {
       const batch = writeBatch(db);
       selectedManualIds.forEach(id => {
-        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { reservationComplete: true, reservationCompletedAt: Date.now() });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), id), { reservationComplete: true, reservationCompleteDate, reservationCompletedAt: Date.now() });
       });
       await batch.commit();
       setSelectedManualIds(new Set());
@@ -5016,14 +5019,16 @@ const App: React.FC = () => {
                                   const selected = allBizPendingEntries.filter(en => selectedPendingIds.has(en.bizId + '_' + en.id));
                                   const text = selected.map(en => `${en.bizName}_${en.name2 || en.ordererName || ''}_${en.orderNumber || ''}`).join('\n');
                                   await navigator.clipboard.writeText(text);
-                                  if (!window.confirm(`${selected.length}건을 예약완료 처리하시겠습니까?`)) return;
+                                  const dateInput = window.prompt(`${selected.length}건 예약완료 처리\n예약완료 날짜를 입력해주세요`, toLocalDateStr());
+                                  if (dateInput === null) return;
+                                  const reservationCompleteDate = dateInput.trim() || toLocalDateStr();
                                   try {
                                     const batch = writeBatch(db);
                                     selected.forEach(en => {
                                       const biz = allBusinesses[en.bizId];
                                       if (!biz) return;
                                       const colName = getCol('manualEntries', biz.collectionPrefix);
-                                      batch.update(doc(db, colName, en.id), { reservationComplete: true, reservationCompletedAt: Date.now() });
+                                      batch.update(doc(db, colName, en.id), { reservationComplete: true, reservationCompleteDate, reservationCompletedAt: Date.now() });
                                     });
                                     await batch.commit();
                                     setPendingUndoStack(prev => [...prev, { type: 'reservationComplete', entries: selected }]);
