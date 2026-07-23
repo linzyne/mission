@@ -77,14 +77,13 @@ function formatCheckTime(ts: number | undefined): string {
   return `${hh}:${min}`;
 }
 
-function groupByLocalDate<T>(items: T[], getTs: (item: T) => number | undefined): Array<[string, T[]]> {
+function groupByLocalDate<T>(items: T[], getKey: (item: T) => string | undefined): Array<[string, T[]]> {
   const groups: Record<string, T[]> = {};
   items.forEach(item => {
-    const ts = getTs(item);
-    if (!ts) return;
-    const dateStr = toLocalDateStr(new Date(ts));
-    if (!groups[dateStr]) groups[dateStr] = [];
-    groups[dateStr].push(item);
+    const key = getKey(item);
+    if (!key) return;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(item);
   });
   return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
 }
@@ -767,6 +766,7 @@ const App: React.FC = () => {
             accountNumber: data.accountNumber ?? '',
             trackingNumber: data.trackingNumber ?? '',
             reservationComplete: true,
+            reservationCompleteDate: data.reservationCompleteDate ?? '',
             reservationCompletedAt: data.reservationCompletedAt,
             createdAt: data.createdAt,
           } as ManualEntry & { bizId: string; bizName: string }];
@@ -811,6 +811,7 @@ const App: React.FC = () => {
             emergencyContact: data.emergencyContact ?? '',
             accountNumber: data.accountNumber ?? '',
             trackingNumber: data.trackingNumber ?? '',
+            depositDate: data.depositDate ?? '',
             depositedAt: data.depositedAt,
             createdAt: data.createdAt,
           } as ManualEntry & { bizId: string; bizName: string }];
@@ -5266,7 +5267,7 @@ const App: React.FC = () => {
                     ) : (
                       <div className="space-y-4">
                         {(() => {
-                          const groups: Array<[string, Array<ManualEntry & { bizId: string; bizName: string }>]> = groupByLocalDate(recentReservationHistory, en => en.reservationCompletedAt);
+                          const groups: Array<[string, Array<ManualEntry & { bizId: string; bizName: string }>]> = groupByLocalDate(recentReservationHistory, en => en.reservationCompleteDate || (en.reservationCompletedAt ? toLocalDateStr(new Date(en.reservationCompletedAt)) : undefined));
                           return groups.map(([dateStr, entries]) => (
                           <div key={dateStr}>
                             <div className="text-xs font-black text-pink-500 mb-1.5 px-1">{dateStr} <span className="text-gray-400 font-bold">({entries.length}건)</span></div>
@@ -5321,7 +5322,7 @@ const App: React.FC = () => {
                     ) : (
                       <div className="space-y-4">
                         {(() => {
-                          const groups: Array<[string, Array<ManualEntry & { bizId: string; bizName: string }>]> = groupByLocalDate(recentDepositHistory, en => en.depositedAt);
+                          const groups: Array<[string, Array<ManualEntry & { bizId: string; bizName: string }>]> = groupByLocalDate(recentDepositHistory, en => en.depositDate || (en.depositedAt ? toLocalDateStr(new Date(en.depositedAt)) : undefined));
                           return groups.map(([dateStr, entries]) => (
                           <div key={dateStr}>
                             <div className="text-xs font-black text-blue-500 mb-1.5 px-1">{dateStr} <span className="text-gray-400 font-bold">({entries.length}건)</span></div>
