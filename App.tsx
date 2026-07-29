@@ -622,6 +622,7 @@ const App: React.FC = () => {
   const [recentReservationHistoryLoaded, setRecentReservationHistoryLoaded] = useState(false);
   const [recentDepositHistory, setRecentDepositHistory] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
   const [recentDepositHistoryLoaded, setRecentDepositHistoryLoaded] = useState(false);
+  const [selectedDepositHistoryIds, setSelectedDepositHistoryIds] = useState<Set<string>>(new Set());
 
   const loadAllBizPendingEntries = async () => {
     setAllBizPendingLoaded(false);
@@ -813,6 +814,7 @@ const App: React.FC = () => {
             trackingNumber: data.trackingNumber ?? '',
             depositDate: data.depositDate ?? '',
             depositedAt: data.depositedAt,
+            beforeDepositCheckedAt: data.beforeDepositCheckedAt,
             createdAt: data.createdAt,
           } as ManualEntry & { bizId: string; bizName: string }];
         });
@@ -2863,6 +2865,32 @@ const App: React.FC = () => {
     const tsv = dataRows.map(row => row.join('\t')).join('\n');
     await navigator.clipboard.writeText(tsv);
     alert(`${allBizBeforeDepositEntries.length}건 복사 완료`);
+  };
+
+  const copySelectedDepositHistoryToClipboard = async () => {
+    const selected = recentDepositHistory.filter(en => selectedDepositHistoryIds.has(en.bizId + '_' + en.id));
+    if (selected.length === 0) return alert("선택된 항목이 없습니다.");
+    const tpl = migrateTpl(DEFAULT_DEPOSIT_TEMPLATE);
+    const getRow = (e: ManualEntry & { bizId: string; bizName: string }): string[] => {
+      const biz = allBusinesses[e.bizId];
+      return tpl.columns.map(col => {
+        if (col.source === 'parsedBank' || col.source === 'parsedAccount' || col.source === 'parsedAccountName') {
+          const [bank, account, accountName] = parseDepositAccount(e.accountNumber || '');
+          if (col.source === 'parsedBank') return bank;
+          if (col.source === 'parsedAccount') return account;
+          return accountName || e.name1 || e.name2 || '';
+        }
+        if (col.source === 'bizName') return biz?.name || '';
+        if (col.source === 'bizPhone') return biz?.phone || '';
+        if (col.source === 'bizAddress') return biz?.address || '';
+        if (col.source === 'bizNameFixed') return [biz?.name, col.fixedValue].filter(Boolean).join(' ');
+        return getExportCellValue(e, col);
+      });
+    };
+    const dataRows = selected.map(getRow);
+    const tsv = dataRows.map(row => row.join('\t')).join('\n');
+    await navigator.clipboard.writeText(tsv);
+    alert(`${selected.length}건 복사 완료`);
   };
 
   const handleAllBizDepositComplete = async () => {
@@ -5309,10 +5337,17 @@ const App: React.FC = () => {
                         <h2 className="text-base font-black text-gray-900">입금완료 이력</h2>
                         <p className="text-xs text-gray-400 mt-0.5">최근 3일 · {recentDepositHistoryLoaded ? `${recentDepositHistory.length}건` : '로딩 중...'}</p>
                       </div>
-                      <button
-                        onClick={loadRecentDepositHistory}
-                        className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
-                      >새로고침</button>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={copySelectedDepositHistoryToClipboard}
+                          disabled={selectedDepositHistoryIds.size === 0}
+                          className="px-3 py-1.5 bg-blue-100 text-blue-600 rounded-xl text-xs font-black hover:bg-blue-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >선택 복사{selectedDepositHistoryIds.size > 0 ? ` (${selectedDepositHistoryIds.size})` : ''}</button>
+                        <button
+                          onClick={() => { loadRecentDepositHistory(); setSelectedDepositHistoryIds(new Set()); }}
+                          className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
+                        >새로고침</button>
+                      </div>
                     </div>
 
                     {!recentDepositHistoryLoaded ? (
@@ -5330,7 +5365,23 @@ const App: React.FC = () => {
                               <table className="w-full text-xs border-collapse">
                                 <thead>
                                   <tr className="bg-gray-50 text-gray-500 font-bold">
+                                    <th className="py-1 px-2 w-8 text-center">
+                                      <input
+                                        type="checkbox"
+                                        className="w-3.5 h-3.5 accent-blue-600"
+                                        checked={entries.length > 0 && entries.every(en => selectedDepositHistoryIds.has(en.bizId + '_' + en.id))}
+                                        onChange={e => {
+                                          const next = new Set(selectedDepositHistoryIds);
+                                          entries.forEach(en => {
+                                            const key = en.bizId + '_' + en.id;
+                                            e.target.checked ? next.add(key) : next.delete(key);
+                                          });
+                                          setSelectedDepositHistoryIds(next);
+                                        }}
+                                      />
+                                    </th>
                                     <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
+                                    <th className="py-1 px-2 text-left whitespace-nowrap">체크날짜</th>
                                     <th className="py-1 px-2 text-left whitespace-nowrap">처리시각</th>
                                     <th className="py-1 px-2 text-left whitespace-nowrap">이름1</th>
                                     <th className="py-1 px-2 text-left whitespace-nowrap">이름2</th>
@@ -5339,16 +5390,41 @@ const App: React.FC = () => {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {entries.map(en => (
-                                    <tr key={en.bizId + '_' + en.id} className="border-t border-gray-100">
+                                  {entries.map(en => {
+                                    const key = en.bizId + '_' + en.id;
+                                    const checked = selectedDepositHistoryIds.has(key);
+                                    return (
+                                    <tr
+                                      key={key}
+                                      className={`border-t border-gray-100 cursor-pointer hover:bg-blue-50 transition-colors ${checked ? 'bg-blue-50' : ''}`}
+                                      onClick={() => {
+                                        const next = new Set(selectedDepositHistoryIds);
+                                        checked ? next.delete(key) : next.add(key);
+                                        setSelectedDepositHistoryIds(next);
+                                      }}
+                                    >
+                                      <td className="py-1 px-2 text-center" onClick={e => e.stopPropagation()}>
+                                        <input
+                                          type="checkbox"
+                                          className="w-3.5 h-3.5 accent-blue-600"
+                                          checked={checked}
+                                          onChange={e => {
+                                            const next = new Set(selectedDepositHistoryIds);
+                                            e.target.checked ? next.add(key) : next.delete(key);
+                                            setSelectedDepositHistoryIds(next);
+                                          }}
+                                        />
+                                      </td>
                                       <td className="py-1 px-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
+                                      <td className="py-1 px-2 text-gray-400 whitespace-nowrap">{formatCheckDate((en as any).beforeDepositCheckedAt)}</td>
                                       <td className="py-1 px-2 text-gray-400 whitespace-nowrap">{formatCheckTime(en.depositedAt)}</td>
                                       <td className="py-1 px-2 font-bold text-gray-800 whitespace-nowrap">{en.name1 || '-'}</td>
                                       <td className="py-1 px-2 text-gray-600 whitespace-nowrap">{en.name2 || '-'}</td>
                                       <td className="py-1 px-2 text-gray-700 whitespace-nowrap">{en.paymentAmount ? en.paymentAmount.toLocaleString() + '원' : '-'}</td>
                                       <td className="py-1 px-2 text-blue-600 whitespace-nowrap">{en.accountNumber || '-'}</td>
                                     </tr>
-                                  ))}
+                                    );
+                                  })}
                                 </tbody>
                               </table>
                             </div>
