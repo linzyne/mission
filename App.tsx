@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, SalesSubTab, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource, PlatformConfig } from './types';
 import { verifyImage } from './services/geminiService';
 import { db } from './services/firebase';
-import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs, where } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs, where, arrayUnion } from 'firebase/firestore';
 
 const BASE_BUSINESSES: Record<string, BusinessInfo> = {
   angun: {
@@ -624,6 +624,11 @@ const App: React.FC = () => {
   const [recentDepositHistoryLoaded, setRecentDepositHistoryLoaded] = useState(false);
   const [selectedDepositHistoryIds, setSelectedDepositHistoryIds] = useState<Set<string>>(new Set());
 
+  // 윙업무: 입금전 체크/해제 이벤트 로그 (최근 5일)
+  type BeforeDepositLogEvent = { bizId: string; bizName: string; orderNumber: string; name1: string; name2: string; action: 'check' | 'uncheck'; at: number };
+  const [recentBeforeDepositLog, setRecentBeforeDepositLog] = useState<BeforeDepositLogEvent[]>([]);
+  const [recentBeforeDepositLogLoaded, setRecentBeforeDepositLogLoaded] = useState(false);
+
   const loadAllBizPendingEntries = async () => {
     setAllBizPendingLoaded(false);
     const today = toLocalDateStr();
@@ -826,6 +831,38 @@ const App: React.FC = () => {
     setRecentDepositHistoryLoaded(true);
   };
 
+  const loadRecentBeforeDepositLog = async () => {
+    setRecentBeforeDepositLogLoaded(false);
+    const cutoff = daysAgoTs(5);
+    const bizEntries = Object.entries(allBusinesses);
+    const perBizResults = await Promise.all(bizEntries.map(async ([bizId, biz]) => {
+      const colName = getCol('manualEntries', biz.collectionPrefix);
+      try {
+        const q = query(collection(db, colName), where('beforeDepositLastEventAt', '>=', cutoff));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.flatMap(d => {
+          const data = d.data();
+          const log: Array<{ action: 'check' | 'uncheck'; at: number }> = data.beforeDepositLog ?? [];
+          return log
+            .filter(ev => ev.at >= cutoff)
+            .map(ev => ({
+              bizId,
+              bizName: biz.name,
+              orderNumber: data.orderNumber != null ? String(data.orderNumber) : '',
+              name1: data.name1 ?? '',
+              name2: data.name2 ?? '',
+              action: ev.action,
+              at: ev.at,
+            } as BeforeDepositLogEvent));
+        });
+      } catch (e) { console.error('[recentBeforeDepositLog] load error:', bizId, e); return []; }
+    }));
+    const result = perBizResults.flat();
+    result.sort((a, b) => b.at - a.at);
+    setRecentBeforeDepositLog(result);
+    setRecentBeforeDepositLogLoaded(true);
+  };
+
   useEffect(() => {
     if (adminTab === 'reservationPending') {
       loadAllBizPendingEntries();
@@ -833,6 +870,7 @@ const App: React.FC = () => {
       loadAllBizBeforeDepositEntries();
       loadRecentReservationHistory();
       loadRecentDepositHistory();
+      loadRecentBeforeDepositLog();
       setSelectedAllDepositIds(new Set());
     }
   }, [adminTab]);
@@ -2340,7 +2378,12 @@ const App: React.FC = () => {
     if (!window.confirm("해제하시겠습니까?")) return;
     try {
       const field = type === 'before' ? 'beforeDeposit' : 'afterDeposit';
-      await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), { [field]: false });
+      const updates: Record<string, any> = { [field]: false };
+      if (type === 'before') {
+        updates.beforeDepositLog = arrayUnion({ action: 'uncheck', at: Date.now() });
+        updates.beforeDepositLastEventAt = Date.now();
+      }
+      await updateDoc(doc(db, getCol('manualEntries', colPrefix), id), updates);
     } catch (e) {
       console.error(e);
       alert("해제 중 오류가 발생했습니다: " + e);
@@ -2365,7 +2408,9 @@ const App: React.FC = () => {
     try {
       const updates: Record<string, any> = {
         beforeDeposit: !currentVal,
-        isManualCheck: !currentVal
+        isManualCheck: !currentVal,
+        beforeDepositLog: arrayUnion({ action: currentVal ? 'uncheck' : 'check', at: Date.now() }),
+        beforeDepositLastEventAt: Date.now(),
       };
 
       if (!currentVal) {
@@ -3028,7 +3073,7 @@ const App: React.FC = () => {
         if (extractedOrderNumber) {
           const matchedEntry = manualEntries.find(entry => entry.orderNumber === extractedOrderNumber);
           if (matchedEntry) {
-            await updateDoc(doc(db, getCol('manualEntries', colPrefix), matchedEntry.id), { beforeDeposit: true, beforeDepositCheckedAt: Date.now() });
+            await updateDoc(doc(db, getCol('manualEntries', colPrefix), matchedEntry.id), { beforeDeposit: true, beforeDepositCheckedAt: Date.now(), beforeDepositLog: arrayUnion({ action: 'check', at: Date.now() }), beforeDepositLastEventAt: Date.now() });
             console.log(`[OCR 매칭 성공] 주문번호 [${extractedOrderNumber}] → 입금 대기 상태로 변경`);
           } else {
             console.log(`[OCR 매칭 실패] 주문번호 [${extractedOrderNumber}] → 매칭되는 주문 내역 없음`);
@@ -3572,7 +3617,7 @@ const App: React.FC = () => {
 
                             const promises = manualEntries
                               .filter(e => targetOrderNumbers.has((e.orderNumber || '').trim()))
-                              .map(e => updateDoc(doc(db, getCol('manualEntries', colPrefix), e.id), { beforeDeposit: true, afterDeposit: false, beforeDepositCheckedAt: Date.now() }));
+                              .map(e => updateDoc(doc(db, getCol('manualEntries', colPrefix), e.id), { beforeDeposit: true, afterDeposit: false, beforeDepositCheckedAt: Date.now(), beforeDepositLog: arrayUnion({ action: 'check', at: Date.now() }), beforeDepositLastEventAt: Date.now() }));
 
                             await Promise.all(promises);
                             setSelectedReviewIds(new Set());
@@ -5458,6 +5503,53 @@ const App: React.FC = () => {
                           </div>
                           ));
                         })()}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* 섹션 5: 입금전 체크/해제 이벤트 로그 (최근 5일, 주문 건수와 무관한 활동 기록) */}
+                  <section className="bg-white rounded-[32px] border border-gray-100 shadow-sm p-6">
+                    <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                      <div>
+                        <h2 className="text-base font-black text-gray-900">입금전 체크/해제 로그</h2>
+                        <p className="text-xs text-gray-400 mt-0.5">최근 5일 · 체크·해제 활동 기록 (주문 건수 아님)</p>
+                      </div>
+                      <button
+                        onClick={loadRecentBeforeDepositLog}
+                        className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
+                      >새로고침</button>
+                    </div>
+
+                    {!recentBeforeDepositLogLoaded ? (
+                      <div className="flex items-center justify-center py-12 text-gray-400 text-sm font-bold">불러오는 중...</div>
+                    ) : recentBeforeDepositLog.length === 0 ? (
+                      <div className="flex items-center justify-center py-12 text-gray-300 text-sm font-bold">최근 5일간 체크/해제 활동이 없습니다.</div>
+                    ) : (
+                      <div className="overflow-x-auto rounded-2xl border border-gray-100">
+                        <table className="w-full text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-gray-50 text-gray-500 font-bold">
+                              <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">이름1</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">이름2</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">주문번호</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">활동</th>
+                              <th className="py-1 px-2 text-left whitespace-nowrap">시각</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {recentBeforeDepositLog.map((ev, idx) => (
+                              <tr key={idx} className="border-t border-gray-100">
+                                <td className="py-1 px-2 font-bold whitespace-nowrap" style={{ color: getBizColor(ev.bizId) }}>{ev.bizName}</td>
+                                <td className="py-1 px-2 font-bold text-gray-800 whitespace-nowrap">{ev.name1 || '-'}</td>
+                                <td className="py-1 px-2 text-gray-600 whitespace-nowrap">{ev.name2 || '-'}</td>
+                                <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{ev.orderNumber || '-'}</td>
+                                <td className={`py-1 px-2 font-bold whitespace-nowrap ${ev.action === 'check' ? 'text-blue-600' : 'text-red-500'}`}>{ev.action === 'check' ? '체크' : '해제'}</td>
+                                <td className="py-1 px-2 text-gray-400 whitespace-nowrap">{formatCheckDate(ev.at)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     )}
                   </section>

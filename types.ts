@@ -48,6 +48,8 @@ export interface ManualEntry {
   depositDate?: string;
   depositedAt?: number;
   beforeDepositCheckedAt?: number;
+  beforeDepositLog?: Array<{ action: 'check' | 'uncheck'; at: number }>;
+  beforeDepositLastEventAt?: number;
   couponApplied?: boolean;
   isManualCheck?: boolean;
   reservationComplete?: boolean;
