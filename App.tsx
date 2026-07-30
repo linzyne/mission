@@ -2893,6 +2893,28 @@ const App: React.FC = () => {
     alert(`${selected.length}건 복사 완료`);
   };
 
+  const downloadSelectedDepositHistoryExcel = async () => {
+    const selected = recentDepositHistory.filter(en => selectedDepositHistoryIds.has(en.bizId + '_' + en.id));
+    if (selected.length === 0) return alert("선택된 항목이 없습니다.");
+    const XLSX = await import('xlsx');
+    const headerRow = ['사업자', '체크날짜', '구매날짜', '입금일시', '이름1', '이름2', '주문번호', '결제금액', '계좌번호'];
+    const dataRows = selected.map(e => [
+      allBusinesses[e.bizId]?.name || e.bizName || '',
+      formatCheckDate(e.beforeDepositCheckedAt),
+      e.date || '',
+      e.depositedAt ? formatCheckDate(e.depositedAt) : (e.depositDate || ''),
+      e.name1 || '',
+      e.name2 || '',
+      e.orderNumber || '',
+      e.paymentAmount || 0,
+      e.accountNumber || '',
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '입금완료');
+    XLSX.writeFile(wb, `입금완료_${toLocalDateStr()}.xlsx`);
+  };
+
   const handleAllBizDepositComplete = async () => {
     const selected = allBizBeforeDepositEntries.filter(en => selectedAllDepositIds.has(en.bizId + '_' + en.id));
     if (selected.length === 0) return;
@@ -5343,6 +5365,11 @@ const App: React.FC = () => {
                           disabled={selectedDepositHistoryIds.size === 0}
                           className="px-3 py-1.5 bg-blue-100 text-blue-600 rounded-xl text-xs font-black hover:bg-blue-200 disabled:opacity-40 disabled:cursor-not-allowed"
                         >선택 복사{selectedDepositHistoryIds.size > 0 ? ` (${selectedDepositHistoryIds.size})` : ''}</button>
+                        <button
+                          onClick={downloadSelectedDepositHistoryExcel}
+                          disabled={selectedDepositHistoryIds.size === 0}
+                          className="px-3 py-1.5 bg-green-100 text-green-600 rounded-xl text-xs font-black hover:bg-green-200 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >엑셀{selectedDepositHistoryIds.size > 0 ? ` (${selectedDepositHistoryIds.size})` : ''}</button>
                         <button
                           onClick={() => { loadRecentDepositHistory(); setSelectedDepositHistoryIds(new Set()); }}
                           className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
