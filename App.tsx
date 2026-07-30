@@ -617,7 +617,7 @@ const App: React.FC = () => {
   const [allBizBeforeDepositLoaded, setAllBizBeforeDepositLoaded] = useState(false);
   const [selectedAllDepositIds, setSelectedAllDepositIds] = useState<Set<string>>(new Set());
 
-  // 윙업무: 최근 3일 예약완료/입금완료 처리 이력
+  // 윙업무: 최근 3일 예약완료 / 최근 5일 입금완료 처리 이력
   const [recentReservationHistory, setRecentReservationHistory] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
   const [recentReservationHistoryLoaded, setRecentReservationHistoryLoaded] = useState(false);
   const [recentDepositHistory, setRecentDepositHistory] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
@@ -727,16 +727,16 @@ const App: React.FC = () => {
     setAllBizBeforeDepositLoaded(true);
   };
 
-  const threeDaysAgoTs = () => {
+  const daysAgoTs = (days: number) => {
     const d = new Date();
-    d.setDate(d.getDate() - 2);
+    d.setDate(d.getDate() - (days - 1));
     d.setHours(0, 0, 0, 0);
     return d.getTime();
   };
 
   const loadRecentReservationHistory = async () => {
     setRecentReservationHistoryLoaded(false);
-    const cutoff = threeDaysAgoTs();
+    const cutoff = daysAgoTs(3);
     const bizEntries = Object.entries(allBusinesses);
     const perBizResults = await Promise.all(bizEntries.map(async ([bizId, biz]) => {
       const colName = getCol('manualEntries', biz.collectionPrefix);
@@ -782,7 +782,7 @@ const App: React.FC = () => {
 
   const loadRecentDepositHistory = async () => {
     setRecentDepositHistoryLoaded(false);
-    const cutoff = threeDaysAgoTs();
+    const cutoff = daysAgoTs(5);
     const bizEntries = Object.entries(allBusinesses);
     const perBizResults = await Promise.all(bizEntries.map(async ([bizId, biz]) => {
       const colName = getCol('manualEntries', biz.collectionPrefix);
@@ -5330,12 +5330,12 @@ const App: React.FC = () => {
                     )}
                   </section>
 
-                  {/* 섹션 4: 최근 3일 입금완료 처리 이력 */}
+                  {/* 섹션 4: 최근 5일 입금완료 처리 이력 */}
                   <section className="bg-white rounded-[32px] border border-gray-100 shadow-sm p-6">
                     <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                       <div>
                         <h2 className="text-base font-black text-gray-900">입금완료 이력</h2>
-                        <p className="text-xs text-gray-400 mt-0.5">최근 3일 · {recentDepositHistoryLoaded ? `${recentDepositHistory.length}건` : '로딩 중...'}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">최근 5일 · {recentDepositHistoryLoaded ? `${recentDepositHistory.length}건` : '로딩 중...'}</p>
                       </div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <button
@@ -5353,7 +5353,7 @@ const App: React.FC = () => {
                     {!recentDepositHistoryLoaded ? (
                       <div className="flex items-center justify-center py-12 text-gray-400 text-sm font-bold">불러오는 중...</div>
                     ) : recentDepositHistory.length === 0 ? (
-                      <div className="flex items-center justify-center py-12 text-gray-300 text-sm font-bold">최근 3일간 입금완료 처리 내역이 없습니다.</div>
+                      <div className="flex items-center justify-center py-12 text-gray-300 text-sm font-bold">최근 5일간 입금완료 처리 내역이 없습니다.</div>
                     ) : (
                       <div className="space-y-4">
                         {(() => {
