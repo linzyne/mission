@@ -1522,12 +1522,13 @@ const App: React.FC = () => {
   const handleBatchUploadFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+    const fileList = Array.from(files) as File[];
     e.target.value = '';
     setBatchUploadProcessing(true);
     const results: BatchBizItem[] = [];
     try {
       const XLSX = await import('xlsx');
-      for (const file of Array.from(files) as File[]) {
+      for (const file of fileList) {
         console.log('[일괄업무일지] 파일 처리 시작:', file.name);
         const matchedBizId = matchBizFromFileName(file.name);
         console.log('[일괄업무일지] 매칭된 사업자:', matchedBizId);
