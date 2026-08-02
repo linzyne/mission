@@ -4015,7 +4015,7 @@ const App: React.FC = () => {
                     // 모든 월 데이터 수집
                     const monthSet = new Set<string>();
                     salesDaily.forEach(e => {
-                      if (e.date) monthSet.add(e.date.substring(0, 7));
+                      if (e.date && e.date.substring(0, 4) === String(salesMonth.year)) monthSet.add(e.date.substring(0, 7));
                     });
                     const months = Array.from(monthSet).sort();
 
