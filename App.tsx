@@ -369,6 +369,11 @@ const App: React.FC = () => {
   const DEFAULT_HP_FORMULA: HpFormula = { baseFee: 1000, supplyPriceRate: 0.12, extraFee: 2300, silbaeAddSupply: true, silbaeRate: 0.12 };
   const hpFormula: HpFormula = { ...DEFAULT_HP_FORMULA, ...settings.hpFormula };
 
+  // 물류비 = 가구매 택배 발송 비용으로, 가구매 단가(기타 비용)에 이미 반영되어 있음 → 손익 집계 시 중복 차감 방지
+  const HP_OVERHEAD_CATEGORY = '물류비';
+  const sumOverheadCats = (cats: Record<string, number>) =>
+    Object.entries(cats).reduce((s, [cat, v]) => cat === HP_OVERHEAD_CATEGORY ? s : s + v, 0);
+
   // 가구매비용계산기 편집용 로컬 state
   const [hpFormulaEdit, setHpFormulaEdit] = useState<HpFormula>(DEFAULT_HP_FORMULA);
   const [hpFormulaSaving, setHpFormulaSaving] = useState(false);
@@ -4086,7 +4091,7 @@ const App: React.FC = () => {
                     const monthManualSums: Record<string, number> = {};
                     months.forEach(m => {
                       const cats = monthlyOverhead[m] || {};
-                      monthCosts[m] = Object.values(cats).reduce((s, v) => s + v, 0);
+                      monthCosts[m] = sumOverheadCats(cats);
                       monthManualSums[m] = (manualOverhead[m] || []).reduce((s, r) => s + r.amount, 0); // 음수
                     });
 
@@ -4124,7 +4129,7 @@ const App: React.FC = () => {
                                 <div className="text-[10px] text-gray-400 space-y-0.5">
                                   <div className="flex justify-between"><span>순마진</span><span className={fmtColor(t.net)}>{fmt(t.net)}</span></div>
                                   <div className="flex justify-between font-bold"><span>비용합계</span><span className={totalCost ? 'text-red-400' : 'text-gray-300'}>{totalCost ? `-${totalCost.toLocaleString()}` : '-'}</span></div>
-                                  {Object.entries(monthlyOverhead[m] || {}).map(([cat, amt]) => (
+                                  {Object.entries(monthlyOverhead[m] || {}).filter(([cat]) => cat !== HP_OVERHEAD_CATEGORY).map(([cat, amt]) => (
                                     <div key={cat} className="flex justify-between pl-2"><span>{cat}</span><span className="text-red-400">-{(amt as number).toLocaleString()}</span></div>
                                   ))}
                                   {(manualOverhead[m] || []).filter(r => r.name).map(r => (
@@ -4164,6 +4169,7 @@ const App: React.FC = () => {
                                       const allCats: Record<string, number> = {};
                                       months.forEach(m => {
                                         Object.entries(monthlyOverhead[m] || {}).forEach(([cat, amt]) => {
+                                          if (cat === HP_OVERHEAD_CATEGORY) return;
                                           allCats[cat] = (allCats[cat] || 0) + (amt as number);
                                         });
                                       });
@@ -4268,7 +4274,8 @@ const App: React.FC = () => {
                       const totalRefund = filtered.reduce((s, e) => s + (e.refund || 0), 0);
 
                       const monthOverheadCats = monthlyOverhead[salesMonthStr] || {};
-                      const totalUploadOverhead = Object.values(monthOverheadCats).reduce((s, v) => s + v, 0);
+                      const totalLogisticsCost = monthOverheadCats[HP_OVERHEAD_CATEGORY] || 0;
+                      const totalUploadOverhead = sumOverheadCats(monthOverheadCats);
                       const totalManual = manualRows.reduce((s, r) => s + r.amount, 0); // 음수로 입력됨
                       const totalOverhead = totalUploadOverhead - totalManual; // 실제 총비용 (표시용 양수)
                       const netProfit = totalRevenue - totalUploadOverhead + totalManual;
@@ -4326,7 +4333,7 @@ const App: React.FC = () => {
                                 </thead>
                                 <tbody>
                                   {/* 참고용: 품목별 비용 (이미 순마진에 차감 반영됨) */}
-                                  {(totalAdCost !== 0 || totalSolution !== 0 || totalRefund !== 0) && (
+                                  {(totalAdCost !== 0 || totalSolution !== 0 || totalRefund !== 0 || totalLogisticsCost !== 0) && (
                                     <>
                                       <tr className="bg-gray-50 border-b border-gray-200">
                                         <td colSpan={3} className="py-1 px-3 text-[10px] text-gray-400">※ 아래 항목은 품목별 순마진에 이미 차감 반영됨 (참고용)</td>
@@ -4352,10 +4359,17 @@ const App: React.FC = () => {
                                           <td className="py-1.5 px-3 text-right">{totalRevenue ? Math.round(Math.abs(totalRefund) / totalRevenue * 100) : 0}%</td>
                                         </tr>
                                       )}
+                                      {totalLogisticsCost !== 0 && (
+                                        <tr className="border-b border-gray-100 text-gray-400">
+                                          <td className="py-1.5 px-3">물류비 (가구매 단가에 포함)</td>
+                                          <td className="py-1.5 px-3 text-right font-bold">-{totalLogisticsCost.toLocaleString()}</td>
+                                          <td className="py-1.5 px-3 text-right">{totalRevenue ? Math.round(Math.abs(totalLogisticsCost) / totalRevenue * 100) : 0}%</td>
+                                        </tr>
+                                      )}
                                       <tr className="border-b-2 border-gray-200 bg-gray-50"></tr>
                                     </>
                                   )}
-                                  {Object.entries(monthOverheadCats).map(([cat, amt]) => (
+                                  {Object.entries(monthOverheadCats).filter(([cat]) => cat !== HP_OVERHEAD_CATEGORY).map(([cat, amt]) => (
                                     <tr key={cat} className="border-b border-gray-100">
                                       <td className="py-1.5 px-3 text-gray-700">{cat}</td>
                                       <td className="py-1.5 px-3 text-right font-bold text-red-500">-{(amt as number).toLocaleString()}</td>
@@ -4515,15 +4529,16 @@ const App: React.FC = () => {
                     (() => {
                       const filtered = salesDaily.filter(e => e.date?.startsWith(salesMonthStr));
                       // 날짜별 품목별 순수익+수량 집계
-                      const byDate: Record<string, Record<string, { net: number; qty: number }>> = {};
+                      const byDate: Record<string, Record<string, { net: number; qty: number; housePurchase: number }>> = {};
                       filtered.forEach(e => {
                         if (!e.date) return;
                         if (!byDate[e.date]) byDate[e.date] = {};
                         const pName = normProductName(e.product);
                         const net = (e.totalMargin || 0) + (e.adCost || 0) + (e.housePurchase || 0) + (e.solution || 0) + (e.refund || 0);
-                        if (!byDate[e.date][pName]) byDate[e.date][pName] = { net: 0, qty: 0 };
+                        if (!byDate[e.date][pName]) byDate[e.date][pName] = { net: 0, qty: 0, housePurchase: 0 };
                         byDate[e.date][pName].net += net;
                         byDate[e.date][pName].qty += e.quantity || 0;
+                        byDate[e.date][pName].housePurchase += e.housePurchase || 0;
                       });
                       const dates = Object.keys(byDate).sort();
 
@@ -4531,7 +4546,7 @@ const App: React.FC = () => {
                       const periodNet = filtered.reduce((s, e) => s + (e.totalMargin || 0) + (e.adCost || 0) + (e.housePurchase || 0) + (e.solution || 0) + (e.refund || 0), 0);
                       const periodMargin = filtered.reduce((s, e) => s + (e.totalMargin || 0), 0);
                       const overheadCats = (monthlyOverhead[salesMonthStr] || {}) as Record<string, number>;
-                      const monthOverheadAmt: number = Object.values(overheadCats).reduce((s: number, v: number) => s + v, 0);
+                      const monthOverheadAmt: number = sumOverheadCats(overheadCats);
                       const manualOverheadAmt: number = (manualOverhead[salesMonthStr] || []).reduce((s: number, r) => s + (r.amount || 0), 0);
                       const totalCost: number = monthOverheadAmt - manualOverheadAmt;
                       const periodProfit: number = periodNet - monthOverheadAmt + manualOverheadAmt;
@@ -4567,10 +4582,18 @@ const App: React.FC = () => {
                                     <span className={`font-black text-sm whitespace-nowrap ${dayTotal >= 0 ? 'text-green-400' : 'text-red-400'}`}>{dayTotal.toLocaleString()}원</span>
                                   </div>
                                   <div className="space-y-1 pt-0.5 border-t border-gray-700">
-                                    {items.map(([product, { net, qty }]) => (
-                                      <div key={product} className="flex justify-between items-baseline gap-1 text-xs">
-                                        <span className="text-violet-400 truncate">{product}{qty > 0 && <span className="text-gray-300 ml-1">({qty}개)</span>}</span>
-                                        <span className={`font-bold whitespace-nowrap ${net >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{net.toLocaleString()}</span>
+                                    {items.map(([product, { net, qty, housePurchase }]) => (
+                                      <div key={product} className="space-y-0.5">
+                                        <div className="flex justify-between items-baseline gap-1 text-xs">
+                                          <span className="text-violet-400 truncate">{product}{qty > 0 && <span className="text-gray-300 ml-1">({qty}개)</span>}</span>
+                                          <span className={`font-bold whitespace-nowrap ${net >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{net.toLocaleString()}</span>
+                                        </div>
+                                        {housePurchase !== 0 && (
+                                          <div className="flex justify-between items-baseline gap-1 text-[10px] pl-1">
+                                            <span className="text-gray-500">가구매</span>
+                                            <span className="text-orange-400 whitespace-nowrap">{housePurchase.toLocaleString()}</span>
+                                          </div>
+                                        )}
                                       </div>
                                     ))}
                                   </div>
@@ -5933,7 +5956,7 @@ const App: React.FC = () => {
                           s.push(`[data-row="${r}"][data-col="${c}"]`);
                       return <style>{s.join(',') + `{background:rgba(0,113,227,0.15)!important;border-color:#0071E3!important}`}</style>;
                     })()}
-                    <table className="excel-table w-full border-collapse min-w-[680px] md:min-w-[1100px] table-fixed text-center text-[12px]">
+                    <table className="excel-table border-collapse md:w-full md:min-w-[1100px] table-fixed text-center text-[12px]">
                       <thead className="sticky top-0 z-20 bg-white shadow-sm">
                         <tr className="text-[10px] font-semibold text-black bg-white">
                           <th className="py-0 px-0.5 w-8 sticky left-0 bg-white z-30 overflow-hidden">
