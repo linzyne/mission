@@ -1337,6 +1337,7 @@ const App: React.FC = () => {
   const [batchUploadModal, setBatchUploadModal] = useState(false);
   const [batchUploadItems, setBatchUploadItems] = useState<BatchBizItem[]>([]);
   const [batchUploadProcessing, setBatchUploadProcessing] = useState(false);
+  const [batchUploadDragging, setBatchUploadDragging] = useState(false);
 
   const handleSalesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1519,11 +1520,9 @@ const App: React.FC = () => {
     return bestBizId;
   };
 
-  const handleBatchUploadFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const fileList = Array.from(files) as File[];
-    e.target.value = '';
+  const processBatchUploadFiles = async (fileListInput: File[]) => {
+    const fileList = fileListInput.filter(f => /\.(xlsx|xls)$/i.test(f.name));
+    if (fileList.length === 0) return;
     setBatchUploadProcessing(true);
     const results: BatchBizItem[] = [];
     try {
@@ -1635,6 +1634,22 @@ const App: React.FC = () => {
     } finally {
       setBatchUploadProcessing(false);
     }
+  };
+
+  const handleBatchUploadFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    e.target.value = '';
+    if (!files || files.length === 0) return;
+    await processBatchUploadFiles(Array.from(files));
+  };
+
+  const handleBatchUploadDrop = async (e: React.DragEvent<HTMLElement>) => {
+    e.preventDefault();
+    setBatchUploadDragging(false);
+    if (batchUploadProcessing) return;
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    await processBatchUploadFiles(Array.from(files));
   };
 
   const handleConfirmBatchUpload = async () => {
@@ -3405,10 +3420,13 @@ const App: React.FC = () => {
               <>
                 <button
                   onClick={() => batchUploadFileRef.current?.click()}
+                  onDragOver={(e) => { e.preventDefault(); if (!batchUploadProcessing) setBatchUploadDragging(true); }}
+                  onDragLeave={() => setBatchUploadDragging(false)}
+                  onDrop={handleBatchUploadDrop}
                   disabled={batchUploadProcessing}
-                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-500 text-white hover:bg-emerald-600 transition-colors disabled:opacity-50 whitespace-nowrap"
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold text-white transition-colors disabled:opacity-50 whitespace-nowrap ${batchUploadDragging ? 'bg-emerald-700 ring-2 ring-emerald-300' : 'bg-emerald-500 hover:bg-emerald-600'}`}
                 >
-                  {batchUploadProcessing ? '처리중...' : '일괄업무일지'}
+                  {batchUploadProcessing ? '처리중...' : batchUploadDragging ? '여기에 놓기' : '일괄업무일지'}
                 </button>
                 <input ref={batchUploadFileRef} type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={handleBatchUploadFiles} />
               </>
@@ -5915,7 +5933,7 @@ const App: React.FC = () => {
                           s.push(`[data-row="${r}"][data-col="${c}"]`);
                       return <style>{s.join(',') + `{background:rgba(0,113,227,0.15)!important;border-color:#0071E3!important}`}</style>;
                     })()}
-                    <table className="excel-table w-full border-collapse min-w-[640px] md:min-w-[1100px] table-fixed text-center text-[12px]">
+                    <table className="excel-table w-full border-collapse min-w-[680px] md:min-w-[1100px] table-fixed text-center text-[12px]">
                       <thead className="sticky top-0 z-20 bg-white shadow-sm">
                         <tr className="text-[10px] font-semibold text-black bg-white">
                           <th className="py-0 px-0.5 w-8 sticky left-0 bg-white z-30 overflow-hidden">
@@ -5972,7 +5990,7 @@ const App: React.FC = () => {
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.date + 'px' }} onClick={() => handleSort('date')}>날짜 {sortConfig?.key === 'date' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('date', e)} onDoubleClick={() => resetColWidth('date')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.name1 + 'px' }} onClick={() => handleSort('name1')}>이름1 {sortConfig?.key === 'name1' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('name1', e)} onDoubleClick={() => resetColWidth('name1')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.name2 + 'px' }} onClick={() => handleSort('name2')}>받는사람 {sortConfig?.key === 'name2' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('name2', e)} onDoubleClick={() => resetColWidth('name2')} /></th>
-                          <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.orderNumber + 'px' }} onClick={() => handleSort('orderNumber')}>주문번호 {sortConfig?.key === 'orderNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('orderNumber', e)} onDoubleClick={() => resetColWidth('orderNumber')} /></th>
+                          <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.orderNumber + 'px' }} onClick={() => handleSort('orderNumber')}>주문번호 {sortConfig?.key === 'orderNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('orderNumber', e)} onDoubleClick={() => resetColWidth('orderNumber')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.address + 'px' }} onClick={() => handleSort('address')}>받는주소 {sortConfig?.key === 'address' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('address', e)} onDoubleClick={() => resetColWidth('address')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.memo + 'px' }} onClick={() => handleSort('memo')}>비고 {sortConfig?.key === 'memo' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('memo', e)} onDoubleClick={() => resetColWidth('memo')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.paymentAmount + 'px' }} onClick={() => handleSort('paymentAmount')}>결제금액 {sortConfig?.key === 'paymentAmount' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('paymentAmount', e)} onDoubleClick={() => resetColWidth('paymentAmount')} /></th>
@@ -5981,6 +5999,7 @@ const App: React.FC = () => {
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.trackingNumber + 'px' }} onClick={() => handleSort('trackingNumber')}>송장번호 {sortConfig?.key === 'trackingNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('trackingNumber', e)} onDoubleClick={() => resetColWidth('trackingNumber')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden text-blue-600 relative" style={{ width: colWidths.beforeDeposit + 'px' }}>입금전<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('beforeDeposit', e)} onDoubleClick={() => resetColWidth('beforeDeposit')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden text-green-600 relative" style={{ width: colWidths.afterDeposit + 'px' }}>입금후<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('afterDeposit', e)} onDoubleClick={() => resetColWidth('afterDeposit')} /></th>
+                          <th className="py-0 px-0.5 overflow-hidden md:hidden" style={{ width: colWidths.orderNumber + 'px' }}>주문번호</th>
                         </tr>
                       </thead>
                       <tbody className="text-[12px]">
@@ -6167,7 +6186,7 @@ const App: React.FC = () => {
                                   <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.date ? entry.date.slice(2).replace(/-/g, '.') : '')} data-row={idx} data-col={2} defaultValue={entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'date', idx, 2)} type="text" placeholder="YY.MM.DD" className={`excel-input px-1 text-center ${rowColor}`} onFocus={(e) => e.target.select()} onBlur={(e) => handleCellBlur(e, entry, 'date')} /></td>
                                   <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.name1)} data-row={idx} data-col={3} defaultValue={entry.name1} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name1', idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'name1') ? { color: getCellColor(entry, 'name1') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'name1')} onBlur={(e) => handleCellBlur(e, entry, 'name1')} /></td>
                                   <td className={`p-0 border border-gray-200 ${isPink ? 'bg-white' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'font-black' : rowColor}`} style={getCellColor(entry, 'name2') ? { color: getCellColor(entry, 'name2') } : isPink ? { color: '#ff4da6' } : undefined} placeholder="받는사람" onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'name2')} onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
-                                  <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'orderNumber') ? { color: getCellColor(entry, 'orderNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'orderNumber')} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
+                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'orderNumber') ? { color: getCellColor(entry, 'orderNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'orderNumber')} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
                                   <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.address)} data-row={idx} data-col={6} defaultValue={entry.address} onKeyDown={(e) => handleCellKeyDown(e, entry, 'address', idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} style={getCellColor(entry, 'address') ? { color: getCellColor(entry, 'address') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'address')} onBlur={(e) => handleCellBlur(e, entry, 'address')} /></td>
                                   <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.memo)} data-row={idx} data-col={7} defaultValue={entry.memo} onKeyDown={(e) => handleCellKeyDown(e, entry, 'memo', idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} style={getCellColor(entry, 'memo') ? { color: getCellColor(entry, 'memo') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'memo')} onBlur={(e) => handleCellBlur(e, entry, 'memo')} /></td>
                                   <td className="p-0 border border-gray-200"><input ref={(el) => { if (el && document.activeElement !== el) { el.value = entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''; } }} data-row={idx} data-col={8} defaultValue={entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'paymentAmount', idx, 8)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'paymentAmount') ? { color: getCellColor(entry, 'paymentAmount') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'paymentAmount')} onFocus={(e) => { e.target.value = entry.paymentAmount ? String(entry.paymentAmount) : ''; e.target.select(); }} onBlur={(e) => { const raw = Number(e.target.value.replace(/,/g, '')) || 0; if (raw !== (entry.paymentAmount || 0)) updateManualEntry(entry.id, 'paymentAmount', raw); e.target.value = raw ? raw.toLocaleString() : ''; }} /></td>
@@ -6179,6 +6198,18 @@ const App: React.FC = () => {
                                   </td>
                                   <td className="p-0 border border-gray-200 text-center align-middle">
                                     <input type="checkbox" className="w-4 h-4 accent-green-600" checked={entry.afterDeposit} onChange={() => toggleAfterDeposit(entry.id, entry.afterDeposit)} />
+                                  </td>
+                                  <td className="p-0 border border-gray-200 md:hidden">
+                                    <input
+                                      defaultValue={entry.orderNumber}
+                                      onBlur={(e) => {
+                                        const val = e.target.value;
+                                        if (val !== (entry.orderNumber || '')) updateManualEntry(entry.id, 'orderNumber', val);
+                                      }}
+                                      type="text"
+                                      className={`excel-input text-center ${rowColor}`}
+                                      style={getCellColor(entry, 'orderNumber') ? { color: getCellColor(entry, 'orderNumber') } : undefined}
+                                    />
                                   </td>
                                 </tr>
                               );
