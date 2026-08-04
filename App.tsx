@@ -4546,6 +4546,10 @@ const App: React.FC = () => {
                       // 기간 합계
                       const periodNet = filtered.reduce((s, e) => s + (e.totalMargin || 0) + (e.adCost || 0) + (e.housePurchase || 0) + (e.solution || 0) + (e.refund || 0), 0);
                       const periodMargin = filtered.reduce((s, e) => s + (e.totalMargin || 0), 0);
+                      const periodHousePurchase = filtered.reduce((s, e) => s + (e.housePurchase || 0), 0);
+                      const periodRefund = filtered.reduce((s, e) => s + (e.refund || 0), 0);
+                      const periodAdCost = filtered.reduce((s, e) => s + (e.adCost || 0), 0);
+                      const periodSolution = filtered.reduce((s, e) => s + (e.solution || 0), 0);
                       const overheadCats = (monthlyOverhead[salesMonthStr] || {}) as Record<string, number>;
                       const monthOverheadAmt: number = sumOverheadCats(overheadCats);
                       const manualOverheadAmt: number = (manualOverhead[salesMonthStr] || []).reduce((s: number, r) => s + (r.amount || 0), 0);
@@ -4567,6 +4571,10 @@ const App: React.FC = () => {
                           {/* 기간 헤더 */}
                           <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm font-black px-1">
                             <span className="text-gray-400">기간 총 마진 <span className="text-white">{periodMargin.toLocaleString()}원</span></span>
+                            <span className="text-gray-400">가구매 <span className={periodHousePurchase > 0 ? 'text-cyan-400' : 'text-red-400'}>{periodHousePurchase.toLocaleString()}원</span></span>
+                            <span className="text-gray-400">반품 <span className={periodRefund > 0 ? 'text-cyan-400' : 'text-red-400'}>{periodRefund.toLocaleString()}원</span></span>
+                            <span className="text-gray-400">광고비 <span className={periodAdCost > 0 ? 'text-cyan-400' : 'text-red-400'}>{periodAdCost.toLocaleString()}원</span></span>
+                            <span className="text-gray-400">슬롯 <span className={periodSolution > 0 ? 'text-cyan-400' : 'text-red-400'}>{periodSolution.toLocaleString()}원</span></span>
                             <span className="text-gray-400">비용 <span className="text-red-400">{totalCost ? `-${totalCost.toLocaleString()}원` : '-'}</span></span>
                             <span className="text-gray-400">순수익 <span className={periodProfit >= 0 ? 'text-green-400' : 'text-red-400'}>{periodProfit.toLocaleString()}원</span></span>
                           </div>
