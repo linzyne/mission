@@ -4575,7 +4575,8 @@ const App: React.FC = () => {
                             {dates.map(date => {
                               const { items: dayItems, housePurchase } = byDate[date];
                               const items = Object.entries(dayItems).sort((a, b) => b[1].margin - a[1].margin);
-                              const dayTotal = items.reduce((s, [, v]) => s + v.margin, 0) + housePurchase;
+                              const totalMargin = items.reduce((s, [, v]) => s + v.margin, 0);
+                              const dayTotal = totalMargin + housePurchase;
                               return (
                                 <div key={date} className="bg-gray-800/80 rounded-xl p-3 space-y-2">
                                   <div className="flex justify-between items-baseline gap-2">
@@ -4595,6 +4596,11 @@ const App: React.FC = () => {
                                         <span className={`font-bold whitespace-nowrap ${housePurchase >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{housePurchase.toLocaleString()}</span>
                                       </div>
                                     )}
+                                  </div>
+                                  <div className="pt-1.5 mt-0.5 border-t border-gray-700 space-y-0.5 text-[11px]">
+                                    <div className="flex justify-between"><span className="text-gray-400">마진</span><span className="text-gray-200 font-bold">{totalMargin.toLocaleString()}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-400">가구매</span><span className="text-gray-200 font-bold">{housePurchase.toLocaleString()}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-400 font-black">합계</span><span className={`font-black ${dayTotal >= 0 ? 'text-green-400' : 'text-red-400'}`}>{dayTotal.toLocaleString()}원</span></div>
                                   </div>
                                 </div>
                               );
