@@ -4528,17 +4528,17 @@ const App: React.FC = () => {
                     /* ===== 일별합계 ===== */
                     (() => {
                       const filtered = salesDaily.filter(e => e.date?.startsWith(salesMonthStr));
-                      // 날짜별 품목별 순수익+수량 집계
-                      const byDate: Record<string, Record<string, { net: number; qty: number; housePurchase: number }>> = {};
+                      // 날짜별 품목별 마진(가구매 제외)+수량 집계, 가구매는 날짜별로 별도 합산
+                      const byDate: Record<string, { items: Record<string, { margin: number; qty: number }>; housePurchase: number }> = {};
                       filtered.forEach(e => {
                         if (!e.date) return;
-                        if (!byDate[e.date]) byDate[e.date] = {};
+                        if (!byDate[e.date]) byDate[e.date] = { items: {}, housePurchase: 0 };
                         const pName = normProductName(e.product);
-                        const net = (e.totalMargin || 0) + (e.adCost || 0) + (e.housePurchase || 0) + (e.solution || 0) + (e.refund || 0);
-                        if (!byDate[e.date][pName]) byDate[e.date][pName] = { net: 0, qty: 0, housePurchase: 0 };
-                        byDate[e.date][pName].net += net;
-                        byDate[e.date][pName].qty += e.quantity || 0;
-                        byDate[e.date][pName].housePurchase += e.housePurchase || 0;
+                        const margin = (e.totalMargin || 0) + (e.adCost || 0) + (e.solution || 0) + (e.refund || 0);
+                        if (!byDate[e.date].items[pName]) byDate[e.date].items[pName] = { margin: 0, qty: 0 };
+                        byDate[e.date].items[pName].margin += margin;
+                        byDate[e.date].items[pName].qty += e.quantity || 0;
+                        byDate[e.date].housePurchase += e.housePurchase || 0;
                       });
                       const dates = Object.keys(byDate).sort();
 
@@ -4573,8 +4573,9 @@ const App: React.FC = () => {
                           {/* 날짜 카드 그리드 */}
                           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                             {dates.map(date => {
-                              const items = Object.entries(byDate[date]).sort((a, b) => b[1].net - a[1].net);
-                              const dayTotal = items.reduce((s, [, v]) => s + v.net, 0);
+                              const { items: dayItems, housePurchase } = byDate[date];
+                              const items = Object.entries(dayItems).sort((a, b) => b[1].margin - a[1].margin);
+                              const dayTotal = items.reduce((s, [, v]) => s + v.margin, 0) + housePurchase;
                               return (
                                 <div key={date} className="bg-gray-800/80 rounded-xl p-3 space-y-2">
                                   <div className="flex justify-between items-baseline gap-2">
@@ -4582,20 +4583,18 @@ const App: React.FC = () => {
                                     <span className={`font-black text-sm whitespace-nowrap ${dayTotal >= 0 ? 'text-green-400' : 'text-red-400'}`}>{dayTotal.toLocaleString()}원</span>
                                   </div>
                                   <div className="space-y-1 pt-0.5 border-t border-gray-700">
-                                    {items.map(([product, { net, qty, housePurchase }]) => (
-                                      <div key={product} className="space-y-0.5">
-                                        <div className="flex justify-between items-baseline gap-1 text-xs">
-                                          <span className="text-violet-400 truncate">{product}{qty > 0 && <span className="text-gray-300 ml-1">({qty}개)</span>}</span>
-                                          <span className={`font-bold whitespace-nowrap ${net >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{net.toLocaleString()}</span>
-                                        </div>
-                                        {housePurchase !== 0 && (
-                                          <div className="flex justify-between items-baseline gap-1 text-[10px] pl-1">
-                                            <span className="text-gray-500">가구매</span>
-                                            <span className="text-orange-400 whitespace-nowrap">{housePurchase.toLocaleString()}</span>
-                                          </div>
-                                        )}
+                                    {items.map(([product, { margin, qty }]) => (
+                                      <div key={product} className="flex justify-between items-baseline gap-1 text-xs">
+                                        <span className="text-violet-400 truncate">{product}{qty > 0 && <span className="text-gray-300 ml-1">({qty}개)</span>}</span>
+                                        <span className={`font-bold whitespace-nowrap ${margin >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{margin.toLocaleString()}</span>
                                       </div>
                                     ))}
+                                    {housePurchase !== 0 && (
+                                      <div className="flex justify-between items-baseline gap-1 text-xs">
+                                        <span className="text-orange-400 truncate">가구매</span>
+                                        <span className={`font-bold whitespace-nowrap ${housePurchase >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{housePurchase.toLocaleString()}</span>
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               );
