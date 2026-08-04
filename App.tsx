@@ -4528,17 +4528,18 @@ const App: React.FC = () => {
                     /* ===== 일별합계 ===== */
                     (() => {
                       const filtered = salesDaily.filter(e => e.date?.startsWith(salesMonthStr));
-                      // 날짜별 품목별 마진(가구매 제외)+수량 집계, 가구매는 날짜별로 별도 합산
-                      const byDate: Record<string, { items: Record<string, { margin: number; qty: number }>; housePurchase: number }> = {};
+                      // 날짜별 품목별 마진(가구매/반품 제외)+수량 집계, 가구매·반품은 날짜별로 별도 합산
+                      const byDate: Record<string, { items: Record<string, { margin: number; qty: number }>; housePurchase: number; refund: number }> = {};
                       filtered.forEach(e => {
                         if (!e.date) return;
-                        if (!byDate[e.date]) byDate[e.date] = { items: {}, housePurchase: 0 };
+                        if (!byDate[e.date]) byDate[e.date] = { items: {}, housePurchase: 0, refund: 0 };
                         const pName = normProductName(e.product);
-                        const margin = (e.totalMargin || 0) + (e.adCost || 0) + (e.solution || 0) + (e.refund || 0);
+                        const margin = (e.totalMargin || 0) + (e.adCost || 0) + (e.solution || 0);
                         if (!byDate[e.date].items[pName]) byDate[e.date].items[pName] = { margin: 0, qty: 0 };
                         byDate[e.date].items[pName].margin += margin;
                         byDate[e.date].items[pName].qty += e.quantity || 0;
                         byDate[e.date].housePurchase += e.housePurchase || 0;
+                        byDate[e.date].refund += e.refund || 0;
                       });
                       const dates = Object.keys(byDate).sort();
 
@@ -4573,10 +4574,10 @@ const App: React.FC = () => {
                           {/* 날짜 카드 그리드 */}
                           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                             {dates.map(date => {
-                              const { items: dayItems, housePurchase } = byDate[date];
+                              const { items: dayItems, housePurchase, refund } = byDate[date];
                               const items = Object.entries(dayItems).sort((a, b) => b[1].margin - a[1].margin);
                               const totalMargin = items.reduce((s, [, v]) => s + v.margin, 0);
-                              const dayTotal = totalMargin + housePurchase;
+                              const dayTotal = totalMargin + housePurchase + refund;
                               return (
                                 <div key={date} className="bg-gray-800/80 rounded-xl p-3 space-y-2">
                                   <div className="flex justify-between items-baseline gap-2">
@@ -4596,10 +4597,17 @@ const App: React.FC = () => {
                                         <span className={`font-bold whitespace-nowrap ${housePurchase >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{housePurchase.toLocaleString()}</span>
                                       </div>
                                     )}
+                                    {refund !== 0 && (
+                                      <div className="flex justify-between items-baseline gap-1 text-xs">
+                                        <span className="text-pink-400 truncate">반품</span>
+                                        <span className={`font-bold whitespace-nowrap ${refund >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{refund.toLocaleString()}</span>
+                                      </div>
+                                    )}
                                   </div>
                                   <div className="pt-1.5 mt-0.5 border-t border-gray-700 space-y-0.5 text-[11px]">
                                     <div className="flex justify-between"><span className="text-gray-400">마진</span><span className="text-gray-200 font-bold">{totalMargin.toLocaleString()}</span></div>
                                     <div className="flex justify-between"><span className="text-gray-400">가구매</span><span className="text-gray-200 font-bold">{housePurchase.toLocaleString()}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-400">반품</span><span className="text-gray-200 font-bold">{refund.toLocaleString()}</span></div>
                                     <div className="flex justify-between"><span className="text-gray-400 font-black">합계</span><span className={`font-black ${dayTotal >= 0 ? 'text-green-400' : 'text-red-400'}`}>{dayTotal.toLocaleString()}원</span></div>
                                   </div>
                                 </div>
