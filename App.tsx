@@ -2930,7 +2930,7 @@ const App: React.FC = () => {
     const dataRows = allBizBeforeDepositEntries.map(getRow);
     const tsv = dataRows.map(row => row.join('\t')).join('\n');
     await navigator.clipboard.writeText(tsv);
-    alert(`${allBizBeforeDepositEntries.length}건 복사 완료`);
+    alert("최신버전확인하세요");
   };
 
   const copySelectedDepositHistoryToClipboard = async () => {
