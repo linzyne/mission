@@ -2604,6 +2604,7 @@ const App: React.FC = () => {
       }
     }
 
+    setManualEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
     await setDoc(doc(db, getCol('manualEntries', colPrefix), id), updates, { merge: true });
   };
 
