@@ -1948,7 +1948,7 @@ const App: React.FC = () => {
   // 주문번호 중복 체크: 동일 주문번호를 가진 다른 행이 있으면 이름과 함께 경고
   const checkDuplicateOrderNumber = (entryId: string, newVal: string) => {
     const trimmed = String(newVal || '').trim();
-    if (!trimmed) return;
+    if (!trimmed || trimmed === '실배') return;
     const dup = manualEntries.find(e => e.id !== entryId && String(e.orderNumber || '').trim() === trimmed);
     if (dup) {
       const dupName = dup.name1 || dup.name2 || dup.ordererName || '이름없음';
@@ -5980,7 +5980,7 @@ const App: React.FC = () => {
                     <table className="excel-table border-collapse md:w-full md:min-w-[1100px] table-fixed text-center text-[12px]">
                       <thead className="sticky top-0 z-20 bg-white shadow-sm">
                         <tr className="text-[10px] font-semibold text-black bg-white">
-                          <th className="py-0 px-0.5 w-8 sticky left-0 bg-white z-30 overflow-hidden">
+                          <th className="py-0 px-0.5 w-8 sticky left-0 bg-white z-30 overflow-hidden hidden md:table-cell">
                             <input type="checkbox" className="w-3 h-3 accent-blue-600"
                               onChange={(e) => {
                                 if (e.target.checked) {
@@ -6030,7 +6030,7 @@ const App: React.FC = () => {
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.id + 'px' }} onClick={() => handleSort('id')}>순번 {sortConfig?.key === 'id' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('id', e)} onDoubleClick={() => resetColWidth('id')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.count + 'px' }} onClick={() => handleSort('count')}>갯수 {sortConfig?.key === 'count' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('count', e)} onDoubleClick={() => resetColWidth('count')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.product + 'px' }} onClick={() => handleSort('product')}>품목 {sortConfig?.key === 'product' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('product', e)} onDoubleClick={() => resetColWidth('product')} /></th>
-                          <th className="py-0 px-0.5 overflow-hidden relative" style={{ width: colWidths.coupon + 'px' }}>쿠폰<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('coupon', e)} onDoubleClick={() => resetColWidth('coupon')} /></th>
+                          <th className="py-0 px-0.5 overflow-hidden relative hidden md:table-cell" style={{ width: colWidths.coupon + 'px' }}>쿠폰<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('coupon', e)} onDoubleClick={() => resetColWidth('coupon')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.date + 'px' }} onClick={() => handleSort('date')}>날짜 {sortConfig?.key === 'date' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('date', e)} onDoubleClick={() => resetColWidth('date')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.name1 + 'px' }} onClick={() => handleSort('name1')}>이름1 {sortConfig?.key === 'name1' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('name1', e)} onDoubleClick={() => resetColWidth('name1')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.name2 + 'px' }} onClick={() => handleSort('name2')}>받는사람 {sortConfig?.key === 'name2' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('name2', e)} onDoubleClick={() => resetColWidth('name2')} /></th>
@@ -6043,7 +6043,7 @@ const App: React.FC = () => {
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.trackingNumber + 'px' }} onClick={() => handleSort('trackingNumber')}>송장번호 {sortConfig?.key === 'trackingNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('trackingNumber', e)} onDoubleClick={() => resetColWidth('trackingNumber')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden text-blue-600 relative" style={{ width: colWidths.beforeDeposit + 'px' }}>입금전<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('beforeDeposit', e)} onDoubleClick={() => resetColWidth('beforeDeposit')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden text-green-600 relative" style={{ width: colWidths.afterDeposit + 'px' }}>입금후<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('afterDeposit', e)} onDoubleClick={() => resetColWidth('afterDeposit')} /></th>
-                          <th className="py-0 px-0.5 overflow-hidden md:hidden" style={{ width: colWidths.orderNumber + 'px' }}>주문번호</th>
+                          <th className="py-0 px-0.5 overflow-hidden md:hidden" style={{ width: '108px' }}>주문번호</th>
                         </tr>
                       </thead>
                       <tbody className="text-[12px]">
@@ -6105,7 +6105,7 @@ const App: React.FC = () => {
                                   style={rowStyle}
                                   className={`group hover:bg-blue-100 transition-colors ${!entry.rowBgColor && isBlue ? 'bg-blue-50/40' : ''}`}
                                 >
-                                  <td className="p-0 border border-gray-200 text-center sticky left-0 bg-white z-20 select-none cursor-pointer"
+                                  <td className="p-0 border border-gray-200 text-center sticky left-0 bg-white z-20 select-none cursor-pointer hidden md:table-cell"
                                     onMouseDown={(e) => {
                                       e.preventDefault();
                                       isDraggingRef.current = true;
@@ -6217,7 +6217,7 @@ const App: React.FC = () => {
                                       ))}
                                     </select>
                                   </td>
-                                  <td className="p-0 border border-gray-200 text-center align-middle">
+                                  <td className="p-0 border border-gray-200 text-center align-middle hidden md:table-cell">
                                     <select
                                       className={`excel-input ${rowColor} cursor-pointer text-[10px]`}
                                       value={entry.couponApplied === false ? 'N' : 'Y'}
