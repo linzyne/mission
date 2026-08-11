@@ -50,6 +50,16 @@ function hexWithAlpha(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+// 고정(sticky) 헤더처럼 뒤 콘텐츠가 비치면 안 되는 곳에 사용하는 불투명 버전.
+// rgba 대신 흰색과 섞은 solid 색을 반환해 스크롤 시 아래 내용이 비치지 않는다.
+function mixWithWhite(hex: string, ratio: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const mix = (c: number) => Math.round(c * ratio + 255 * (1 - ratio));
+  return `rgb(${mix(r)},${mix(g)},${mix(b)})`;
+}
+
 function normProductName(s: string | undefined | null): string {
   return (s || '').normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim().replace(/\s+/g, ' ');
 }
@@ -3409,7 +3419,7 @@ const App: React.FC = () => {
       )}
 
       {/* Nav */}
-      <nav className="border-b sticky top-0 z-50" style={{ backgroundColor: hexWithAlpha(currentColor, 0.08), borderColor: hexWithAlpha(currentColor, 0.3) }}>
+      <nav className="border-b sticky top-0 z-50" style={{ backgroundColor: mixWithWhite(currentColor, 0.08), borderColor: hexWithAlpha(currentColor, 0.3) }}>
         <div className="max-w-[1500px] mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3 cursor-pointer" onClick={resetCustomerFlow}>
             <div className="w-8 h-8 bg-[#0071E3] rounded-lg flex items-center justify-center text-white font-black">M</div>
@@ -3455,7 +3465,7 @@ const App: React.FC = () => {
           </div>
         </div>
         {selectedBiz && mode === 'admin' && isAdminAuthenticated && (
-          <div className="text-center py-1.5 text-sm font-black" style={{ backgroundColor: hexWithAlpha(currentColor, 0.15), color: currentColor }}>
+          <div className="text-center py-1.5 text-sm font-black" style={{ backgroundColor: mixWithWhite(currentColor, 0.15), color: currentColor }}>
             여기는 {bizInfo?.name}입니다
           </div>
         )}
