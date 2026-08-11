@@ -6250,7 +6250,10 @@ const App: React.FC = () => {
                                       defaultValue={entry.orderNumber}
                                       onBlur={(e) => {
                                         const val = e.target.value;
-                                        if (val !== (entry.orderNumber || '')) updateManualEntry(entry.id, 'orderNumber', val);
+                                        if (val !== (entry.orderNumber || '')) {
+                                          updateManualEntry(entry.id, 'orderNumber', val);
+                                          checkDuplicateOrderNumber(entry.id, val);
+                                        }
                                       }}
                                       type="text"
                                       className={`excel-input text-center ${rowColor}`}
