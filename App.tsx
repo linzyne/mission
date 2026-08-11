@@ -7195,7 +7195,7 @@ const App: React.FC = () => {
                 className="py-2.5 rounded-xl text-gray-600 bg-gray-100 hover:bg-gray-200 text-left px-4"
               >
                 <div className="text-sm font-bold">무시하기</div>
-                <div className="text-xs text-gray-400">중복되도 괜찮아요</div>
+                <div className="text-xs text-gray-400">중복 주문번호 쓰기</div>
               </button>
               <button
                 onClick={() => {
