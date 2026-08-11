@@ -1721,6 +1721,7 @@ const App: React.FC = () => {
   const [depositAfterDate, setDepositAfterDate] = useState<string>(toLocalDateStr());
 
   const [manualSearch, setManualSearch] = useState('');
+  const [duplicateWarning, setDuplicateWarning] = useState<{ entryId: string; orderNumber: string; dupName: string } | null>(null);
 
   const [depositSearch, setDepositSearch] = useState('');
   const [debouncedDepositSearch, setDebouncedDepositSearch] = useState('');
@@ -1952,7 +1953,7 @@ const App: React.FC = () => {
     const dup = manualEntries.find(e => e.id !== entryId && String(e.orderNumber || '').trim() === trimmed);
     if (dup) {
       const dupName = dup.name1 || dup.name2 || dup.ordererName || '이름없음';
-      alert(`중복된 주문번호입니다.\n중복 대상: ${dupName}`);
+      setDuplicateWarning({ entryId, orderNumber: trimmed, dupName });
     }
   };
 
@@ -7142,6 +7143,31 @@ const App: React.FC = () => {
         </div>
         );
       })()}
+
+      {duplicateWarning && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-2xl px-8 py-7 mx-4 max-w-sm w-full text-center">
+            <div className="text-3xl mb-3">⚠️</div>
+            <p className="text-base font-bold text-gray-800 mb-1">중복된 주문번호입니다</p>
+            <p className="text-sm text-gray-500 mb-5">중복 대상: {duplicateWarning.dupName}</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDuplicateWarning(null)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200"
+              >무시하기</button>
+              <button
+                onClick={() => {
+                  setAdminTab('manual');
+                  setManualSearch(duplicateWarning.orderNumber);
+                  setDebouncedManualSearch(duplicateWarning.orderNumber);
+                  setDuplicateWarning(null);
+                }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600"
+              >수정하기</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {quotaExceeded && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40">
