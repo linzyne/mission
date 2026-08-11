@@ -6315,8 +6315,8 @@ const App: React.FC = () => {
                         <div className="flex justify-end pr-4">
                           <button
                             onClick={() => setDuplicateFocusIds(null)}
-                            className="pointer-events-auto px-5 py-3 rounded-full text-sm font-black text-white bg-orange-500 hover:bg-orange-600 shadow-2xl flex items-center gap-2 animate-pulse"
-                          >중복 비교중 <span className="text-orange-100">✕</span></button>
+                            className="pointer-events-auto px-3 py-1.5 rounded-full text-xs font-bold text-white bg-orange-500 hover:bg-orange-600 shadow-lg flex items-center gap-1.5"
+                          >목록으로돌아가기 <span className="text-orange-100">✕</span></button>
                         </div>
                       </div>
                     )}
