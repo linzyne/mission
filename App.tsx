@@ -1730,7 +1730,8 @@ const App: React.FC = () => {
   const [depositAfterDate, setDepositAfterDate] = useState<string>(toLocalDateStr());
 
   const [manualSearch, setManualSearch] = useState('');
-  const [duplicateWarning, setDuplicateWarning] = useState<{ entryId: string; orderNumber: string; dupName: string } | null>(null);
+  const [duplicateWarning, setDuplicateWarning] = useState<{ entryId: string; dupId: string; orderNumber: string; dupName: string } | null>(null);
+  const [duplicateFocusIds, setDuplicateFocusIds] = useState<Set<string> | null>(null);
 
   const [depositSearch, setDepositSearch] = useState('');
   const [debouncedDepositSearch, setDebouncedDepositSearch] = useState('');
@@ -1962,7 +1963,7 @@ const App: React.FC = () => {
     const dup = manualEntries.find(e => e.id !== entryId && String(e.orderNumber || '').trim() === trimmed);
     if (dup) {
       const dupName = dup.name1 || dup.name2 || dup.ordererName || '이름없음';
-      setDuplicateWarning({ entryId, orderNumber: trimmed, dupName });
+      setDuplicateWarning({ entryId, dupId: dup.id, orderNumber: trimmed, dupName });
     }
   };
 
@@ -5640,15 +5641,21 @@ const App: React.FC = () => {
                           placeholder="검색 (이름, 주문번호...)"
                           className={`pl-3 pr-8 py-2 rounded-xl text-sm font-black outline-none border-2 w-48 transition-all duration-200 ${manualSearch ? 'bg-yellow-50 border-yellow-400' : 'bg-white border-gray-300'}`}
                           value={manualSearch}
-                          onChange={e => setManualSearch(e.target.value)}
+                          onChange={e => { setManualSearch(e.target.value); setDuplicateFocusIds(null); }}
                         />
                         {manualSearch && (
                           <button
-                            onClick={() => { setManualSearch(''); setDebouncedManualSearch(''); }}
+                            onClick={() => { setManualSearch(''); setDebouncedManualSearch(''); setDuplicateFocusIds(null); }}
                             className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-gray-300 hover:bg-red-400 text-white text-[10px] font-black transition-colors"
                           >✕</button>
                         )}
                       </div>
+                      {duplicateFocusIds && (
+                        <button
+                          onClick={() => setDuplicateFocusIds(null)}
+                          className="px-3 py-1.5 rounded-xl text-xs font-bold text-orange-700 bg-orange-100 hover:bg-orange-200 flex items-center gap-1.5"
+                        >중복 비교중 <span className="text-orange-400">✕</span></button>
+                      )}
                       <div className="hidden md:flex gap-1.5 items-center">
                         <button onClick={() => addMoreRows(10)} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg font-bold text-[11px]">+10줄</button>
                         <button onClick={deleteEmptyRows} className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg font-bold text-[11px] hover:bg-gray-200">빈행삭제</button>
@@ -6077,6 +6084,11 @@ const App: React.FC = () => {
                           const filtered = manualEntries.filter(entry => {
                             if (!entry) return false;
 
+                            // 중복주문보기: 처음 지정된 두 행을 값이 바뀌어도 계속 고정 표시
+                            if (duplicateFocusIds) {
+                              return duplicateFocusIds.has(entry.id);
+                            }
+
                             // 검색 시 동작: 날짜 필터 무시하고 전체 데이터 검색
                             if (debouncedManualSearch) {
                               const queries = debouncedManualSearch.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
@@ -6252,7 +6264,7 @@ const App: React.FC = () => {
                                   <td className={`p-0 border border-gray-200 ${isPink ? 'bg-white' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'font-black' : rowColor}`} style={getCellColor(entry, 'name2') ? { color: getCellColor(entry, 'name2') } : isPink ? { color: '#ff4da6' } : undefined} placeholder="받는사람" onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'name2')} onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
                                   {(() => {
                                     const orderNumberTd = (
-                                      <td key="orderNumber" className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'orderNumber') ? { color: getCellColor(entry, 'orderNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'orderNumber')} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
+                                      <td key="orderNumber" className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} data-entryid={entry.id} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'orderNumber') ? { color: getCellColor(entry, 'orderNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'orderNumber')} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
                                     );
                                     return (
                                       <>
@@ -7167,20 +7179,43 @@ const App: React.FC = () => {
             <div className="text-3xl mb-3">⚠️</div>
             <p className="text-base font-bold text-gray-800 mb-1">중복된 주문번호입니다</p>
             <p className="text-sm text-gray-500 mb-5">중복 대상: {duplicateWarning.dupName}</p>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2">
               <button
                 onClick={() => setDuplicateWarning(null)}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-600 bg-gray-100 hover:bg-gray-200"
-              >무시하기</button>
+                className="py-2.5 rounded-xl text-gray-600 bg-gray-100 hover:bg-gray-200 text-left px-4"
+              >
+                <div className="text-sm font-bold">무시하기</div>
+                <div className="text-xs text-gray-400">중복되도 괜찮아요</div>
+              </button>
               <button
                 onClick={() => {
+                  const ids = new Set([duplicateWarning.entryId, duplicateWarning.dupId]);
                   setAdminTab('manual');
-                  setManualSearch(duplicateWarning.orderNumber);
-                  setDebouncedManualSearch(duplicateWarning.orderNumber);
+                  setManualSearch('');
+                  setDebouncedManualSearch('');
+                  setDuplicateFocusIds(ids);
                   setDuplicateWarning(null);
                 }}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600"
-              >수정하기</button>
+                className="py-2.5 rounded-xl text-white bg-blue-500 hover:bg-blue-600 text-left px-4"
+              >
+                <div className="text-sm font-bold">중복주문보기</div>
+                <div className="text-xs text-blue-100">누구랑 중복인지 보기</div>
+              </button>
+              <button
+                onClick={() => {
+                  const id = duplicateWarning.entryId;
+                  updateManualEntry(id, 'orderNumber', '');
+                  setDuplicateWarning(null);
+                  setTimeout(() => {
+                    const input = document.querySelector(`input[data-entryid="${id}"]`) as HTMLInputElement | null;
+                    if (input) { input.value = ''; input.focus(); }
+                  }, 0);
+                }}
+                className="py-2.5 rounded-xl text-white bg-emerald-500 hover:bg-emerald-600 text-left px-4"
+              >
+                <div className="text-sm font-bold">다시쓰기</div>
+                <div className="text-xs text-emerald-100">다른 주문번호 쓰기</div>
+              </button>
             </div>
           </div>
         </div>
