@@ -5660,12 +5660,6 @@ const App: React.FC = () => {
                           >✕</button>
                         )}
                       </div>
-                      {duplicateFocusIds && (
-                        <button
-                          onClick={() => setDuplicateFocusIds(null)}
-                          className="px-3 py-1.5 rounded-xl text-xs font-bold text-orange-700 bg-orange-100 hover:bg-orange-200 flex items-center gap-1.5"
-                        >중복 비교중 <span className="text-orange-400">✕</span></button>
-                      )}
                       <div className="hidden md:flex gap-1.5 items-center">
                         <button onClick={() => addMoreRows(10)} className="px-3 py-1.5 bg-gray-900 text-white rounded-lg font-bold text-[11px]">+10줄</button>
                         <button onClick={deleteEmptyRows} className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg font-bold text-[11px] hover:bg-gray-200">빈행삭제</button>
@@ -6316,6 +6310,16 @@ const App: React.FC = () => {
                         })()}
                       </tbody>
                     </table>
+                    {duplicateFocusIds && (
+                      <div className="sticky bottom-4 z-30 pointer-events-none">
+                        <div className="flex justify-end pr-4">
+                          <button
+                            onClick={() => setDuplicateFocusIds(null)}
+                            className="pointer-events-auto px-5 py-3 rounded-full text-sm font-black text-white bg-orange-500 hover:bg-orange-600 shadow-2xl flex items-center gap-2 animate-pulse"
+                          >중복 비교중 <span className="text-orange-100">✕</span></button>
+                        </div>
+                      </div>
+                    )}
                     <div className="h-40"></div>
                   </div>
                 </section>
