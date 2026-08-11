@@ -7,7 +7,7 @@ import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, quer
 const BASE_BUSINESSES: Record<string, BusinessInfo> = {
   angun: {
     id: 'angun',
-    name: '안군농원',
+    name: '안군',
     phone: '01050447749',
     address: '인천시 연수구 송도동 214, D동 2206-1호',
     accountInfo: '국민 228 002 04 129095 김성아',
@@ -15,7 +15,7 @@ const BASE_BUSINESSES: Record<string, BusinessInfo> = {
   },
   zoe: {
     id: 'zoe',
-    name: '조에농원',
+    name: '조에',
     phone: '01094496343',
     address: '',
     accountInfo: '',
@@ -3422,14 +3422,14 @@ const App: React.FC = () => {
                   const isActive = selectedBiz === biz.id;
                   return (
                     <button key={biz.id} onClick={() => setSelectedBiz(biz.id)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
+                      className="flex-shrink-0 whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-bold transition-all"
                       style={isActive ? { backgroundColor: bc, color: '#fff', boxShadow: `0 1px 4px ${hexWithAlpha(bc, 0.4)}` } : { color: '#9CA3AF' }}>
                       {biz.name}
                     </button>
                   );
                 })}
                 <button onClick={() => setAddBizModal(true)}
-                  className="px-2 py-1.5 rounded-lg text-xs font-bold text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-all">+</button>
+                  className="flex-shrink-0 px-2 py-1.5 rounded-lg text-xs font-bold text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-all">+</button>
               </div>
             )}
             {mode === 'admin' && isAdminAuthenticated && (
