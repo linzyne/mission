@@ -8,6 +8,7 @@ const BASE_BUSINESSES: Record<string, BusinessInfo> = {
   angun: {
     id: 'angun',
     name: '안군',
+    legalName: '주식회사 안군농원',
     phone: '01050447749',
     address: '인천시 연수구 송도동 214, D동 2206-1호',
     accountInfo: '국민 228 002 04 129095 김성아',
@@ -16,6 +17,7 @@ const BASE_BUSINESSES: Record<string, BusinessInfo> = {
   zoe: {
     id: 'zoe',
     name: '조에',
+    legalName: '조에농원',
     phone: '01094496343',
     address: '',
     accountInfo: '',
@@ -249,9 +251,9 @@ const App: React.FC = () => {
   const colPrefix = bizInfo?.collectionPrefix ?? '';
 
   const [addBizModal, setAddBizModal] = useState(false);
-  const [newBizForm, setNewBizForm] = useState({ name: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
+  const [newBizForm, setNewBizForm] = useState({ name: '', legalName: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
   const [editBizModal, setEditBizModal] = useState<string | null>(null); // editing bizId
-  const [editBizForm, setEditBizForm] = useState({ name: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
+  const [editBizForm, setEditBizForm] = useState({ name: '', legalName: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
 
   const [bizColors, setBizColors] = useState<Record<string, string>>(() => {
     try { const s = localStorage.getItem('bizColors'); return s ? JSON.parse(s) : {}; } catch { return {}; }
@@ -288,6 +290,7 @@ const App: React.FC = () => {
     const newBiz: BusinessInfo = {
       id: bizId,
       name,
+      legalName: newBizForm.legalName.trim(),
       phone: newBizForm.phone.trim(),
       address: newBizForm.address.trim(),
       accountInfo: newBizForm.accountInfo.trim(),
@@ -295,7 +298,7 @@ const App: React.FC = () => {
     };
     saveCustomBiz(bizId, newBiz);
     if (newBizForm.color) saveBizColor(bizId, newBizForm.color);
-    setNewBizForm({ name: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
+    setNewBizForm({ name: '', legalName: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
     setAddBizModal(false);
     setSelectedBiz(bizId);
   };
@@ -305,6 +308,7 @@ const App: React.FC = () => {
     if (!biz) return;
     setEditBizForm({
       name: biz.name,
+      legalName: biz.legalName || '',
       phone: biz.phone || '',
       address: biz.address || '',
       accountInfo: biz.accountInfo || '',
@@ -321,6 +325,7 @@ const App: React.FC = () => {
     const updated: BusinessInfo = {
       ...existing,
       name,
+      legalName: editBizForm.legalName.trim(),
       phone: editBizForm.phone.trim(),
       address: editBizForm.address.trim(),
       accountInfo: editBizForm.accountInfo.trim(),
@@ -2154,8 +2159,6 @@ const App: React.FC = () => {
 
         const updates: Partial<ManualEntry> = {};
         if (result.orderNumber) updates.orderNumber = result.orderNumber;
-        if (result.receiverName) updates.name2 = result.receiverName;
-        else if (result.ordererName) updates.name2 = result.ordererName;
         if (result.address) updates.address = result.address;
         if (result.phone) updates.emergencyContact = result.phone;
 
@@ -2191,8 +2194,6 @@ const App: React.FC = () => {
             console.log('[Paste OCR] 결과:', result);
             const updates: Partial<ManualEntry> = {};
             if (result.orderNumber) updates.orderNumber = result.orderNumber;
-            if (result.receiverName) updates.name2 = result.receiverName;
-            else if (result.ordererName) updates.name2 = result.ordererName;
             if (result.address) updates.address = result.address;
             if (result.phone) updates.emergencyContact = result.phone;
             if (Object.keys(updates).length > 0) {
@@ -2235,8 +2236,6 @@ const App: React.FC = () => {
               console.log('[DocPaste OCR] 결과:', result);
               const updates: Partial<ManualEntry> = {};
               if (result.orderNumber) updates.orderNumber = result.orderNumber;
-              if (result.receiverName) updates.name2 = result.receiverName;
-              else if (result.ordererName) updates.name2 = result.ordererName;
               if (result.address) updates.address = result.address;
               if (result.phone) updates.emergencyContact = result.phone;
               if (Object.keys(updates).length > 0) {
@@ -2644,8 +2643,6 @@ const App: React.FC = () => {
 
         const ocrUpdates: Partial<ManualEntry> = {};
         if (result.orderNumber) ocrUpdates.orderNumber = result.orderNumber;
-        if (result.receiverName) ocrUpdates.name2 = result.receiverName;
-        else if (result.ordererName) ocrUpdates.name2 = result.ordererName;
         if (result.address) ocrUpdates.address = result.address;
         if (result.phone) ocrUpdates.emergencyContact = result.phone;
 
@@ -2724,8 +2721,6 @@ const App: React.FC = () => {
 
         const ocrUpdates: Partial<ManualEntry> = {};
         if (result.orderNumber) ocrUpdates.orderNumber = result.orderNumber;
-        if (result.receiverName) ocrUpdates.name2 = result.receiverName;
-        else if (result.ordererName) ocrUpdates.name2 = result.ordererName;
         if (result.address) ocrUpdates.address = result.address;
         if (result.phone) ocrUpdates.emergencyContact = result.phone;
 
@@ -2945,7 +2940,7 @@ const App: React.FC = () => {
         if (col.source === 'bizName') return biz?.name || '';
         if (col.source === 'bizPhone') return biz?.phone || '';
         if (col.source === 'bizAddress') return biz?.address || '';
-        if (col.source === 'bizNameFixed') return [biz?.name, col.fixedValue].filter(Boolean).join(' ');
+        if (col.source === 'bizNameFixed') return [biz?.legalName || biz?.name, col.fixedValue].filter(Boolean).join(' ');
         return getExportCellValue(e, col);
       });
     };
@@ -3354,6 +3349,8 @@ const App: React.FC = () => {
             <div className="space-y-3">
               <input type="text" placeholder="사업자명 *" value={newBizForm.name} onChange={e => setNewBizForm(f => ({ ...f, name: e.target.value }))}
                 className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
+              <input type="text" placeholder="정식 상호명 (예: 주식회사 안군농원)" value={newBizForm.legalName} onChange={e => setNewBizForm(f => ({ ...f, legalName: e.target.value }))}
+                className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
               <input type="text" placeholder="전화번호" value={newBizForm.phone} onChange={e => setNewBizForm(f => ({ ...f, phone: e.target.value }))}
                 className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
               <input type="text" placeholder="주소" value={newBizForm.address} onChange={e => setNewBizForm(f => ({ ...f, address: e.target.value }))}
@@ -3389,6 +3386,8 @@ const App: React.FC = () => {
             <h2 className="text-xl font-black tracking-tight">사업자 수정</h2>
             <div className="space-y-3">
               <input type="text" placeholder="사업자명 *" value={editBizForm.name} onChange={e => setEditBizForm(f => ({ ...f, name: e.target.value }))}
+                className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
+              <input type="text" placeholder="정식 상호명 (예: 주식회사 안군농원)" value={editBizForm.legalName} onChange={e => setEditBizForm(f => ({ ...f, legalName: e.target.value }))}
                 className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
               <input type="text" placeholder="전화번호" value={editBizForm.phone} onChange={e => setEditBizForm(f => ({ ...f, phone: e.target.value }))}
                 className="w-full p-3.5 bg-gray-50 rounded-xl font-bold outline-none border-2 border-transparent focus:border-blue-500 text-sm" />
@@ -5198,7 +5197,7 @@ const App: React.FC = () => {
                               <button
                                 onClick={async () => {
                                   const selected = allBizPendingEntries.filter(en => selectedPendingIds.has(en.bizId + '_' + en.id));
-                                  const text = selected.map(en => `${en.bizName}_${en.name2 || en.ordererName || ''}_${en.orderNumber || ''}`).join('\n');
+                                  const text = selected.map(en => `${allBusinesses[en.bizId]?.legalName || en.bizName}_${en.name2 || en.ordererName || ''}_${en.orderNumber || ''}`).join('\n');
                                   await navigator.clipboard.writeText(text);
                                   const dateInput = window.prompt(`${selected.length}건 예약완료 처리\n예약완료 날짜를 입력해주세요`, toLocalDateStr());
                                   if (dateInput === null) return;

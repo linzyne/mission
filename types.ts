@@ -154,6 +154,7 @@ export interface ProductPrice {
 export interface BusinessInfo {
   id: string;
   name: string;
+  legalName?: string;
   phone: string;
   address: string;
   accountInfo: string;
