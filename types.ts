@@ -37,6 +37,7 @@ export interface ManualEntry {
   name2: string;
   ordererName: string;
   orderNumber: string;
+  orderNumberEnteredAt?: number;
   address: string;
   memo: string;
   paymentAmount: number;

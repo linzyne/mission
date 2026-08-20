@@ -697,6 +697,7 @@ const App: React.FC = () => {
             trackingNumber: data.trackingNumber ?? '',
             reservationComplete: false,
             createdAt: data.createdAt,
+            orderNumberEnteredAt: data.orderNumberEnteredAt,
           } as ManualEntry & { bizId: string; bizName: string }];
         });
       } catch (e) { console.error('[reservationPending] load error:', bizId, e); return []; }
@@ -707,7 +708,7 @@ const App: React.FC = () => {
       if (bizCmp !== 0) return bizCmp;
       const dateCmp = (b.date || '').localeCompare(a.date || '');
       if (dateCmp !== 0) return dateCmp;
-      return (a.createdAt || 0) - (b.createdAt || 0);
+      return (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0);
     });
     setAllBizPendingEntries(result);
     setAllBizPendingLoaded(true);
@@ -2606,6 +2607,11 @@ const App: React.FC = () => {
       description: `${field} 수정`
     });
 
+    // 주문번호가 처음 입력되는 시점 기록 (예약완료 미처리 목록의 "날짜" 표시용)
+    if (field === 'orderNumber' && !String(entry.orderNumber || '').trim() && String(value || '').trim()) {
+      updates.orderNumberEnteredAt = Date.now();
+    }
+
     // Auto-calculate Payment Amount
     if (field === 'product' || field === 'orderNumber' || field === 'couponApplied') {
       const productName = field === 'product' ? value : entry.product;
@@ -2642,7 +2648,13 @@ const App: React.FC = () => {
         console.log('[Upload OCR] 결과:', result);
 
         const ocrUpdates: Partial<ManualEntry> = {};
-        if (result.orderNumber) ocrUpdates.orderNumber = result.orderNumber;
+        if (result.orderNumber) {
+          ocrUpdates.orderNumber = result.orderNumber;
+          const current = manualEntries.find(e => e.id === id);
+          if (!String(current?.orderNumber || '').trim()) {
+            ocrUpdates.orderNumberEnteredAt = Date.now();
+          }
+        }
         if (result.address) ocrUpdates.address = result.address;
         if (result.phone) ocrUpdates.emergencyContact = result.phone;
 
@@ -2720,7 +2732,12 @@ const App: React.FC = () => {
         console.log(`[Multi OCR ${i + 1}/${fileArr.length}] 결과:`, result);
 
         const ocrUpdates: Partial<ManualEntry> = {};
-        if (result.orderNumber) ocrUpdates.orderNumber = result.orderNumber;
+        if (result.orderNumber) {
+          ocrUpdates.orderNumber = result.orderNumber;
+          if (!String(targetEntry.orderNumber || '').trim()) {
+            ocrUpdates.orderNumberEnteredAt = Date.now();
+          }
+        }
         if (result.address) ocrUpdates.address = result.address;
         if (result.phone) ocrUpdates.emergencyContact = result.phone;
 
@@ -5283,7 +5300,7 @@ const App: React.FC = () => {
                                       />
                                     </td>
                                     <td className="py-1 px-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
-                                    <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{en.date ? `${en.date}${en.createdAt ? ' ' + new Date(en.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''}` : '-'}</td>
+                                    <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{en.date ? `${en.date}${(en.orderNumberEnteredAt || en.createdAt) ? ' ' + new Date(en.orderNumberEnteredAt || en.createdAt!).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''}` : '-'}</td>
                                     <td className="py-1 px-2 font-bold text-gray-800 whitespace-nowrap">{en.name2 || en.ordererName || '-'}</td>
                                     <td className="py-1 px-2 text-gray-700 whitespace-nowrap font-mono">{en.orderNumber || '-'}</td>
                                     <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{en.product || '-'}</td>
