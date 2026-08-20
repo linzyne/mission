@@ -673,8 +673,9 @@ const App: React.FC = () => {
           if (data.reservationComplete) return [];
           if (data.hiddenFromPending) return [];
           const orderNum = data.orderNumber?.toString().trim() ?? '';
-          if (!data.name1?.toString().trim() || !orderNum) return [];
-          if (!orderNum.includes('실배') && !/\d/.test(orderNum)) return [];
+          const name1 = data.name1?.toString().trim() ?? '';
+          if (!name1 && !orderNum) return [];
+          if (orderNum && !orderNum.includes('실배') && !/\d/.test(orderNum)) return [];
           return [{
             id: d.id,
             bizId,
