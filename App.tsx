@@ -2627,6 +2627,8 @@ const App: React.FC = () => {
           finalPrice -= 1000;
         }
         updates.paymentAmount = finalPrice;
+      } else if (field === 'product' && !String(value || '').trim()) {
+        updates.paymentAmount = 0;
       }
     }
 
@@ -2771,36 +2773,6 @@ const App: React.FC = () => {
     }
   };
 
-  const handleCellPaste = (e: React.ClipboardEvent, startRowIdx: number, startColIdx: number) => {
-    const text = e.clipboardData.getData('text/plain');
-    if (!text) return;
-
-    const rows = text.split(/\r?\n/).filter(r => r.length > 0);
-    if (rows.length === 0) return;
-
-    const cells = rows.map(r => r.split('\t'));
-
-    // 여러 셀 데이터가 있으면 셀 단위 붙여넣기
-    if (cells.length > 1 || cells[0].length > 1) {
-      e.preventDefault();
-      for (let r = 0; r < cells.length; r++) {
-        for (let c = 0; c < cells[r].length; c++) {
-          const targetRow = startRowIdx + r;
-          const targetCol = startColIdx + c;
-          const input = document.querySelector(`input[data-row="${targetRow}"][data-col="${targetCol}"]`) as HTMLInputElement;
-          if (input) {
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-            if (nativeInputValueSetter) {
-              nativeInputValueSetter.call(input, cells[r][c].trim());
-              input.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-          }
-        }
-      }
-    }
-    // 단일 셀이면 기본 붙여넣기 동작 유지
-  };
-
   // Cell drag selection helpers
   const isCellSelected = (row: number, col: number) => {
     if (!cellSelection) return false;
@@ -2858,6 +2830,107 @@ const App: React.FC = () => {
     document.addEventListener('copy', handleCopy);
     return () => document.removeEventListener('copy', handleCopy);
   }, []);
+
+  // Ctrl+V / Cmd+V: 드래그로 선택된 셀 범위 전체에 붙여넣기 (엑셀처럼 채우기)
+  const CELL_COL_FIELD: Record<number, keyof ManualEntry> = {
+    0: 'count', 2: 'date', 3: 'name1', 4: 'name2', 5: 'orderNumber',
+    6: 'address', 7: 'memo', 8: 'paymentAmount', 9: 'emergencyContact',
+    10: 'accountNumber', 11: 'trackingNumber',
+  };
+  const parseCellPasteValue = (field: keyof ManualEntry, raw: string): any => {
+    const trimmed = raw.trim();
+    if (field === 'count') return Number(trimmed) || 0;
+    if (field === 'paymentAmount') return Number(trimmed.replace(/,/g, '')) || 0;
+    if (field === 'date') return parseDateInput(trimmed);
+    return trimmed;
+  };
+  useEffect(() => {
+    const handleCellPaste = (e: ClipboardEvent) => {
+      if (e.defaultPrevented) return; // 이미지 붙여넣기 등 다른 핸들러에서 처리됨
+      const sel = cellSelectionRef.current;
+      if (!sel) return;
+
+      const text = e.clipboardData?.getData('text/plain');
+      if (!text) return;
+
+      const rows = text.replace(/\r/g, '').split('\n');
+      while (rows.length > 1 && rows[rows.length - 1] === '') rows.pop();
+      if (rows.length === 0) return;
+      const grid = rows.map(r => r.split('\t'));
+
+      const isMultiCell = sel.startRow !== sel.endRow || sel.startCol !== sel.endCol;
+      const isSingleValue = grid.length === 1 && grid[0].length === 1;
+      if (!isMultiCell && isSingleValue) return; // 단일 셀 + 단일 값은 브라우저 기본 붙여넣기 유지
+
+      e.preventDefault();
+
+      const minR = Math.min(sel.startRow, sel.endRow);
+      const maxR = Math.max(sel.startRow, sel.endRow);
+      const minC = Math.min(sel.startCol, sel.endCol);
+      const maxC = Math.max(sel.startCol, sel.endCol);
+      const selRows = maxR - minR + 1;
+      const selCols = maxC - minC + 1;
+      // 선택 범위가 클립보드 데이터보다 크면 반복(타일링), 작거나 같으면 클립보드 크기만큼 붙여넣기
+      const outRows = isMultiCell ? Math.max(selRows, grid.length) : grid.length;
+      const outCols = isMultiCell ? Math.max(selCols, grid[0].length) : grid[0].length;
+
+      for (let r = 0; r < outRows; r++) {
+        for (let c = 0; c < outCols; c++) {
+          const targetRow = minR + r;
+          const targetCol = minC + c;
+          const field = CELL_COL_FIELD[targetCol];
+          if (!field) continue; // 매핑되지 않은 컬럼(품목 select 등)은 건너뜀
+          const el = document.querySelector(`[data-row="${targetRow}"][data-col="${targetCol}"]`) as HTMLElement | null;
+          const entryId = el?.dataset.entryid;
+          if (!entryId) continue;
+          const rawVal = grid[r % grid.length][c % grid[0].length] ?? '';
+          const parsed = parseCellPasteValue(field, rawVal);
+          if (field === 'date' && !parsed) continue; // 날짜 형식이 아니면 건너뜀
+          updateManualEntry(entryId, field, parsed);
+          if (field === 'orderNumber') checkDuplicateOrderNumber(entryId, parsed);
+        }
+      }
+    };
+    document.addEventListener('paste', handleCellPaste);
+    return () => document.removeEventListener('paste', handleCellPaste);
+  }, [manualEntries]);
+
+  // Delete / Backspace: 드래그로 선택된 셀 범위 전체를 한꺼번에 비우기
+  useEffect(() => {
+    const handleCellDeleteKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const sel = cellSelectionRef.current;
+      if (!sel) return;
+      const isMultiCell = sel.startRow !== sel.endRow || sel.startCol !== sel.endCol;
+      if (!isMultiCell) return; // 단일 셀은 입력창에서의 기본 backspace 편집 동작 유지
+
+      const activeEl = document.activeElement as HTMLElement | null;
+      const isExcelCell = !!activeEl?.matches?.('[data-row][data-col]');
+      const isOtherEditable = !!activeEl && !isExcelCell && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
+      if (isOtherEditable) return; // 다른 입력창(검색창 등)에서의 편집은 건드리지 않음
+
+      e.preventDefault();
+
+      const minR = Math.min(sel.startRow, sel.endRow);
+      const maxR = Math.max(sel.startRow, sel.endRow);
+      const minC = Math.min(sel.startCol, sel.endCol);
+      const maxC = Math.max(sel.startCol, sel.endCol);
+
+      for (let r = minR; r <= maxR; r++) {
+        for (let c = minC; c <= maxC; c++) {
+          const field = CELL_COL_FIELD[c];
+          if (!field) continue; // 매핑되지 않은 컬럼(품목 select 등)은 건너뜀
+          const el = document.querySelector(`[data-row="${r}"][data-col="${c}"]`) as HTMLElement | null;
+          const entryId = el?.dataset.entryid;
+          if (!entryId) continue;
+          const emptyVal = (field === 'count' || field === 'paymentAmount') ? 0 : '';
+          updateManualEntry(entryId, field, emptyVal);
+        }
+      }
+    };
+    document.addEventListener('keydown', handleCellDeleteKey);
+    return () => document.removeEventListener('keydown', handleCellDeleteKey);
+  }, [manualEntries]);
 
   const migrateTpl = (tpl: typeof depositTemplate) => ({
     ...tpl,
@@ -5997,8 +6070,25 @@ const App: React.FC = () => {
                     onMouseLeave={() => { isDraggingRef.current = false; handleCellMouseUp(); }}
                     onMouseDown={(e) => {
                       const el = (e.target as HTMLElement).closest('[data-row][data-col]') as HTMLElement;
-                      if (el) handleCellMouseDown(Number(el.dataset.row), Number(el.dataset.col));
-                      else setCellSelection(null);
+                      if (!el) { setCellSelection(null); return; }
+                      const row = Number(el.dataset.row);
+                      const col = Number(el.dataset.col);
+                      const isProductSelect = el.tagName === 'SELECT' && col === 1;
+
+                      // 품목 드롭박스는 마우스를 누르는 즉시 브라우저가 열어버려서 드래그로 범위를
+                      // 잡을 수 없음 → Shift+클릭으로 시작 셀~끝 셀 범위를 지정하게 함(드롭박스는 열리지 않음)
+                      if (e.shiftKey && cellSelection) {
+                        if (isProductSelect) e.preventDefault();
+                        setCellSelection({ startRow: cellSelection.startRow, startCol: cellSelection.startCol, endRow: row, endCol: col });
+                        return;
+                      }
+
+                      // 이미 다중 선택된 범위 안의 품목(드롭박스) 셀을 클릭한 경우,
+                      // 선택 범위를 유지해서 드롭박스에서 값을 고르면 범위 전체에 적용되게 함
+                      const isMultiCell = !!cellSelection && (cellSelection.startRow !== cellSelection.endRow || cellSelection.startCol !== cellSelection.endCol);
+                      if (isProductSelect && isMultiCell && isCellSelected(row, col)) return;
+
+                      handleCellMouseDown(row, col);
                     }}
                     onMouseOver={(e) => {
                       const el = (e.target as HTMLElement).closest('[data-row][data-col]') as HTMLElement;
@@ -6253,12 +6343,27 @@ const App: React.FC = () => {
                                     </div>
                                   </td>
                                   <td className="p-0.5 border border-gray-200 text-center text-gray-400 text-[10px] hidden md:table-cell">{idx + 1}</td>
-                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.count > 0 ? entry.count : '')} data-row={idx} data-col={0} defaultValue={entry.count > 0 ? entry.count : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'count', idx, 0)} type="number" className={`excel-input ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'count')} /></td>
+                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.count > 0 ? entry.count : '')} data-row={idx} data-col={0} data-entryid={entry.id} defaultValue={entry.count > 0 ? entry.count : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'count', idx, 0)} type="number" className={`excel-input ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'count')} /></td>
                                   <td className="p-0 border border-gray-200">
-                                    <select data-row={idx} data-col={1}
+                                    <select data-row={idx} data-col={1} data-entryid={entry.id}
                                       className={`excel-input ${rowColor} cursor-pointer`}
                                       value={entry.product}
-                                      onChange={e => updateManualEntry(entry.id, 'product', e.target.value)}
+                                      onChange={e => {
+                                        const newVal = e.target.value;
+                                        const sel = cellSelectionRef.current;
+                                        const isMultiCell = !!sel && (sel.startRow !== sel.endRow || sel.startCol !== sel.endCol);
+                                        if (isMultiCell && sel) {
+                                          const minR = Math.min(sel.startRow, sel.endRow);
+                                          const maxR = Math.max(sel.startRow, sel.endRow);
+                                          for (let r = minR; r <= maxR; r++) {
+                                            const cellEl = document.querySelector(`[data-row="${r}"][data-col="1"]`) as HTMLElement | null;
+                                            const targetId = cellEl?.dataset.entryid;
+                                            if (targetId) updateManualEntry(targetId, 'product', newVal);
+                                          }
+                                        } else {
+                                          updateManualEntry(entry.id, 'product', newVal);
+                                        }
+                                      }}
                                       onKeyDown={(e) => handleKeyDown(e, idx, 1)}
                                     >
                                       <option value="">(선택)</option>
@@ -6280,9 +6385,9 @@ const App: React.FC = () => {
                                       <option value="N">미적용</option>
                                     </select>
                                   </td>
-                                  <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.date ? entry.date.slice(2).replace(/-/g, '.') : '')} data-row={idx} data-col={2} defaultValue={entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'date', idx, 2)} type="text" placeholder="YY.MM.DD" className={`excel-input px-1 text-center ${rowColor}`} onFocus={(e) => e.target.select()} onBlur={(e) => handleCellBlur(e, entry, 'date')} /></td>
-                                  <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.name1)} data-row={idx} data-col={3} defaultValue={entry.name1} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name1', idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'name1') ? { color: getCellColor(entry, 'name1') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'name1')} onBlur={(e) => handleCellBlur(e, entry, 'name1')} /></td>
-                                  <td className={`p-0 border border-gray-200 ${isPink ? 'bg-white' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'font-black' : rowColor}`} style={getCellColor(entry, 'name2') ? { color: getCellColor(entry, 'name2') } : isPink ? { color: '#ff4da6' } : undefined} placeholder="받는사람" onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'name2')} onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
+                                  <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.date ? entry.date.slice(2).replace(/-/g, '.') : '')} data-row={idx} data-col={2} data-entryid={entry.id} defaultValue={entry.date ? entry.date.slice(2).replace(/-/g, '.') : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'date', idx, 2)} type="text" placeholder="YY.MM.DD" className={`excel-input px-1 text-center ${rowColor}`} onFocus={(e) => e.target.select()} onBlur={(e) => handleCellBlur(e, entry, 'date')} /></td>
+                                  <td className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.name1)} data-row={idx} data-col={3} data-entryid={entry.id} defaultValue={entry.name1} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name1', idx, 3)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'name1') ? { color: getCellColor(entry, 'name1') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'name1')} onBlur={(e) => handleCellBlur(e, entry, 'name1')} /></td>
+                                  <td className={`p-0 border border-gray-200 ${isPink ? 'bg-white' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} data-entryid={entry.id} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'font-black' : rowColor}`} style={getCellColor(entry, 'name2') ? { color: getCellColor(entry, 'name2') } : isPink ? { color: '#ff4da6' } : undefined} placeholder="받는사람" onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'name2')} onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
                                   {(() => {
                                     const orderNumberTd = (
                                       <td key="orderNumber" className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} data-entryid={entry.id} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'orderNumber') ? { color: getCellColor(entry, 'orderNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'orderNumber')} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
@@ -6290,12 +6395,12 @@ const App: React.FC = () => {
                                     return (
                                       <>
                                         {!isMobileView && orderNumberTd}
-                                        <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.address)} data-row={idx} data-col={6} defaultValue={entry.address} onKeyDown={(e) => handleCellKeyDown(e, entry, 'address', idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} style={getCellColor(entry, 'address') ? { color: getCellColor(entry, 'address') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'address')} onBlur={(e) => handleCellBlur(e, entry, 'address')} /></td>
-                                        <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.memo)} data-row={idx} data-col={7} defaultValue={entry.memo} onKeyDown={(e) => handleCellKeyDown(e, entry, 'memo', idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} style={getCellColor(entry, 'memo') ? { color: getCellColor(entry, 'memo') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'memo')} onBlur={(e) => handleCellBlur(e, entry, 'memo')} /></td>
-                                        <td className="p-0 border border-gray-200"><input ref={(el) => { if (el && document.activeElement !== el) { el.value = entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''; } }} data-row={idx} data-col={8} defaultValue={entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'paymentAmount', idx, 8)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'paymentAmount') ? { color: getCellColor(entry, 'paymentAmount') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'paymentAmount')} onFocus={(e) => { e.target.value = entry.paymentAmount ? String(entry.paymentAmount) : ''; e.target.select(); }} onBlur={(e) => { const raw = Number(e.target.value.replace(/,/g, '')) || 0; if (raw !== (entry.paymentAmount || 0)) updateManualEntry(entry.id, 'paymentAmount', raw); e.target.value = raw ? raw.toLocaleString() : ''; }} /></td>
-                                        <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.emergencyContact)} data-row={idx} data-col={9} defaultValue={entry.emergencyContact} onKeyDown={(e) => handleCellKeyDown(e, entry, 'emergencyContact', idx, 9)} type="text" className={`excel-input ${rowColor}`} style={getCellColor(entry, 'emergencyContact') ? { color: getCellColor(entry, 'emergencyContact') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'emergencyContact')} onBlur={(e) => handleCellBlur(e, entry, 'emergencyContact')} /></td>
-                                        <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.accountNumber)} data-row={idx} data-col={10} defaultValue={entry.accountNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'accountNumber', idx, 10)} type="text" className={`excel-input ${rowColor}`} style={getCellColor(entry, 'accountNumber') ? { color: getCellColor(entry, 'accountNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'accountNumber')} onBlur={(e) => handleCellBlur(e, entry, 'accountNumber')} /></td>
-                                        <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.trackingNumber || '')} data-row={idx} data-col={11} defaultValue={entry.trackingNumber || ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'trackingNumber', idx, 11)} type="text" className={`excel-input ${rowColor}`} style={getCellColor(entry, 'trackingNumber') ? { color: getCellColor(entry, 'trackingNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'trackingNumber')} onBlur={(e) => handleCellBlur(e, entry, 'trackingNumber')} /></td>
+                                        <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.address)} data-row={idx} data-col={6} data-entryid={entry.id} defaultValue={entry.address} onKeyDown={(e) => handleCellKeyDown(e, entry, 'address', idx, 6)} type="text" className={`excel-input text-[11px] ${rowColor}`} style={getCellColor(entry, 'address') ? { color: getCellColor(entry, 'address') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'address')} onBlur={(e) => handleCellBlur(e, entry, 'address')} /></td>
+                                        <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.memo)} data-row={idx} data-col={7} data-entryid={entry.id} defaultValue={entry.memo} onKeyDown={(e) => handleCellKeyDown(e, entry, 'memo', idx, 7)} type="text" className={`excel-input text-[11px] font-normal ${rowColor}`} style={getCellColor(entry, 'memo') ? { color: getCellColor(entry, 'memo') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'memo')} onBlur={(e) => handleCellBlur(e, entry, 'memo')} /></td>
+                                        <td className="p-0 border border-gray-200"><input ref={(el) => { if (el && document.activeElement !== el) { el.value = entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''; } }} data-row={idx} data-col={8} data-entryid={entry.id} defaultValue={entry.paymentAmount ? entry.paymentAmount.toLocaleString() : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'paymentAmount', idx, 8)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'paymentAmount') ? { color: getCellColor(entry, 'paymentAmount') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'paymentAmount')} onFocus={(e) => { e.target.value = entry.paymentAmount ? String(entry.paymentAmount) : ''; e.target.select(); }} onBlur={(e) => { const raw = Number(e.target.value.replace(/,/g, '')) || 0; if (raw !== (entry.paymentAmount || 0)) updateManualEntry(entry.id, 'paymentAmount', raw); e.target.value = raw ? raw.toLocaleString() : ''; }} /></td>
+                                        <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.emergencyContact)} data-row={idx} data-col={9} data-entryid={entry.id} defaultValue={entry.emergencyContact} onKeyDown={(e) => handleCellKeyDown(e, entry, 'emergencyContact', idx, 9)} type="text" className={`excel-input ${rowColor}`} style={getCellColor(entry, 'emergencyContact') ? { color: getCellColor(entry, 'emergencyContact') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'emergencyContact')} onBlur={(e) => handleCellBlur(e, entry, 'emergencyContact')} /></td>
+                                        <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.accountNumber)} data-row={idx} data-col={10} data-entryid={entry.id} defaultValue={entry.accountNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'accountNumber', idx, 10)} type="text" className={`excel-input ${rowColor}`} style={getCellColor(entry, 'accountNumber') ? { color: getCellColor(entry, 'accountNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'accountNumber')} onBlur={(e) => handleCellBlur(e, entry, 'accountNumber')} /></td>
+                                        <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.trackingNumber || '')} data-row={idx} data-col={11} data-entryid={entry.id} defaultValue={entry.trackingNumber || ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'trackingNumber', idx, 11)} type="text" className={`excel-input ${rowColor}`} style={getCellColor(entry, 'trackingNumber') ? { color: getCellColor(entry, 'trackingNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'trackingNumber')} onBlur={(e) => handleCellBlur(e, entry, 'trackingNumber')} /></td>
                                         {isMobileView && orderNumberTd}
                                         <td className="p-0 border border-gray-200 text-center align-middle">
                                           <input type="checkbox" className="w-4 h-4 accent-blue-600" checked={entry.beforeDeposit} onChange={() => toggleBeforeDeposit(entry.id, entry.beforeDeposit)} />
