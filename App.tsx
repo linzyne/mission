@@ -1810,6 +1810,7 @@ const App: React.FC = () => {
       pushUndo({ type: 'update', entries: undoEntries, description: '품목 일괄변경' });
       await batch.commit();
       setProductPicker(null);
+      setSelectedManualIds(new Set());
     } catch (e) { console.error(e); alert('오류: ' + e); }
   };
 
@@ -5764,6 +5765,7 @@ const App: React.FC = () => {
                                 batch.update(doc(db, getCol('manualEntries', colPrefix), id), { accountNumber: bizInfo.accountInfo });
                               });
                               await batch.commit();
+                              setSelectedManualIds(new Set());
                               alert('변경되었습니다.');
                             } catch (e) { console.error(e); alert('오류: ' + e); }
                           }}
@@ -5805,6 +5807,7 @@ const App: React.FC = () => {
                             batch.update(doc(db, getCol('manualEntries', colPrefix), id), { bottomBorder: !hasAnyBorder });
                           });
                           await batch.commit();
+                          setSelectedManualIds(new Set());
                         }} className="px-2.5 py-1 bg-white text-gray-700 rounded-lg font-bold text-[11px] hover:bg-gray-100 border border-gray-300">경계선</button>
                         <span className="w-px h-4 bg-blue-200 mx-0.5"></span>
                         <button onClick={() => setPlatformConfigModal(true)} className="px-2 py-1 bg-white text-teal-600 rounded-lg font-bold text-[11px] hover:bg-teal-50 border border-teal-200" title="플랫폼 설정">🏷</button>
