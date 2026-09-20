@@ -4708,7 +4708,10 @@ const App: React.FC = () => {
                                   <div className="space-y-1 pt-0.5 border-t border-gray-700">
                                     {items.map(([product, { margin, qty }]) => (
                                       <div key={product} className="flex justify-between items-baseline gap-1 text-xs">
-                                        <span className="text-violet-400 truncate">{product}{qty > 0 && <span className="text-gray-300 ml-1">({qty}개)</span>}</span>
+                                        <span className="flex items-baseline min-w-0 gap-1">
+                                          <span className="text-violet-400 truncate">{product}</span>
+                                          {qty > 0 && <span className="text-gray-300 whitespace-nowrap shrink-0">({qty}개)</span>}
+                                        </span>
                                         <span className={`font-bold whitespace-nowrap ${margin >= 0 ? 'text-cyan-400' : 'text-red-400'}`}>{margin.toLocaleString()}</span>
                                       </div>
                                     ))}
