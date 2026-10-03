@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, SalesSubTab, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource, PlatformConfig } from './types';
 import { verifyImage } from './services/geminiService';
-import { db } from './services/firebase';
+import { db, auth } from './services/firebase';
+import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from 'firebase/auth';
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs, where, arrayUnion } from 'firebase/firestore';
 
 const BASE_BUSINESSES: Record<string, BusinessInfo> = {
@@ -24,6 +25,9 @@ const BASE_BUSINESSES: Record<string, BusinessInfo> = {
     collectionPrefix: 'zoe_',
   },
 };
+
+// 이 이메일로 로그인하면 기존 데이터(안군·조에 등)를 그대로 사용. 그 외 계정은 t_<uid>_ 접두사로 데이터 분리
+const OWNER_EMAIL = 'kimseongah77@gmail.com';
 
 function getCol(baseName: string, prefix: string): string {
   return prefix ? `${prefix}${baseName}` : baseName;
@@ -206,7 +210,7 @@ const DEFAULT_DEPOSIT_TEMPLATE: ExportTemplate = {
 };
 
 const App: React.FC = () => {
-  const [mode, setMode] = useState<AppMode>('customer');
+  const [mode, setMode] = useState<AppMode>('admin');
   const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
   const [customerView, setCustomerView] = useState<CustomerView>('landing');
 
@@ -219,34 +223,50 @@ const App: React.FC = () => {
     return () => mq.removeEventListener('change', handler);
   }, []);
 
+  // 로그인 계정
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  useEffect(() => onAuthStateChanged(auth, (u) => { setAuthUser(u); setAuthReady(true); }), []);
+  const isAdminAuthenticated = !!authUser;
+  const isOwner = authUser?.email === OWNER_EMAIL;
+  // 계정별 데이터 접두사: 소유자는 '' (기존 컬렉션), 그 외는 t_<uid>_
+  const tenantPrefix = authUser && !isOwner ? `t_${authUser.uid}_` : '';
+  const mainBizId = isOwner ? 'angun' : 'main';
+  const tenantBaseBusinesses: Record<string, BusinessInfo> = !authUser ? {} : isOwner ? BASE_BUSINESSES : {
+    main: { id: 'main', name: '내 사업장', legalName: '', phone: '', address: '', accountInfo: '', collectionPrefix: tenantPrefix },
+  };
+  const tenantLsKey = (key: string) => tenantPrefix + key;
+  const tenantSettingsCol = getCol('settings', tenantPrefix);
+
   // Multi-tenant: 선택된 사업자
   const [selectedBiz, setSelectedBiz] = useState<string | null>(null);
-  const [customBusinesses, setCustomBusinesses] = useState<Record<string, BusinessInfo>>(() => {
-    try { const s = localStorage.getItem('customBusinesses'); return s ? JSON.parse(s) : {}; } catch { return {}; }
-  });
+  const [customBusinesses, setCustomBusinesses] = useState<Record<string, BusinessInfo>>({});
 
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'settings', 'customBusinesses'), (d) => {
+    if (!authUser) { setCustomBusinesses({}); return; }
+    try { const s = localStorage.getItem(tenantLsKey('customBusinesses')); setCustomBusinesses(s ? JSON.parse(s) : {}); } catch { setCustomBusinesses({}); }
+    try { const s = localStorage.getItem(tenantLsKey('bizColors')); setBizColors(s ? JSON.parse(s) : {}); } catch { setBizColors({}); }
+    const unsub = onSnapshot(doc(db, tenantSettingsCol, 'customBusinesses'), (d) => {
       if (d.exists()) {
         const data = d.data().businesses as Record<string, BusinessInfo> || {};
         setCustomBusinesses(data);
-        localStorage.setItem('customBusinesses', JSON.stringify(data));
+        localStorage.setItem(tenantLsKey('customBusinesses'), JSON.stringify(data));
       } else {
         // Firebase에 아직 없으면 localStorage 데이터를 Firebase로 올림 (최초 1회 마이그레이션)
         try {
-          const s = localStorage.getItem('customBusinesses');
+          const s = localStorage.getItem(tenantLsKey('customBusinesses'));
           if (s) {
             const local = JSON.parse(s) as Record<string, BusinessInfo>;
             if (Object.keys(local).length > 0) {
-              setDoc(doc(db, 'settings', 'customBusinesses'), { businesses: local });
+              setDoc(doc(db, tenantSettingsCol, 'customBusinesses'), { businesses: local });
             }
           }
         } catch {}
       }
     }, onFbError);
     return () => unsub();
-  }, []);
-  const allBusinesses: Record<string, BusinessInfo> = { ...BASE_BUSINESSES, ...customBusinesses };
+  }, [authUser?.uid]);
+  const allBusinesses: Record<string, BusinessInfo> = { ...tenantBaseBusinesses, ...customBusinesses };
   const bizInfo = selectedBiz ? allBusinesses[selectedBiz] : null;
   const colPrefix = bizInfo?.collectionPrefix ?? '';
 
@@ -255,32 +275,30 @@ const App: React.FC = () => {
   const [editBizModal, setEditBizModal] = useState<string | null>(null); // editing bizId
   const [editBizForm, setEditBizForm] = useState({ name: '', legalName: '', phone: '', address: '', accountInfo: '', color: PRESET_COLORS[2] });
 
-  const [bizColors, setBizColors] = useState<Record<string, string>>(() => {
-    try { const s = localStorage.getItem('bizColors'); return s ? JSON.parse(s) : {}; } catch { return {}; }
-  });
+  const [bizColors, setBizColors] = useState<Record<string, string>>({});
   const getBizColor = (id: string) => bizColors[id] || BIZ_DEFAULT_COLORS[id] || PRESET_COLORS[0];
   const currentColor = selectedBiz ? getBizColor(selectedBiz) : '#94A3B8';
 
   const saveBizColor = (bizId: string, color: string) => {
     const updated = { ...bizColors, [bizId]: color };
-    localStorage.setItem('bizColors', JSON.stringify(updated));
+    localStorage.setItem(tenantLsKey('bizColors'), JSON.stringify(updated));
     setBizColors(updated);
   };
 
   const saveCustomBiz = (bizId: string, biz: BusinessInfo) => {
     const updated = { ...customBusinesses, [bizId]: biz };
-    localStorage.setItem('customBusinesses', JSON.stringify(updated));
+    localStorage.setItem(tenantLsKey('customBusinesses'), JSON.stringify(updated));
     setCustomBusinesses(updated);
-    setDoc(doc(db, 'settings', 'customBusinesses'), { businesses: updated });
+    setDoc(doc(db, tenantSettingsCol, 'customBusinesses'), { businesses: updated });
   };
 
   const deleteCustomBiz = (bizId: string) => {
     const updated = { ...customBusinesses };
     delete updated[bizId];
-    localStorage.setItem('customBusinesses', JSON.stringify(updated));
+    localStorage.setItem(tenantLsKey('customBusinesses'), JSON.stringify(updated));
     setCustomBusinesses(updated);
-    if (selectedBiz === bizId) setSelectedBiz('angun');
-    setDoc(doc(db, 'settings', 'customBusinesses'), { businesses: updated });
+    if (selectedBiz === bizId) setSelectedBiz(mainBizId);
+    setDoc(doc(db, tenantSettingsCol, 'customBusinesses'), { businesses: updated });
   };
 
   const handleAddBiz = () => {
@@ -294,7 +312,7 @@ const App: React.FC = () => {
       phone: newBizForm.phone.trim(),
       address: newBizForm.address.trim(),
       accountInfo: newBizForm.accountInfo.trim(),
-      collectionPrefix: bizId + '_',
+      collectionPrefix: tenantPrefix + bizId + '_',
     };
     saveCustomBiz(bizId, newBiz);
     if (newBizForm.color) saveBizColor(bizId, newBizForm.color);
@@ -351,15 +369,18 @@ const App: React.FC = () => {
     setManualEntries(prev => prev.map(e => e.id === id ? { ...e, proofImage: base64 } : e));
   };
 
-  // URL 파라미터로 사업자 자동 선택 (?biz=angun 또는 ?biz=zoe), 없으면 기본값 angun
+  // 로그인 후 URL 파라미터로 사업자 자동 선택 (?biz=angun 또는 ?biz=zoe), 없으면 기본 사업장
   useEffect(() => {
+    if (!authUser) { setSelectedBiz(null); return; }
     const params = new URLSearchParams(window.location.search);
     const bizParam = params.get('biz');
-    setSelectedBiz(bizParam && allBusinesses[bizParam] ? bizParam : 'angun');
-  }, []);
+    setSelectedBiz(bizParam && allBusinesses[bizParam] ? bizParam : mainBizId);
+  }, [authUser?.uid]);
 
-  const [adminPassword, setAdminPassword] = useState('1234');
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [isSignupMode, setIsSignupMode] = useState(false);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
 
@@ -452,15 +473,16 @@ const App: React.FC = () => {
 
   // 항상 안군농원의 공유 플랫폼 로드
   useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'settings', 'platformConfigs'), (d) => {
+    if (!authUser) { setSharedPlatformConfigs([]); return; }
+    const unsub = onSnapshot(doc(db, tenantSettingsCol, 'platformConfigs'), (d) => {
       setSharedPlatformConfigs(d.exists() ? (d.data().configs as PlatformConfig[] || []) : []);
     }, onFbError);
     return () => unsub();
-  }, []);
+  }, [authUser?.uid]);
 
   // 현재 사업자 전용 플랫폼 로드 (안군농원은 공유=전용이므로 비움)
   useEffect(() => {
-    if (!selectedBiz || colPrefix === '') { setPlatformConfigs([]); return; }
+    if (!selectedBiz || colPrefix === tenantPrefix) { setPlatformConfigs([]); return; }
     const unsub = onSnapshot(doc(db, getCol('settings', colPrefix), 'platformConfigs'), (d) => {
       setPlatformConfigs(d.exists() ? (d.data().configs as PlatformConfig[] || []) : []);
     }, onFbError);
@@ -468,14 +490,14 @@ const App: React.FC = () => {
   }, [selectedBiz]);
 
   // 전체 플랫폼 = 공유 + 전용 (안군농원은 공유만)
-  const allPlatformConfigs: PlatformConfig[] = colPrefix === ''
+  const allPlatformConfigs: PlatformConfig[] = colPrefix === tenantPrefix
     ? sharedPlatformConfigs
     : [...sharedPlatformConfigs, ...platformConfigs];
 
   const savePlatformConfigs = async (configs: PlatformConfig[]) => {
-    if (colPrefix === '') {
+    if (colPrefix === tenantPrefix) {
       // 안군농원: 공유 플랫폼 저장
-      await setDoc(doc(db, 'settings', 'platformConfigs'), { configs });
+      await setDoc(doc(db, tenantSettingsCol, 'platformConfigs'), { configs });
     } else {
       // 다른 사업자: 전용 플랫폼 저장
       await setDoc(doc(db, getCol('settings', colPrefix), 'platformConfigs'), { configs });
@@ -1088,11 +1110,11 @@ const App: React.FC = () => {
     return () => unsub();
   }, [selectedBiz]);
   // localStorage 키를 사업자별로 분리 (안군농원은 기존 키 유지)
-  const lsKey = (key: string) => !selectedBiz || selectedBiz === 'angun' ? key : `${selectedBiz}_${key}`;
+  const lsKey = (key: string) => tenantPrefix + (!selectedBiz || selectedBiz === mainBizId ? key : `${selectedBiz}_${key}`);
   // selectedBiz 변경 시 localStorage에서 다시 로드
   useEffect(() => {
     if (!selectedBiz) return;
-    const lk = (key: string) => selectedBiz === 'angun' ? key : `${selectedBiz}_${key}`;
+    const lk = (key: string) => tenantPrefix + (selectedBiz === mainBizId ? key : `${selectedBiz}_${key}`);
     try { const s = localStorage.getItem(lk('manualColWidths')); setColWidths(s ? { ...DEFAULT_COL_WIDTHS, ...JSON.parse(s) } : { ...DEFAULT_COL_WIDTHS }); } catch { setColWidths({ ...DEFAULT_COL_WIDTHS }); }
     // 사업자 전환 시 마스터 주문서·운송장 초기화 (각 사업자 개별 관리)
     setMasterSheets([]);
@@ -2127,13 +2149,33 @@ const App: React.FC = () => {
   };
 
   // --- Delete empty rows ---
-  const handleAdminLogin = (e: React.FormEvent) => {
+  const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (adminPassword === '1234') {
-      setIsAdminAuthenticated(true);
-    } else {
-      alert("비밀번호가 틀렸습니다.");
+    const email = loginEmail.trim();
+    if (!email || !loginPassword) return;
+    setAuthSubmitting(true);
+    try {
+      if (isSignupMode) await createUserWithEmailAndPassword(auth, email, loginPassword);
+      else await signInWithEmailAndPassword(auth, email, loginPassword);
+      setLoginPassword('');
+    } catch (err) {
+      const code = (err as any)?.code ?? '';
+      const msg =
+        code === 'auth/email-already-in-use' ? '이미 가입된 이메일입니다.' :
+        code === 'auth/weak-password' ? '비밀번호는 6자 이상이어야 합니다.' :
+        code === 'auth/invalid-email' ? '이메일 형식이 올바르지 않습니다.' :
+        code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found' ? '이메일 또는 비밀번호가 틀렸습니다.' :
+        code === 'auth/too-many-requests' ? '시도가 너무 많습니다. 잠시 후 다시 시도해주세요.' :
+        `로그인 오류: ${code || err}`;
+      alert(msg);
+    } finally {
+      setAuthSubmitting(false);
     }
+  };
+
+  const handleLogout = async () => {
+    if (!confirm('로그아웃할까요?')) return;
+    await signOut(auth);
   };
 
   const handleThumbnailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -3549,7 +3591,11 @@ const App: React.FC = () => {
                 <input ref={batchUploadFileRef} type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={handleBatchUploadFiles} />
               </>
             )}
-            <div className="flex bg-gray-100 p-1 rounded-xl">
+            {isAdminAuthenticated && (
+              <button onClick={handleLogout} title={authUser?.email ?? ''} className="px-3 py-1.5 rounded-xl text-xs font-bold text-gray-500 bg-white/80 border border-gray-200 hover:text-red-500 whitespace-nowrap">로그아웃</button>
+            )}
+            {/* 체험단 탭은 현재 미사용으로 숨김 */}
+            <div className="hidden">
               <button onClick={() => setMode('customer')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${mode === 'customer' ? 'bg-white shadow-sm text-[#0071E3]' : 'text-gray-500'}`}>체험단</button>
               <button onClick={() => setMode('admin')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${mode === 'admin' ? 'bg-white shadow-sm text-[#0071E3]' : 'text-gray-500'}`}>관리자</button>
             </div>
@@ -3564,14 +3610,18 @@ const App: React.FC = () => {
 
       <main className={`${mode === 'admin' && adminTab === 'manual' ? 'max-w-full px-4' : 'max-w-5xl'} mx-auto p-6 md:p-12`}>
         {mode === 'admin' ? (
-          !isAdminAuthenticated ? (
+          !authReady ? null : !isAdminAuthenticated ? (
             <div className="flex items-center justify-center pt-20">
               <div className="bg-white p-10 rounded-[32px] shadow-xl border border-gray-100 w-full max-w-sm space-y-8 text-center">
                 <h2 className="text-2xl font-black uppercase tracking-tighter">Admin Dashboard</h2>
                 <form onSubmit={handleAdminLogin} className="space-y-4">
-                  <input type="password" placeholder="비밀번호" className="w-full p-4 bg-gray-50 rounded-xl font-bold border-2 border-transparent focus:border-blue-600 outline-none transition-all" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
-                  <button type="submit" className="w-full py-4 bg-[#0071E3] text-white rounded-xl font-bold shadow-lg shadow-blue-100 hover:bg-blue-700">접속하기</button>
+                  <input type="email" placeholder="이메일" autoComplete="email" className="w-full p-4 bg-gray-50 rounded-xl font-bold border-2 border-transparent focus:border-blue-600 outline-none transition-all" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} />
+                  <input type="password" placeholder={isSignupMode ? '비밀번호 (6자 이상)' : '비밀번호'} autoComplete={isSignupMode ? 'new-password' : 'current-password'} className="w-full p-4 bg-gray-50 rounded-xl font-bold border-2 border-transparent focus:border-blue-600 outline-none transition-all" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} />
+                  <button type="submit" disabled={authSubmitting} className="w-full py-4 bg-[#0071E3] text-white rounded-xl font-bold shadow-lg shadow-blue-100 hover:bg-blue-700 disabled:opacity-50">{authSubmitting ? '처리중...' : isSignupMode ? '회원가입' : '접속하기'}</button>
                 </form>
+                <button type="button" onClick={() => setIsSignupMode(v => !v)} className="text-sm font-bold text-gray-400 hover:text-blue-600">
+                  {isSignupMode ? '이미 계정이 있으면 로그인' : '처음이면 회원가입'}
+                </button>
               </div>
             </div>
           ) : !selectedBiz ? (
@@ -7150,7 +7200,7 @@ const App: React.FC = () => {
 
       {/* 플랫폼 설정 모달 */}
       {platformConfigModal && (() => {
-        const isAngun = colPrefix === '';
+        const isAngun = colPrefix === tenantPrefix;
         // 편집 중인 항목이 공유 플랫폼인지 전용 플랫폼인지
         const editingShared = platformEditItem ? sharedPlatformConfigs.some(p => p.id === platformEditItem.id) : false;
         const editingOwn = platformEditItem ? platformConfigs.some(p => p.id === platformEditItem.id) : false;
@@ -7290,7 +7340,7 @@ const App: React.FC = () => {
                       const updated = existing >= 0
                         ? sharedPlatformConfigs.map((p, i) => i === existing ? platformEditItem : p)
                         : [...sharedPlatformConfigs, platformEditItem];
-                      await setDoc(doc(db, 'settings', 'platformConfigs'), { configs: updated });
+                      await setDoc(doc(db, tenantSettingsCol, 'platformConfigs'), { configs: updated });
                     } else {
                       // 다른 사업자: 전용 컬렉션에 저장
                       const existing = platformConfigs.findIndex(p => p.id === platformEditItem.id);

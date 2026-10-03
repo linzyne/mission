@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 소유자 계정: 기존 데이터(안군·조에 등) 전체 접근
+    function isOwner() {
+      return request.auth != null && request.auth.token.email == 'kimseongah77@gmail.com';
+    }
+
+    // 그 외 계정: t_<uid>_ 로 시작하는 자기 컬렉션만 접근
+    match /{col}/{document=**} {
+      allow read, write: if isOwner()
+        || (request.auth != null && col.matches('t_' + request.auth.uid + '_.*'));
+    }
+  }
+}
