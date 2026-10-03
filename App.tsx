@@ -3620,7 +3620,7 @@ const App: React.FC = () => {
                   <button type="submit" disabled={authSubmitting} className="w-full py-4 bg-[#0071E3] text-white rounded-xl font-bold shadow-lg shadow-blue-100 hover:bg-blue-700 disabled:opacity-50">{authSubmitting ? '처리중...' : isSignupMode ? '회원가입' : '접속하기'}</button>
                 </form>
                 <button type="button" onClick={() => setIsSignupMode(v => !v)} className="text-sm font-bold text-gray-400 hover:text-blue-600">
-                  {isSignupMode ? '이미 계정이 있으면 로그인' : '처음이면 회원가입'}
+                  {isSignupMode ? '로그인' : '회원가입'}
                 </button>
               </div>
             </div>
