@@ -674,6 +674,7 @@ const App: React.FC = () => {
   const [recentDepositHistory, setRecentDepositHistory] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
   const [recentDepositHistoryLoaded, setRecentDepositHistoryLoaded] = useState(false);
   const [selectedDepositHistoryIds, setSelectedDepositHistoryIds] = useState<Set<string>>(new Set());
+  const [depositHistoryDate, setDepositHistoryDate] = useState(''); // '' = 최근 5일, 아니면 해당 입금일
 
   // 윙업무: 입금전 체크/해제 이벤트 로그 (최근 5일)
   type BeforeDepositLogEvent = { bizId: string; bizName: string; orderNumber: string; name1: string; name2: string; action: 'check' | 'uncheck'; at: number };
@@ -838,14 +839,16 @@ const App: React.FC = () => {
     setRecentReservationHistoryLoaded(true);
   };
 
-  const loadRecentDepositHistory = async () => {
+  const loadRecentDepositHistory = async (date: string = depositHistoryDate) => {
     setRecentDepositHistoryLoaded(false);
     const cutoff = daysAgoTs(5);
     const bizEntries = Object.entries(allBusinesses);
     const perBizResults = await Promise.all(bizEntries.map(async ([bizId, biz]) => {
       const colName = getCol('manualEntries', biz.collectionPrefix);
       try {
-        const q = query(collection(db, colName), where('depositedAt', '>=', cutoff));
+        const q = date
+          ? query(collection(db, colName), where('depositDate', '==', date))
+          : query(collection(db, colName), where('depositedAt', '>=', cutoff));
         const snapshot = await getDocs(q);
         return snapshot.docs.flatMap(d => {
           const data = d.data();
@@ -5631,9 +5634,19 @@ const App: React.FC = () => {
                     <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                       <div>
                         <h2 className="text-base font-black text-gray-900">입금완료 이력</h2>
-                        <p className="text-xs text-gray-400 mt-0.5">최근 5일 · {recentDepositHistoryLoaded ? `${recentDepositHistory.length}건` : '로딩 중...'}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{depositHistoryDate ? `${depositHistoryDate} 입금` : '최근 5일'} · {recentDepositHistoryLoaded ? `${recentDepositHistory.length}건` : '로딩 중...'}</p>
                       </div>
                       <div className="flex items-center gap-2 flex-wrap">
+                        <input
+                          type="date"
+                          value={depositHistoryDate}
+                          onChange={e => { setDepositHistoryDate(e.target.value); loadRecentDepositHistory(e.target.value); setSelectedDepositHistoryIds(new Set()); }}
+                          className="px-2 py-1 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-600"
+                        />
+                        {depositHistoryDate && <button
+                          onClick={() => { setDepositHistoryDate(''); loadRecentDepositHistory(''); setSelectedDepositHistoryIds(new Set()); }}
+                          className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
+                        >최근 5일</button>}
                         <button
                           onClick={copySelectedDepositHistoryToClipboard}
                           disabled={selectedDepositHistoryIds.size === 0}
@@ -5654,7 +5667,7 @@ const App: React.FC = () => {
                     {!recentDepositHistoryLoaded ? (
                       <div className="flex items-center justify-center py-12 text-gray-400 text-sm font-bold">불러오는 중...</div>
                     ) : recentDepositHistory.length === 0 ? (
-                      <div className="flex items-center justify-center py-12 text-gray-300 text-sm font-bold">최근 5일간 입금완료 처리 내역이 없습니다.</div>
+                      <div className="flex items-center justify-center py-12 text-gray-300 text-sm font-bold">{depositHistoryDate ? `${depositHistoryDate} 입금완료 내역이 없습니다.` : '최근 5일간 입금완료 처리 내역이 없습니다.'}</div>
                     ) : (
                       <div className="space-y-4">
                         {(() => {
