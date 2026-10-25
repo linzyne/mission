@@ -463,6 +463,26 @@ const App: React.FC = () => {
     await setDoc(doc(db, getCol('settings', colPrefix), 'depositTemplate'), { template: tpl });
   };
 
+  // 구매목록 상단 메모 (사업자별, 입력 멈추면 자동저장)
+  const [purchaseMemo, setPurchaseMemo] = useState('');
+  const purchaseMemoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!selectedBiz) { setPurchaseMemo(''); return; }
+    const unsub = onSnapshot(doc(db, getCol('settings', colPrefix), 'purchaseMemo'), (d) => {
+      if (purchaseMemoTimer.current) return; // 입력 중엔 덮어쓰지 않음
+      setPurchaseMemo(d.exists() ? (d.data().memo || '') : '');
+    }, onFbError);
+    return () => unsub();
+  }, [selectedBiz]);
+  const changePurchaseMemo = (memo: string) => {
+    setPurchaseMemo(memo);
+    if (purchaseMemoTimer.current) clearTimeout(purchaseMemoTimer.current);
+    purchaseMemoTimer.current = setTimeout(async () => {
+      purchaseMemoTimer.current = null;
+      await setDoc(doc(db, getCol('settings', colPrefix), 'purchaseMemo'), { memo });
+    }, 600);
+  };
+
   // Firestore Sync: Platform Configs
   // sharedPlatformConfigs = 안군농원에 설정된 공유 플랫폼 (모든 사업자 사용 가능)
   const [sharedPlatformConfigs, setSharedPlatformConfigs] = useState<PlatformConfig[]>([]);
@@ -5800,6 +5820,20 @@ const App: React.FC = () => {
               ) : (
                 <section className="bg-white rounded-[32px] border border-gray-100 shadow-2xl animate-in slide-in-from-right-10 duration-500">
                   <div className="p-4 md:px-6 bg-white border-b sticky left-0 z-30 space-y-2">
+                    <div className="max-w-xl relative bg-gradient-to-br from-yellow-50 to-pink-50 border-2 border-dashed border-pink-300 rounded-2xl px-4 pt-3 pb-2 shadow-sm">
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <span className="text-lg">📝</span>
+                        <span className="text-xs font-black text-pink-500">메모</span>
+                        <span className="text-[10px] text-pink-300 font-bold">자동저장 ✨</span>
+                      </div>
+                      <textarea
+                        value={purchaseMemo}
+                        onChange={e => changePurchaseMemo(e.target.value)}
+                        placeholder="오늘 챙길 것, 전달사항 등을 적어두세요 🐰"
+                        rows={Math.min(6, Math.max(2, purchaseMemo.split('\n').length))}
+                        className="w-full bg-transparent outline-none resize-none text-sm font-bold text-gray-700 placeholder:text-pink-300 leading-relaxed"
+                      />
+                    </div>
                     <div className="flex items-center gap-3 flex-wrap">
                       <h2 className="hidden md:block text-xl font-black text-gray-900">구매목록</h2>
                       <div className="relative">
