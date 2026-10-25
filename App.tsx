@@ -701,6 +701,9 @@ const App: React.FC = () => {
   const [recentBeforeDepositLog, setRecentBeforeDepositLog] = useState<BeforeDepositLogEvent[]>([]);
   const [recentBeforeDepositLogLoaded, setRecentBeforeDepositLogLoaded] = useState(false);
 
+  // 윙업무 날짜: 주문번호 입력 시각 기준, 기록 없는 예전 행만 구매 탭 날짜 칸
+  const pendingEntryDate = (en: ManualEntry) => en.orderNumberEnteredAt ? toLocalDateStr(new Date(en.orderNumberEnteredAt)) : (en.date || '');
+
   const loadAllBizPendingEntries = async () => {
     setAllBizPendingLoaded(false);
     const today = toLocalDateStr();
@@ -717,8 +720,8 @@ const App: React.FC = () => {
           if (data.hiddenFromPending) return [];
           const orderNum = data.orderNumber?.toString().trim() ?? '';
           const name1 = data.name1?.toString().trim() ?? '';
-          if (!name1 && !orderNum) return [];
-          if (orderNum && !orderNum.includes('실배') && !/\d/.test(orderNum)) return [];
+          if (!orderNum) return [];
+          if (!orderNum.includes('실배') && !/\d/.test(orderNum)) return [];
           return [{
             id: d.id,
             bizId,
@@ -750,7 +753,7 @@ const App: React.FC = () => {
     result.sort((a, b) => {
       const bizCmp = a.bizName.localeCompare(b.bizName, 'ko');
       if (bizCmp !== 0) return bizCmp;
-      const dateCmp = (b.date || '').localeCompare(a.date || '');
+      const dateCmp = pendingEntryDate(b).localeCompare(pendingEntryDate(a));
       if (dateCmp !== 0) return dateCmp;
       return (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0);
     });
@@ -1901,7 +1904,7 @@ const App: React.FC = () => {
       const numbers = String(entry.memo).match(/\d+/g);
       if (numbers && numbers.length > 0) {
         const orderNum = numbers.reduce((a, b) => a.length >= b.length ? a : b);
-        batch.update(doc(db, getCol('manualEntries', colPrefix), entry.id), { orderNumber: orderNum });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), entry.id), { orderNumber: orderNum, orderNumberEnteredAt: Date.now() });
         updateCount++;
       }
     }
@@ -2226,7 +2229,10 @@ const App: React.FC = () => {
         console.log('[Drop OCR] 결과:', result);
 
         const updates: Partial<ManualEntry> = {};
-        if (result.orderNumber) updates.orderNumber = result.orderNumber;
+        if (result.orderNumber) {
+          updates.orderNumber = result.orderNumber;
+          if (String(manualEntries.find(e => e.id === id)?.orderNumber || '').trim() !== String(result.orderNumber).trim()) updates.orderNumberEnteredAt = Date.now();
+        }
         if (result.address) updates.address = result.address;
         if (result.phone) updates.emergencyContact = result.phone;
 
@@ -2261,7 +2267,10 @@ const App: React.FC = () => {
             const result = await extractOrderInfo(base64Image);
             console.log('[Paste OCR] 결과:', result);
             const updates: Partial<ManualEntry> = {};
-            if (result.orderNumber) updates.orderNumber = result.orderNumber;
+            if (result.orderNumber) {
+              updates.orderNumber = result.orderNumber;
+              if (String(manualEntries.find(e => e.id === id)?.orderNumber || '').trim() !== String(result.orderNumber).trim()) updates.orderNumberEnteredAt = Date.now();
+            }
             if (result.address) updates.address = result.address;
             if (result.phone) updates.emergencyContact = result.phone;
             if (Object.keys(updates).length > 0) {
@@ -2303,7 +2312,10 @@ const App: React.FC = () => {
               const result = await extractOrderInfo(base64Image);
               console.log('[DocPaste OCR] 결과:', result);
               const updates: Partial<ManualEntry> = {};
-              if (result.orderNumber) updates.orderNumber = result.orderNumber;
+              if (result.orderNumber) {
+                updates.orderNumber = result.orderNumber;
+                if (String(manualEntries.find(e => e.id === id)?.orderNumber || '').trim() !== String(result.orderNumber).trim()) updates.orderNumberEnteredAt = Date.now();
+              }
               if (result.address) updates.address = result.address;
               if (result.phone) updates.emergencyContact = result.phone;
               if (Object.keys(updates).length > 0) {
@@ -2674,8 +2686,8 @@ const App: React.FC = () => {
       description: `${field} 수정`
     });
 
-    // 주문번호가 처음 입력되는 시점 기록 (예약완료 미처리 목록의 "날짜" 표시용)
-    if (field === 'orderNumber' && !String(entry.orderNumber || '').trim() && String(value || '').trim()) {
+    // 주문번호가 입력·변경된 시점 기록 (윙업무 목록의 "날짜" 표시용)
+    if (field === 'orderNumber' && String(value || '').trim() && String(entry.orderNumber || '').trim() !== String(value).trim()) {
       updates.orderNumberEnteredAt = Date.now();
     }
 
@@ -2720,7 +2732,7 @@ const App: React.FC = () => {
         if (result.orderNumber) {
           ocrUpdates.orderNumber = result.orderNumber;
           const current = manualEntries.find(e => e.id === id);
-          if (!String(current?.orderNumber || '').trim()) {
+          if (String(current?.orderNumber || '').trim() !== String(result.orderNumber).trim()) {
             ocrUpdates.orderNumberEnteredAt = Date.now();
           }
         }
@@ -2803,7 +2815,7 @@ const App: React.FC = () => {
         const ocrUpdates: Partial<ManualEntry> = {};
         if (result.orderNumber) {
           ocrUpdates.orderNumber = result.orderNumber;
-          if (!String(targetEntry.orderNumber || '').trim()) {
+          if (String(targetEntry.orderNumber || '').trim() !== String(result.orderNumber).trim()) {
             ocrUpdates.orderNumberEnteredAt = Date.now();
           }
         }
@@ -5451,7 +5463,7 @@ const App: React.FC = () => {
                                       />
                                     </td>
                                     <td className="py-1 px-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
-                                    <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{en.date ? `${en.date}${(en.orderNumberEnteredAt || en.createdAt) ? ' ' + new Date(en.orderNumberEnteredAt || en.createdAt!).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''}` : '-'}</td>
+                                    <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{pendingEntryDate(en) ? `${pendingEntryDate(en)}${(en.orderNumberEnteredAt || en.createdAt) ? ' ' + new Date(en.orderNumberEnteredAt || en.createdAt!).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''}` : '-'}</td>
                                     <td className="py-1 px-2 font-bold text-gray-800 whitespace-nowrap">{en.name2 || en.ordererName || '-'}</td>
                                     <td className="py-1 px-2 text-gray-700 whitespace-nowrap font-mono">{en.orderNumber || '-'}</td>
                                     <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{en.product || '-'}</td>
