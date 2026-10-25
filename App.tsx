@@ -5431,6 +5431,7 @@ const App: React.FC = () => {
                                 <th className="py-1 px-2 w-8 text-center"></th>
                                 <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
                                 <th className="py-1 px-2 text-left whitespace-nowrap">날짜</th>
+                                <th className="py-1 px-2 text-left whitespace-nowrap">이름1</th>
                                 <th className="py-1 px-2 text-left whitespace-nowrap">받는사람</th>
                                 <th className="py-1 px-2 text-left whitespace-nowrap">주문번호</th>
                                 <th className="py-1 px-2 text-left whitespace-nowrap">품목</th>
@@ -5464,6 +5465,7 @@ const App: React.FC = () => {
                                     </td>
                                     <td className="py-1 px-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
                                     <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{pendingEntryDate(en) ? `${pendingEntryDate(en)}${(en.orderNumberEnteredAt || en.createdAt) ? ' ' + new Date(en.orderNumberEnteredAt || en.createdAt!).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''}` : '-'}</td>
+                                    <td className="py-1 px-2 text-gray-800 whitespace-nowrap">{en.name1 || '-'}</td>
                                     <td className="py-1 px-2 font-bold text-gray-800 whitespace-nowrap">{en.name2 || en.ordererName || '-'}</td>
                                     <td className="py-1 px-2 text-gray-700 whitespace-nowrap font-mono">{en.orderNumber || '-'}</td>
                                     <td className="py-1 px-2 text-gray-500 whitespace-nowrap">{en.product || '-'}</td>
