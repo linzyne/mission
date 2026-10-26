@@ -767,8 +767,14 @@ const App: React.FC = () => {
     const perBizResults = await Promise.all(bizEntries.map(async ([bizId, biz]) => {
       const colName = getCol('manualEntries', biz.collectionPrefix);
       try {
-        const q = query(collection(db, colName), where('beforeDeposit', '==', true));
-        const snapshot = await getDocs(q);
+        // 입금완료돼도 beforeDeposit은 true로 남아서, afterDeposit==false까지 걸어야 지난 주문 전부를 안 받음
+        let snapshot;
+        try {
+          snapshot = await getDocs(query(collection(db, colName), where('beforeDeposit', '==', true), where('afterDeposit', '==', false)));
+        } catch (e) {
+          console.warn('[allBizBeforeDeposit] 좁힌 조회 실패, 전체 조회로 대체:', bizId, e);
+          snapshot = await getDocs(query(collection(db, colName), where('beforeDeposit', '==', true)));
+        }
         return snapshot.docs.flatMap(d => {
           const data = d.data();
           if (data.afterDeposit) return [];
