@@ -679,7 +679,7 @@ const App: React.FC = () => {
   const [allBizPendingLoaded, setAllBizPendingLoaded] = useState(false);
   const [selectedPendingIds, setSelectedPendingIds] = useState<Set<string>>(new Set());
   const [pendingUndoStack, setPendingUndoStack] = useState<Array<{
-    type: 'reservationComplete' | 'hiddenFromPending';
+    type: 'reservationComplete' | 'hiddenFromPending' | 'depositComplete';
     entries: Array<ManualEntry & { bizId: string; bizName: string }>;
   }>>([]);
 
@@ -3173,6 +3173,55 @@ const App: React.FC = () => {
     XLSX.writeFile(wb, `입금완료_${toLocalDateStr()}.xlsx`);
   };
 
+  const PENDING_UNDO_LABEL: Record<string, string> = { reservationComplete: '예약완료 처리', hiddenFromPending: '목록 제외', depositComplete: '입금완료 처리' };
+
+  // 윙업무: 마지막 처리(예약완료/목록 제외/입금완료) 되돌리기
+  const undoLastPendingAction = async () => {
+    const last = pendingUndoStack[pendingUndoStack.length - 1];
+    if (!last) return;
+    try {
+      const batch = writeBatch(db);
+      last.entries.forEach(en => {
+        const biz = allBusinesses[en.bizId];
+        if (!biz) return;
+        const ref = doc(db, getCol('manualEntries', biz.collectionPrefix), en.id);
+        if (last.type === 'reservationComplete') {
+          batch.update(ref, { reservationComplete: false, reservationCompletedAt: deleteField() });
+        } else if (last.type === 'hiddenFromPending') {
+          batch.update(ref, { hiddenFromPending: false });
+        } else {
+          batch.update(ref, { afterDeposit: false, depositDate: en.depositDate ?? deleteField(), depositedAt: en.depositedAt ?? deleteField() });
+        }
+      });
+      await batch.commit();
+      setPendingUndoStack(prev => prev.slice(0, -1));
+      const restore = (prev: typeof last.entries) => {
+        const existing = new Set(prev.map(e => e.bizId + '_' + e.id));
+        const restored = last.entries.filter(e => !existing.has(e.bizId + '_' + e.id));
+        return [...restored, ...prev].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      };
+      if (last.type === 'depositComplete') {
+        setAllBizBeforeDepositEntries(restore);
+        const keys = new Set(last.entries.map(e => e.bizId + '_' + e.id));
+        setRecentDepositHistory(prev => prev.filter(e => !keys.has(e.bizId + '_' + e.id)));
+      } else {
+        setAllBizPendingEntries(restore);
+      }
+    } catch (e) { console.error(e); alert('오류: ' + e); }
+  };
+
+  const lastPendingUndo = pendingUndoStack[pendingUndoStack.length - 1];
+  const pendingUndoButton = lastPendingUndo && (
+    <button
+      onClick={undoLastPendingAction}
+      className="flex items-center gap-1 px-3 py-1.5 bg-orange-100 text-orange-600 rounded-xl text-xs font-bold hover:bg-orange-200"
+      title={`되돌리기: ${PENDING_UNDO_LABEL[lastPendingUndo.type]} ${lastPendingUndo.entries.length}건`}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg>
+      되돌리기 ({PENDING_UNDO_LABEL[lastPendingUndo.type]} {lastPendingUndo.entries.length}건)
+    </button>
+  );
+
   const handleAllBizDepositComplete = async () => {
     const selected = allBizBeforeDepositEntries.filter(en => selectedAllDepositIds.has(en.bizId + '_' + en.id));
     if (selected.length === 0) return;
@@ -3188,6 +3237,7 @@ const App: React.FC = () => {
         batch.update(doc(db, colName, en.id), { afterDeposit: true, depositDate, depositedAt: Date.now() });
       });
       await batch.commit();
+      setPendingUndoStack(prev => [...prev, { type: 'depositComplete', entries: selected }]);
       setAllBizBeforeDepositEntries(prev => prev.filter(en => !selectedAllDepositIds.has(en.bizId + '_' + en.id)));
       setSelectedAllDepositIds(new Set());
       alert("처리되었습니다.");
@@ -5319,40 +5369,9 @@ const App: React.FC = () => {
                         <p className="text-xs text-gray-400 mt-0.5">최근 10일 이내 · {allBizPendingLoaded ? `${allBizPendingEntries.length}건` : '로딩 중...'}</p>
                       </div>
                       <div className="flex items-center gap-2">
-                        {pendingUndoStack.length > 0 && (
-                          <button
-                            onClick={async () => {
-                              const last = pendingUndoStack[pendingUndoStack.length - 1];
-                              try {
-                                const batch = writeBatch(db);
-                                last.entries.forEach(en => {
-                                  const biz = allBusinesses[en.bizId];
-                                  if (!biz) return;
-                                  const colName = getCol('manualEntries', biz.collectionPrefix);
-                                  if (last.type === 'reservationComplete') {
-                                    batch.update(doc(db, colName, en.id), { reservationComplete: false, reservationCompletedAt: deleteField() });
-                                  } else {
-                                    batch.update(doc(db, colName, en.id), { hiddenFromPending: false });
-                                  }
-                                });
-                                await batch.commit();
-                                setPendingUndoStack(prev => prev.slice(0, -1));
-                                setAllBizPendingEntries(prev => {
-                                  const existingIds = new Set(prev.map(e => e.id));
-                                  const restored = last.entries.filter(e => !existingIds.has(e.id));
-                                  return [...restored, ...prev].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-                                });
-                              } catch (e) { console.error(e); alert('오류: ' + e); }
-                            }}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-orange-100 text-orange-600 rounded-xl text-xs font-bold hover:bg-orange-200"
-                            title={`되돌리기: ${pendingUndoStack[pendingUndoStack.length - 1]?.type === 'reservationComplete' ? '예약완료 처리' : '목록 제외'} ${pendingUndoStack[pendingUndoStack.length - 1]?.entries.length}건`}
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg>
-                            되돌리기
-                          </button>
-                        )}
+                        {pendingUndoButton}
                         <button
-                          onClick={() => { loadAllBizPendingEntries(); setSelectedPendingIds(new Set()); setPendingUndoStack([]); }}
+                          onClick={() => { loadAllBizPendingEntries(); setSelectedPendingIds(new Set()); }}
                           className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
                         >새로고침</button>
                       </div>
@@ -5493,6 +5512,7 @@ const App: React.FC = () => {
                         <p className="text-xs text-gray-400 mt-0.5">모든 사업자 · {allBizBeforeDepositLoaded ? `${allBizBeforeDepositEntries.length}건` : '로딩 중...'}</p>
                       </div>
                       <div className="flex items-center gap-2 flex-wrap">
+                        {pendingUndoButton}
                         <button
                           onClick={copyAllBizBeforeDepositToClipboard}
                           className="px-3 py-1.5 bg-blue-100 text-blue-600 rounded-xl text-xs font-black hover:bg-blue-200"
