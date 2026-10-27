@@ -3,7 +3,7 @@ import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, Adm
 import { verifyImage } from './services/geminiService';
 import { db, auth } from './services/firebase';
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs, where, arrayUnion } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs, getDoc, where, arrayUnion } from 'firebase/firestore';
 
 const BASE_BUSINESSES: Record<string, BusinessInfo> = {
   angun: {
@@ -464,22 +464,73 @@ const App: React.FC = () => {
   };
 
   // 구매목록 상단 메모 (사업자별, 입력 멈추면 자동저장)
+  // 절대 사라지면 안 됨: 입력 즉시 localStorage에 백업 → 서버 저장 끝나야 백업의 pending 해제.
+  // 새로고침·창 닫기로 서버 저장이 끊겨도 다음에 열 때 백업으로 되살려 다시 저장.
   const [purchaseMemo, setPurchaseMemo] = useState('');
   const purchaseMemoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const purchaseMemoPending = useRef<{ prefix: string; memo: string } | null>(null);
+  const memoBackupKey = (prefix: string) => `purchaseMemoBackup:${prefix || '_'}`;
+  const readMemoBackup = (prefix: string): { memo: string; pending: boolean } | null => {
+    try { const s = localStorage.getItem(memoBackupKey(prefix)); return s ? JSON.parse(s) : null; } catch { return null; }
+  };
+  const writeMemoBackup = (prefix: string, memo: string, pending: boolean) => {
+    try { localStorage.setItem(memoBackupKey(prefix), JSON.stringify({ memo, pending, at: Date.now() })); } catch {}
+  };
+  const savePurchaseMemo = async (prefix: string, memo: string) => {
+    await setDoc(doc(db, getCol('settings', prefix), 'purchaseMemo'), { memo, updatedAt: Date.now() });
+    // 저장 중에 또 입력했으면 pending 유지
+    if (purchaseMemoPending.current?.prefix === prefix && purchaseMemoPending.current.memo !== memo) return;
+    if (purchaseMemoPending.current?.prefix === prefix) purchaseMemoPending.current = null;
+    writeMemoBackup(prefix, memo, false);
+  };
+  const flushPurchaseMemo = () => {
+    if (purchaseMemoTimer.current) { clearTimeout(purchaseMemoTimer.current); purchaseMemoTimer.current = null; }
+    const p = purchaseMemoPending.current;
+    if (p) savePurchaseMemo(p.prefix, p.memo).catch(onFbError);
+  };
   useEffect(() => {
-    if (!selectedBiz) { setPurchaseMemo(''); return; }
-    const unsub = onSnapshot(doc(db, getCol('settings', colPrefix), 'purchaseMemo'), (d) => {
-      if (purchaseMemoTimer.current) return; // 입력 중엔 덮어쓰지 않음
-      setPurchaseMemo(d.exists() ? (d.data().memo || '') : '');
+    // 사업자 정보(colPrefix)가 확정되기 전엔 읽지 않음 — 다른 사업자 메모를 읽어 덮어쓰는 것 방지
+    if (!selectedBiz || !bizInfo) { setPurchaseMemo(''); return; }
+    const prefix = colPrefix;
+    const backup = readMemoBackup(prefix);
+    if (backup) setPurchaseMemo(backup.memo || '');
+    const unsub = onSnapshot(doc(db, getCol('settings', prefix), 'purchaseMemo'), (d) => {
+      if (purchaseMemoTimer.current || purchaseMemoPending.current?.prefix === prefix) return; // 입력·저장 중엔 덮어쓰지 않음
+      const local = readMemoBackup(prefix);
+      if (local?.pending) {
+        // 지난번 저장이 끊김 → 백업 내용으로 다시 저장
+        setPurchaseMemo(local.memo || '');
+        purchaseMemoPending.current = { prefix, memo: local.memo || '' };
+        savePurchaseMemo(prefix, local.memo || '').catch(onFbError);
+        return;
+      }
+      const memo = d.exists() ? (d.data().memo || '') : '';
+      setPurchaseMemo(memo);
+      writeMemoBackup(prefix, memo, false);
     }, onFbError);
-    return () => unsub();
-  }, [selectedBiz]);
+    return () => { flushPurchaseMemo(); unsub(); };
+  }, [selectedBiz, colPrefix, !!bizInfo]);
+  useEffect(() => {
+    const onHide = () => flushPurchaseMemo();
+    const onVis = () => { if (document.visibilityState === 'hidden') flushPurchaseMemo(); };
+    window.addEventListener('pagehide', onHide);
+    window.addEventListener('beforeunload', onHide);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('pagehide', onHide);
+      window.removeEventListener('beforeunload', onHide);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, []);
   const changePurchaseMemo = (memo: string) => {
+    const prefix = colPrefix;
     setPurchaseMemo(memo);
+    writeMemoBackup(prefix, memo, true);
+    purchaseMemoPending.current = { prefix, memo };
     if (purchaseMemoTimer.current) clearTimeout(purchaseMemoTimer.current);
-    purchaseMemoTimer.current = setTimeout(async () => {
+    purchaseMemoTimer.current = setTimeout(() => {
       purchaseMemoTimer.current = null;
-      await setDoc(doc(db, getCol('settings', colPrefix), 'purchaseMemo'), { memo });
+      savePurchaseMemo(prefix, memo).catch(onFbError);
     }, 600);
   };
 
@@ -682,6 +733,19 @@ const App: React.FC = () => {
     type: 'reservationComplete' | 'hiddenFromPending' | 'depositComplete';
     entries: Array<ManualEntry & { bizId: string; bizName: string }>;
   }>>([]);
+
+  // 윙업무: 전체 사업자 구매목록 메모
+  const [allBizPurchaseMemos, setAllBizPurchaseMemos] = useState<Array<{ bizId: string; bizName: string; memo: string; updatedAt?: number }>>([]);
+  const loadAllBizPurchaseMemos = async () => {
+    const results = await Promise.all(Object.entries(allBusinesses).map(async ([bizId, biz]) => {
+      try {
+        const d = await getDoc(doc(db, getCol('settings', biz.collectionPrefix), 'purchaseMemo'));
+        const memo = d.exists() ? String(d.data().memo || '') : '';
+        return { bizId, bizName: biz.name, memo, updatedAt: d.exists() ? d.data().updatedAt : undefined };
+      } catch (e) { console.error('[purchaseMemo] load error:', bizId, e); return null; }
+    }));
+    setAllBizPurchaseMemos(results.filter((r): r is NonNullable<typeof r> => !!r && !!r.memo.trim()).sort((a, b) => a.bizName.localeCompare(b.bizName, 'ko')));
+  };
 
   // 윙업무: 전체 사업자 입금전 목록
   const [allBizBeforeDepositEntries, setAllBizBeforeDepositEntries] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
@@ -950,6 +1014,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (adminTab === 'reservationPending') {
+      loadAllBizPurchaseMemos();
       loadAllBizPendingEntries();
       setSelectedPendingIds(new Set());
       loadAllBizBeforeDepositEntries();
@@ -5360,6 +5425,22 @@ const App: React.FC = () => {
                 </section>
               ) : adminTab === 'reservationPending' ? (
                 <div className="space-y-6 animate-in fade-in duration-500">
+
+                  {/* 사업자별 구매목록 메모 */}
+                  {allBizPurchaseMemos.length > 0 && (
+                    <section className="max-w-xl space-y-2">
+                      {allBizPurchaseMemos.map(m => (
+                        <div key={m.bizId} className="bg-gradient-to-br from-yellow-50 to-pink-50 border-2 border-dashed border-pink-300 rounded-2xl px-4 pt-3 pb-3 shadow-sm">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className="text-lg">📝</span>
+                            <span className="text-xs font-black text-white px-2 py-0.5 rounded-full" style={{ backgroundColor: getBizColor(m.bizId) }}>{m.bizName}</span>
+                            <span className="text-xs font-black text-pink-500">메모</span>
+                          </div>
+                          <div className="whitespace-pre-wrap break-words text-sm font-bold text-gray-700 leading-relaxed">{m.memo}</div>
+                        </div>
+                      ))}
+                    </section>
+                  )}
 
                   {/* 섹션 1: 예약완료 미처리 목록 */}
                   <section className="bg-white rounded-[32px] border border-gray-100 shadow-sm p-6">
