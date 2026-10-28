@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, SalesSubTab, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource, PlatformConfig } from './types';
 import { verifyImage } from './services/geminiService';
-import { db, auth } from './services/firebase';
+import { db, auth, wingDb } from './services/firebase';
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from 'firebase/auth';
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs, getDoc, where, arrayUnion } from 'firebase/firestore';
 
@@ -3164,6 +3164,85 @@ const App: React.FC = () => {
     await navigator.clipboard.writeText(tsv);
     alert(`${beforeItems.length}건 복사 완료`);
   };
+
+  const allBizDepositTsv = (entries: Array<ManualEntry & { bizId: string; bizName: string }>) => {
+    const tpl = migrateTpl(DEFAULT_DEPOSIT_TEMPLATE);
+    const getRow = (e: ManualEntry & { bizId: string; bizName: string }): string[] => {
+      const biz = allBusinesses[e.bizId];
+      return tpl.columns.map(col => {
+        if (col.source === 'parsedBank' || col.source === 'parsedAccount' || col.source === 'parsedAccountName') {
+          const [bank, account, accountName] = parseDepositAccount(e.accountNumber || '');
+          if (col.source === 'parsedBank') return bank;
+          if (col.source === 'parsedAccount') return account;
+          return accountName || e.name1 || e.name2 || '';
+        }
+        if (col.source === 'bizName') return biz?.name || '';
+        if (col.source === 'bizPhone') return biz?.phone || '';
+        if (col.source === 'bizAddress') return biz?.address || '';
+        if (col.source === 'bizNameFixed') return [biz?.legalName || biz?.name, col.fixedValue].filter(Boolean).join(' ');
+        return getExportCellValue(e, col);
+      });
+    };
+    return entries.map(getRow).map(row => row.join('\t')).join('\n');
+  };
+
+  // 윙_발주 자동 연동: 주문번호 입력된 건(어제·오늘) → 가구매 명단, 입금전 체크된 건 → 일괄 입금목록
+  // 사업자마다 실시간 구독해서 바뀔 때마다 wing-order의 config/missionHubFeed 문서를 통째로 갱신
+  const allBizDepositTsvRef = useRef(allBizDepositTsv);
+  allBizDepositTsvRef.current = allBizDepositTsv;
+  const allBusinessesRef = useRef(allBusinesses);
+  allBusinessesRef.current = allBusinesses;
+  const wingFeedBizKey = Object.entries(allBusinesses).map(([id, b]) => `${id}:${b.collectionPrefix}`).join('|');
+  useEffect(() => {
+    if (!isOwner || !wingFeedBizKey) return;
+    const startOfYesterday = () => { const d = new Date(); d.setDate(d.getDate() - 1); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const fakeByBiz: Record<string, Array<ManualEntry & { bizId: string; bizName: string }>> = {};
+    const depositByBiz: Record<string, Array<ManualEntry & { bizId: string; bizName: string }>> = {};
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastSent = '';
+    const bizCount = Object.keys(allBusinessesRef.current).length;
+    const push = () => {
+      // 모든 사업자 첫 응답이 오기 전엔 안 올림 (일부만 올라가면 윙_발주 명단에서 줄이 빠졌다 다시 생김)
+      if (Object.keys(fakeByBiz).length < bizCount || Object.keys(depositByBiz).length < bizCount) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const bizs = allBusinessesRef.current;
+        const byBizName = (a: { bizName: string }, b: { bizName: string }) => a.bizName.localeCompare(b.bizName, 'ko');
+        const cutoff = startOfYesterday();
+        const fakeLines = Object.values(fakeByBiz).flat()
+          .filter(en => (en.orderNumberEnteredAt || 0) >= cutoff)
+          .sort((a, b) => byBizName(a, b) || (a.orderNumberEnteredAt || 0) - (b.orderNumberEnteredAt || 0))
+          .map(en => `${bizs[en.bizId]?.legalName || en.bizName}_${en.name2 || en.ordererName || ''}_${en.orderNumber}`)
+          .join('\n');
+        const depositText = allBizDepositTsvRef.current(Object.values(depositByBiz).flat()
+          .sort((a, b) => byBizName(a, b) || (b.date || '').localeCompare(a.date || '')));
+        const key = fakeLines + '\u0000' + depositText;
+        if (key === lastSent) return;
+        lastSent = key;
+        setDoc(doc(wingDb, 'config', 'missionHubFeed'), { fakeLines, depositText, updatedAt: Date.now() })
+          .catch(e => console.error('[윙_발주 연동] 저장 실패:', e));
+      }, 1500);
+    };
+    const toEntry = (d: any, bizId: string, bizName: string) => {
+      const data = d.data();
+      return { ...data, id: d.id, bizId, bizName, orderNumber: data.orderNumber != null ? String(data.orderNumber).trim() : '' } as ManualEntry & { bizId: string; bizName: string };
+    };
+    const unsubs = Object.entries(allBusinessesRef.current).flatMap(([bizId, biz]) => {
+      const colName = getCol('manualEntries', biz.collectionPrefix);
+      return [
+        onSnapshot(query(collection(db, colName), where('orderNumberEnteredAt', '>=', startOfYesterday())), snap => {
+          fakeByBiz[bizId] = snap.docs.map(d => toEntry(d, bizId, biz.name)).filter(en =>
+            !(en as any).hiddenFromPending && !!en.orderNumber && (en.orderNumber.includes('실배') || /\d/.test(en.orderNumber)));
+          push();
+        }, e => { console.error('[윙_발주 연동] 가구매 구독 오류:', bizId, e); fakeByBiz[bizId] = fakeByBiz[bizId] || []; push(); }),
+        onSnapshot(query(collection(db, colName), where('beforeDeposit', '==', true), where('afterDeposit', '==', false)), snap => {
+          depositByBiz[bizId] = snap.docs.map(d => toEntry(d, bizId, biz.name));
+          push();
+        }, e => { console.error('[윙_발주 연동] 입금전 구독 오류:', bizId, e); depositByBiz[bizId] = depositByBiz[bizId] || []; push(); }),
+      ];
+    });
+    return () => { unsubs.forEach(u => u()); if (timer) clearTimeout(timer); };
+  }, [isOwner, wingFeedBizKey]);
 
   const copyAllBizBeforeDepositToClipboard = async () => {
     if (allBizBeforeDepositEntries.length === 0) return alert("복사할 데이터가 없습니다.");
