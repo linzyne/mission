@@ -3186,7 +3186,7 @@ const App: React.FC = () => {
     return entries.map(getRow).map(row => row.join('\t')).join('\n');
   };
 
-  // 윙_발주 자동 연동: 주문번호 입력된 건(어제·오늘) → 가구매 명단, 입금전 체크된 건 → 일괄 입금목록
+  // 윙_발주 자동 연동: 윙업무 예약대기 목록 → 가구매 명단, 입금전 목록 → 일괄 입금목록 (윙업무에서 빠지면 윙_발주에서도 빠짐)
   // 사업자마다 실시간 구독해서 바뀔 때마다 wing-order의 config/missionHubFeed 문서를 통째로 갱신
   const allBizDepositTsvRef = useRef(allBizDepositTsv);
   allBizDepositTsvRef.current = allBizDepositTsv;
@@ -3195,7 +3195,7 @@ const App: React.FC = () => {
   const wingFeedBizKey = Object.entries(allBusinesses).map(([id, b]) => `${id}:${b.collectionPrefix}`).join('|');
   useEffect(() => {
     if (!isOwner || !wingFeedBizKey) return;
-    const startOfYesterday = () => { const d = new Date(); d.setDate(d.getDate() - 1); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const daysAgoStr = (n: number) => toLocalDateStr(new Date(Date.now() - n * 24 * 60 * 60 * 1000));
     const fakeByBiz: Record<string, Array<ManualEntry & { bizId: string; bizName: string }>> = {};
     const depositByBiz: Record<string, Array<ManualEntry & { bizId: string; bizName: string }>> = {};
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -3208,10 +3208,11 @@ const App: React.FC = () => {
       timer = setTimeout(() => {
         const bizs = allBusinessesRef.current;
         const byBizName = (a: { bizName: string }, b: { bizName: string }) => a.bizName.localeCompare(b.bizName, 'ko');
-        const cutoff = startOfYesterday();
+        // 윙업무 예약대기 목록과 같은 기준: 최근 10일, 예약완료·목록제외 안 된 것
+        const from = daysAgoStr(9), today = daysAgoStr(0);
         const fakeLines = Object.values(fakeByBiz).flat()
-          .filter(en => (en.orderNumberEnteredAt || 0) >= cutoff)
-          .sort((a, b) => byBizName(a, b) || (a.orderNumberEnteredAt || 0) - (b.orderNumberEnteredAt || 0))
+          .filter(en => (en.date || '') >= from && (en.date || '') <= today)
+          .sort((a, b) => byBizName(a, b) || pendingEntryDate(b).localeCompare(pendingEntryDate(a)) || (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0))
           .map(en => `${bizs[en.bizId]?.legalName || en.bizName}_${en.name2 || en.ordererName || ''}_${en.orderNumber}`)
           .join('\n');
         const depositText = allBizDepositTsvRef.current(Object.values(depositByBiz).flat()
@@ -3230,9 +3231,9 @@ const App: React.FC = () => {
     const unsubs = Object.entries(allBusinessesRef.current).flatMap(([bizId, biz]) => {
       const colName = getCol('manualEntries', biz.collectionPrefix);
       return [
-        onSnapshot(query(collection(db, colName), where('orderNumberEnteredAt', '>=', startOfYesterday())), snap => {
+        onSnapshot(query(collection(db, colName), where('date', '>=', daysAgoStr(10))), snap => {
           fakeByBiz[bizId] = snap.docs.map(d => toEntry(d, bizId, biz.name)).filter(en =>
-            !(en as any).hiddenFromPending && !!en.orderNumber && (en.orderNumber.includes('실배') || /\d/.test(en.orderNumber)));
+            !en.reservationComplete && !(en as any).hiddenFromPending && !!en.orderNumber && (en.orderNumber.includes('실배') || /\d/.test(en.orderNumber)));
           push();
         }, e => { console.error('[윙_발주 연동] 가구매 구독 오류:', bizId, e); fakeByBiz[bizId] = fakeByBiz[bizId] || []; push(); }),
         onSnapshot(query(collection(db, colName), where('beforeDeposit', '==', true), where('afterDeposit', '==', false)), snap => {
