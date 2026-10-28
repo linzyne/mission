@@ -3186,7 +3186,8 @@ const App: React.FC = () => {
     return entries.map(getRow).map(row => row.join('\t')).join('\n');
   };
 
-  // 윙_발주 자동 연동: 윙업무 예약대기 목록 → 가구매 명단, 입금전 목록 → 일괄 입금목록 (윙업무에서 빠지면 윙_발주에서도 빠짐)
+  // 윙_발주 자동 연동: 윙업무 예약대기 목록 → 가구매 명단, 입금전 목록 → 일괄 입금목록 (윙업무에서 빠지면 윙_발주에서도 빠짐),
+  // 사업자별 구매 탭 상단 메모 → 가구매 명단 위 메모
   // 사업자마다 실시간 구독해서 바뀔 때마다 wing-order의 config/missionHubFeed 문서를 통째로 갱신
   const allBizDepositTsvRef = useRef(allBizDepositTsv);
   allBizDepositTsvRef.current = allBizDepositTsv;
@@ -3198,6 +3199,7 @@ const App: React.FC = () => {
     const daysAgoStr = (n: number) => toLocalDateStr(new Date(Date.now() - n * 24 * 60 * 60 * 1000));
     const fakeByBiz: Record<string, Array<ManualEntry & { bizId: string; bizName: string }>> = {};
     const depositByBiz: Record<string, Array<ManualEntry & { bizId: string; bizName: string }>> = {};
+    const memoByBiz: Record<string, { memo: string; updatedAt: number }> = {};
     const failed = new Set<string>();
     let timer: ReturnType<typeof setTimeout> | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3221,15 +3223,20 @@ const App: React.FC = () => {
       // 윙_발주 미션클리어 때 어떤 항목을 처리할지 알 수 있게 항목 id도 같이 올림
       const fakeItems = fakeEntries.map(en => ({ bizId: en.bizId, id: en.id }));
       const depositItems = depositEntries.map(en => ({ bizId: en.bizId, id: en.id }));
-      return { fakeLines, depositText, fakeItems, depositItems };
+      // 구매 탭 상단 메모 (내용 있는 사업자만)
+      const memos = Object.entries(memoByBiz)
+        .filter(([, m]) => m.memo.trim())
+        .map(([bizId, m]) => ({ bizId, bizName: bizs[bizId]?.name || bizId, memo: m.memo, updatedAt: m.updatedAt }))
+        .sort((a, b) => a.bizName.localeCompare(b.bizName, 'ko'));
+      return { fakeLines, depositText, fakeItems, depositItems, memos };
     };
     const send = () => {
       if (timer) { clearTimeout(timer); timer = null; }
       // 모든 사업자를 서버에서 다 받기 전이거나 한 곳이라도 오류면 안 올림 — 일부만 올라가 윙_발주에서 줄이 빠지는 일 방지
       if (stopped || failed.size > 0) return;
-      if (Object.keys(fakeByBiz).length < bizCount || Object.keys(depositByBiz).length < bizCount) return;
-      const { fakeLines, depositText, fakeItems, depositItems } = build();
-      const key = JSON.stringify([fakeLines, depositText, fakeItems, depositItems]);
+      if (Object.keys(fakeByBiz).length < bizCount || Object.keys(depositByBiz).length < bizCount || Object.keys(memoByBiz).length < bizCount) return;
+      const { fakeLines, depositText, fakeItems, depositItems, memos } = build();
+      const key = JSON.stringify([fakeLines, depositText, fakeItems, depositItems, memos]);
       const now = Date.now();
       // 내용이 같아도 5분마다 확인 시각(checkedAt)은 올림 → 윙_발주에서 연동이 살아있는지 보임
       if (key === lastSent) {
@@ -3237,7 +3244,7 @@ const App: React.FC = () => {
         return;
       }
       lastSent = key;
-      setDoc(doc(wingDb, 'config', 'missionHubFeed'), { fakeLines, depositText, fakeItems, depositItems, updatedAt: now, checkedAt: now })
+      setDoc(doc(wingDb, 'config', 'missionHubFeed'), { fakeLines, depositText, fakeItems, depositItems, memos, updatedAt: now, checkedAt: now })
         .catch(e => {
           console.error('[윙_발주 연동] 저장 실패, 5초 뒤 다시:', e);
           lastSent = '';
@@ -3264,6 +3271,11 @@ const App: React.FC = () => {
           depositByBiz[bizId] = snap.docs.map(d => toEntry(d, bizId, biz.name));
           schedule();
         }, e => { console.error('[윙_발주 연동] 입금전 구독 오류:', bizId, e); failed.add(bizId); }),
+        onSnapshot(doc(db, getCol('settings', biz.collectionPrefix), 'purchaseMemo'), { includeMetadataChanges: true }, d => {
+          if (d.metadata.fromCache) return;
+          memoByBiz[bizId] = d.exists() ? { memo: String(d.data().memo || ''), updatedAt: d.data().updatedAt || 0 } : { memo: '', updatedAt: 0 };
+          schedule();
+        }, e => { console.error('[윙_발주 연동] 메모 구독 오류:', bizId, e); failed.add(bizId); }),
       ];
     });
     // 창 닫거나 다른 탭으로 갈 때 대기 중인 것 바로 올림, 5분마다 다시 확인(날짜 바뀌어 10일 지난 건 빠지게)
