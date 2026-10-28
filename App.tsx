@@ -3,7 +3,7 @@ import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, Adm
 import { verifyImage } from './services/geminiService';
 import { db, auth, wingDb } from './services/firebase';
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs, getDoc, where, arrayUnion } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs, getDoc, where, arrayUnion, runTransaction } from 'firebase/firestore';
 
 const BASE_BUSINESSES: Record<string, BusinessInfo> = {
   angun: {
@@ -3209,22 +3209,27 @@ const App: React.FC = () => {
       const byBizName = (a: { bizName: string }, b: { bizName: string }) => a.bizName.localeCompare(b.bizName, 'ko');
       // 윙업무 예약대기 목록과 같은 기준: 최근 10일, 예약완료·목록제외 안 된 것
       const from = daysAgoStr(9), today = daysAgoStr(0);
-      const fakeLines = Object.values(fakeByBiz).flat()
+      const fakeEntries = Object.values(fakeByBiz).flat()
         .filter(en => (en.date || '') >= from && (en.date || '') <= today)
-        .sort((a, b) => byBizName(a, b) || pendingEntryDate(b).localeCompare(pendingEntryDate(a)) || (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0))
+        .sort((a, b) => byBizName(a, b) || pendingEntryDate(b).localeCompare(pendingEntryDate(a)) || (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0));
+      const fakeLines = fakeEntries
         .map(en => `${bizs[en.bizId]?.legalName || en.bizName}_${en.name2 || en.ordererName || ''}_${en.orderNumber}`)
         .join('\n');
-      const depositText = allBizDepositTsvRef.current(Object.values(depositByBiz).flat()
-        .sort((a, b) => byBizName(a, b) || (b.date || '').localeCompare(a.date || '')));
-      return { fakeLines, depositText };
+      const depositEntries = Object.values(depositByBiz).flat()
+        .sort((a, b) => byBizName(a, b) || (b.date || '').localeCompare(a.date || ''));
+      const depositText = allBizDepositTsvRef.current(depositEntries);
+      // 윙_발주 미션클리어 때 어떤 항목을 처리할지 알 수 있게 항목 id도 같이 올림
+      const fakeItems = fakeEntries.map(en => ({ bizId: en.bizId, id: en.id }));
+      const depositItems = depositEntries.map(en => ({ bizId: en.bizId, id: en.id }));
+      return { fakeLines, depositText, fakeItems, depositItems };
     };
     const send = () => {
       if (timer) { clearTimeout(timer); timer = null; }
       // 모든 사업자를 서버에서 다 받기 전이거나 한 곳이라도 오류면 안 올림 — 일부만 올라가 윙_발주에서 줄이 빠지는 일 방지
       if (stopped || failed.size > 0) return;
       if (Object.keys(fakeByBiz).length < bizCount || Object.keys(depositByBiz).length < bizCount) return;
-      const { fakeLines, depositText } = build();
-      const key = fakeLines + '\u0000' + depositText;
+      const { fakeLines, depositText, fakeItems, depositItems } = build();
+      const key = JSON.stringify([fakeLines, depositText, fakeItems, depositItems]);
       const now = Date.now();
       // 내용이 같아도 5분마다 확인 시각(checkedAt)은 올림 → 윙_발주에서 연동이 살아있는지 보임
       if (key === lastSent) {
@@ -3232,7 +3237,7 @@ const App: React.FC = () => {
         return;
       }
       lastSent = key;
-      setDoc(doc(wingDb, 'config', 'missionHubFeed'), { fakeLines, depositText, updatedAt: now, checkedAt: now })
+      setDoc(doc(wingDb, 'config', 'missionHubFeed'), { fakeLines, depositText, fakeItems, depositItems, updatedAt: now, checkedAt: now })
         .catch(e => {
           console.error('[윙_발주 연동] 저장 실패, 5초 뒤 다시:', e);
           lastSent = '';
@@ -3276,6 +3281,66 @@ const App: React.FC = () => {
       window.removeEventListener('pagehide', flush);
       document.removeEventListener('visibilitychange', onHide);
     };
+  }, [isOwner, wingFeedBizKey]);
+
+  // 윙_발주 "미션클리어": 윙_발주가 missionHubClearRequests에 올린 요청을 받아
+  // 가구매 항목 → 예약완료, 입금 항목 → 입금완료 처리. 시각은 윙_발주에서 누른 순간(clickedAt) 그대로.
+  // 이미 처리된 항목(직접 처리했거나 다른 창에서 먼저 처리)은 건드리지 않음.
+  useEffect(() => {
+    if (!isOwner || !wingFeedBizKey) return;
+    const busy = new Set<string>();
+    type Item = { bizId: string; id: string };
+    const process = async (reqId: string, req: { fakeItems?: Item[]; depositItems?: Item[]; clickedAt: number }) => {
+      if (busy.has(reqId)) return;
+      busy.add(reqId);
+      const reqRef = doc(wingDb, 'missionHubClearRequests', reqId);
+      try {
+        const bizs = allBusinessesRef.current;
+        const at = req.clickedAt;
+        const dateStr = toLocalDateStr(new Date(at));
+        const refOf = (it: Item) => bizs[it.bizId] ? doc(db, getCol('manualEntries', bizs[it.bizId].collectionPrefix), it.id) : null;
+        const fakeItems = req.fakeItems || [], depositItems = req.depositItems || [];
+        const missingBiz = [...fakeItems, ...depositItems].filter(it => !bizs[it.bizId]).length;
+        const result = await runTransaction(db, async tx => {
+          const fakeSnaps = await Promise.all(fakeItems.map(it => { const r = refOf(it); return r ? tx.get(r) : null; }));
+          const depositSnaps = await Promise.all(depositItems.map(it => { const r = refOf(it); return r ? tx.get(r) : null; }));
+          const toUndoEntry = (it: Item, data: any) => ({ ...data, id: it.id, bizId: it.bizId, bizName: bizs[it.bizId]?.name || '' }) as ManualEntry & { bizId: string; bizName: string };
+          const reserved: Array<ManualEntry & { bizId: string; bizName: string }> = [];
+          const deposited: Array<ManualEntry & { bizId: string; bizName: string }> = [];
+          fakeSnaps.forEach((snap, i) => {
+            if (!snap?.exists() || snap.data().reservationComplete) return;
+            tx.update(snap.ref, { reservationComplete: true, reservationCompleteDate: dateStr, reservationCompletedAt: at });
+            reserved.push(toUndoEntry(fakeItems[i], snap.data()));
+          });
+          depositSnaps.forEach((snap, i) => {
+            const d = snap?.exists() ? snap.data() : null;
+            if (!d || !d.beforeDeposit || d.afterDeposit) return;
+            tx.update(snap!.ref, { afterDeposit: true, depositDate: dateStr, depositedAt: at });
+            deposited.push(toUndoEntry(depositItems[i], d));
+          });
+          return { reserved, deposited };
+        });
+        if (result.reserved.length) setPendingUndoStack(prev => [...prev, { type: 'reservationComplete', entries: result.reserved }]);
+        if (result.deposited.length) setPendingUndoStack(prev => [...prev, { type: 'depositComplete', entries: result.deposited }]);
+        const doneKeys = new Set([...result.reserved, ...result.deposited].map(e => e.bizId + '_' + e.id));
+        setAllBizPendingEntries(prev => prev.filter(e => !doneKeys.has(e.bizId + '_' + e.id)));
+        setAllBizBeforeDepositEntries(prev => prev.filter(e => !doneKeys.has(e.bizId + '_' + e.id)));
+        await updateDoc(reqRef, {
+          status: 'done', processedAt: Date.now(),
+          reservedCount: result.reserved.length, depositedCount: result.deposited.length,
+          skippedCount: fakeItems.length + depositItems.length - result.reserved.length - result.deposited.length,
+          missingBizCount: missingBiz,
+        });
+      } catch (e) {
+        console.error('[미션클리어] 처리 실패:', e);
+        await updateDoc(reqRef, { status: 'error', error: String(e), processedAt: Date.now() }).catch(() => {});
+      } finally {
+        busy.delete(reqId);
+      }
+    };
+    return onSnapshot(query(collection(wingDb, 'missionHubClearRequests'), where('status', '==', 'pending')), snap => {
+      snap.docs.forEach(d => process(d.id, d.data() as any));
+    }, e => console.error('[미션클리어] 요청 구독 오류:', e));
   }, [isOwner, wingFeedBizKey]);
 
   const copyAllBizBeforeDepositToClipboard = async () => {
