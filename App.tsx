@@ -3190,7 +3190,7 @@ const App: React.FC = () => {
   // 사업자마다 실시간 구독해서 바뀔 때마다 wing-order의 config/missionHubFeed 문서를 통째로 갱신
   const allBizDepositTsvRef = useRef(allBizDepositTsv);
   allBizDepositTsvRef.current = allBizDepositTsv;
-  const allBusinessesRef = useRef(allBusinesses);
+  const allBusinessesRef = useRef<Record<string, BusinessInfo>>(allBusinesses);
   allBusinessesRef.current = allBusinesses;
   const wingFeedBizKey = Object.entries(allBusinesses).map(([id, b]) => `${id}:${b.collectionPrefix}`).join('|');
   useEffect(() => {
@@ -3198,51 +3198,84 @@ const App: React.FC = () => {
     const daysAgoStr = (n: number) => toLocalDateStr(new Date(Date.now() - n * 24 * 60 * 60 * 1000));
     const fakeByBiz: Record<string, Array<ManualEntry & { bizId: string; bizName: string }>> = {};
     const depositByBiz: Record<string, Array<ManualEntry & { bizId: string; bizName: string }>> = {};
+    const failed = new Set<string>();
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let lastSent = '';
+    let stopped = false;
     const bizCount = Object.keys(allBusinessesRef.current).length;
-    const push = () => {
-      // 모든 사업자 첫 응답이 오기 전엔 안 올림 (일부만 올라가면 윙_발주 명단에서 줄이 빠졌다 다시 생김)
-      if (Object.keys(fakeByBiz).length < bizCount || Object.keys(depositByBiz).length < bizCount) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        const bizs = allBusinessesRef.current;
-        const byBizName = (a: { bizName: string }, b: { bizName: string }) => a.bizName.localeCompare(b.bizName, 'ko');
-        // 윙업무 예약대기 목록과 같은 기준: 최근 10일, 예약완료·목록제외 안 된 것
-        const from = daysAgoStr(9), today = daysAgoStr(0);
-        const fakeLines = Object.values(fakeByBiz).flat()
-          .filter(en => (en.date || '') >= from && (en.date || '') <= today)
-          .sort((a, b) => byBizName(a, b) || pendingEntryDate(b).localeCompare(pendingEntryDate(a)) || (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0))
-          .map(en => `${bizs[en.bizId]?.legalName || en.bizName}_${en.name2 || en.ordererName || ''}_${en.orderNumber}`)
-          .join('\n');
-        const depositText = allBizDepositTsvRef.current(Object.values(depositByBiz).flat()
-          .sort((a, b) => byBizName(a, b) || (b.date || '').localeCompare(a.date || '')));
-        const key = fakeLines + '\u0000' + depositText;
-        if (key === lastSent) return;
-        lastSent = key;
-        setDoc(doc(wingDb, 'config', 'missionHubFeed'), { fakeLines, depositText, updatedAt: Date.now() })
-          .catch(e => console.error('[윙_발주 연동] 저장 실패:', e));
-      }, 1500);
+    const build = () => {
+      const bizs = allBusinessesRef.current;
+      const byBizName = (a: { bizName: string }, b: { bizName: string }) => a.bizName.localeCompare(b.bizName, 'ko');
+      // 윙업무 예약대기 목록과 같은 기준: 최근 10일, 예약완료·목록제외 안 된 것
+      const from = daysAgoStr(9), today = daysAgoStr(0);
+      const fakeLines = Object.values(fakeByBiz).flat()
+        .filter(en => (en.date || '') >= from && (en.date || '') <= today)
+        .sort((a, b) => byBizName(a, b) || pendingEntryDate(b).localeCompare(pendingEntryDate(a)) || (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0))
+        .map(en => `${bizs[en.bizId]?.legalName || en.bizName}_${en.name2 || en.ordererName || ''}_${en.orderNumber}`)
+        .join('\n');
+      const depositText = allBizDepositTsvRef.current(Object.values(depositByBiz).flat()
+        .sort((a, b) => byBizName(a, b) || (b.date || '').localeCompare(a.date || '')));
+      return { fakeLines, depositText };
     };
+    const send = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      // 모든 사업자를 서버에서 다 받기 전이거나 한 곳이라도 오류면 안 올림 — 일부만 올라가 윙_발주에서 줄이 빠지는 일 방지
+      if (stopped || failed.size > 0) return;
+      if (Object.keys(fakeByBiz).length < bizCount || Object.keys(depositByBiz).length < bizCount) return;
+      const { fakeLines, depositText } = build();
+      const key = fakeLines + '\u0000' + depositText;
+      const now = Date.now();
+      // 내용이 같아도 5분마다 확인 시각(checkedAt)은 올림 → 윙_발주에서 연동이 살아있는지 보임
+      if (key === lastSent) {
+        setDoc(doc(wingDb, 'config', 'missionHubFeed'), { checkedAt: now }, { merge: true }).catch(() => {});
+        return;
+      }
+      lastSent = key;
+      setDoc(doc(wingDb, 'config', 'missionHubFeed'), { fakeLines, depositText, updatedAt: now, checkedAt: now })
+        .catch(e => {
+          console.error('[윙_발주 연동] 저장 실패, 5초 뒤 다시:', e);
+          lastSent = '';
+          if (retryTimer) clearTimeout(retryTimer);
+          retryTimer = setTimeout(send, 5000);
+        });
+    };
+    const schedule = () => { if (timer) clearTimeout(timer); timer = setTimeout(send, 400); };
     const toEntry = (d: any, bizId: string, bizName: string) => {
       const data = d.data();
       return { ...data, id: d.id, bizId, bizName, orderNumber: data.orderNumber != null ? String(data.orderNumber).trim() : '' } as ManualEntry & { bizId: string; bizName: string };
     };
-    const unsubs = Object.entries(allBusinessesRef.current).flatMap(([bizId, biz]) => {
+    const unsubs = (Object.entries(allBusinessesRef.current) as Array<[string, BusinessInfo]>).flatMap(([bizId, biz]) => {
       const colName = getCol('manualEntries', biz.collectionPrefix);
       return [
-        onSnapshot(query(collection(db, colName), where('date', '>=', daysAgoStr(10))), snap => {
+        onSnapshot(query(collection(db, colName), where('date', '>=', daysAgoStr(10))), { includeMetadataChanges: true }, snap => {
+          if (snap.metadata.fromCache) return; // 오프라인 캐시(빈 목록일 수 있음)로는 안 올림
           fakeByBiz[bizId] = snap.docs.map(d => toEntry(d, bizId, biz.name)).filter(en =>
             !en.reservationComplete && !(en as any).hiddenFromPending && !!en.orderNumber && (en.orderNumber.includes('실배') || /\d/.test(en.orderNumber)));
-          push();
-        }, e => { console.error('[윙_발주 연동] 가구매 구독 오류:', bizId, e); fakeByBiz[bizId] = fakeByBiz[bizId] || []; push(); }),
-        onSnapshot(query(collection(db, colName), where('beforeDeposit', '==', true), where('afterDeposit', '==', false)), snap => {
+          schedule();
+        }, e => { console.error('[윙_발주 연동] 가구매 구독 오류:', bizId, e); failed.add(bizId); }),
+        onSnapshot(query(collection(db, colName), where('beforeDeposit', '==', true), where('afterDeposit', '==', false)), { includeMetadataChanges: true }, snap => {
+          if (snap.metadata.fromCache) return;
           depositByBiz[bizId] = snap.docs.map(d => toEntry(d, bizId, biz.name));
-          push();
-        }, e => { console.error('[윙_발주 연동] 입금전 구독 오류:', bizId, e); depositByBiz[bizId] = depositByBiz[bizId] || []; push(); }),
+          schedule();
+        }, e => { console.error('[윙_발주 연동] 입금전 구독 오류:', bizId, e); failed.add(bizId); }),
       ];
     });
-    return () => { unsubs.forEach(u => u()); if (timer) clearTimeout(timer); };
+    // 창 닫거나 다른 탭으로 갈 때 대기 중인 것 바로 올림, 5분마다 다시 확인(날짜 바뀌어 10일 지난 건 빠지게)
+    const flush = () => { if (timer) send(); };
+    const onHide = () => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onHide);
+    const interval = setInterval(send, 5 * 60 * 1000);
+    return () => {
+      flush();
+      stopped = true;
+      unsubs.forEach(u => u());
+      if (retryTimer) clearTimeout(retryTimer);
+      clearInterval(interval);
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onHide);
+    };
   }, [isOwner, wingFeedBizKey]);
 
   const copyAllBizBeforeDepositToClipboard = async () => {
