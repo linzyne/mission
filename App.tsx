@@ -768,10 +768,10 @@ const App: React.FC = () => {
   // 윙업무 날짜: 주문번호 입력 시각 기준, 기록 없는 예전 행만 구매 탭 날짜 칸
   const pendingEntryDate = (en: ManualEntry) => en.orderNumberEnteredAt ? toLocalDateStr(new Date(en.orderNumberEnteredAt)) : (en.date || '');
 
-  // 예약완료 미처리 정렬: 주문번호 오름차순 → 품목 오름차순 → 사업자 → 날짜 최신순 → 입력 순
+  // 예약완료 미처리 정렬: 주문번호에 '실배' 있는 건 위로 모음 → 품목 오름차순 → 사업자 → 날짜 최신순 → 입력 순
   const comparePendingEntries = (a: ManualEntry & { bizName: string }, b: ManualEntry & { bizName: string }) => {
-    const orderCmp = String(a.orderNumber ?? '').localeCompare(String(b.orderNumber ?? ''), 'ko', { numeric: true });
-    if (orderCmp !== 0) return orderCmp;
+    const silbaeCmp = Number(String(b.orderNumber ?? '').includes('실배')) - Number(String(a.orderNumber ?? '').includes('실배'));
+    if (silbaeCmp !== 0) return silbaeCmp;
     const prodCmp = String(a.product ?? '').localeCompare(String(b.product ?? ''), 'ko');
     if (prodCmp !== 0) return prodCmp;
     const bizCmp = String(a.bizName ?? '').localeCompare(String(b.bizName ?? ''), 'ko');
