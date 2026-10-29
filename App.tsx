@@ -768,6 +768,16 @@ const App: React.FC = () => {
   // 윙업무 날짜: 주문번호 입력 시각 기준, 기록 없는 예전 행만 구매 탭 날짜 칸
   const pendingEntryDate = (en: ManualEntry) => en.orderNumberEnteredAt ? toLocalDateStr(new Date(en.orderNumberEnteredAt)) : (en.date || '');
 
+  // 예약완료 미처리 정렬: 품목 오름차순 → 사업자 → 날짜 최신순 → 입력 순
+  const comparePendingEntries = (a: ManualEntry & { bizName: string }, b: ManualEntry & { bizName: string }) => {
+    const prodCmp = (a.product || '').localeCompare(b.product || '', 'ko');
+    if (prodCmp !== 0) return prodCmp;
+    const bizCmp = a.bizName.localeCompare(b.bizName, 'ko');
+    if (bizCmp !== 0) return bizCmp;
+    const dateCmp = pendingEntryDate(b).localeCompare(pendingEntryDate(a));
+    if (dateCmp !== 0) return dateCmp;
+    return (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0);
+  };
   const loadAllBizPendingEntries = async () => {
     setAllBizPendingLoaded(false);
     const today = toLocalDateStr();
@@ -814,13 +824,7 @@ const App: React.FC = () => {
       } catch (e) { console.error('[reservationPending] load error:', bizId, e); return []; }
     }));
     const result = perBizResults.flat();
-    result.sort((a, b) => {
-      const bizCmp = a.bizName.localeCompare(b.bizName, 'ko');
-      if (bizCmp !== 0) return bizCmp;
-      const dateCmp = pendingEntryDate(b).localeCompare(pendingEntryDate(a));
-      if (dateCmp !== 0) return dateCmp;
-      return (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0);
-    });
+    result.sort(comparePendingEntries);
     setAllBizPendingEntries(result);
     setAllBizPendingLoaded(true);
   };
@@ -3460,7 +3464,7 @@ const App: React.FC = () => {
         const keys = new Set(last.entries.map(e => e.bizId + '_' + e.id));
         setRecentDepositHistory(prev => prev.filter(e => !keys.has(e.bizId + '_' + e.id)));
       } else {
-        setAllBizPendingEntries(restore);
+        setAllBizPendingEntries(prev => restore(prev).sort(comparePendingEntries));
       }
     } catch (e) { console.error(e); alert('오류: ' + e); }
   };
