@@ -770,9 +770,9 @@ const App: React.FC = () => {
 
   // 예약완료 미처리 정렬: 품목 오름차순 → 사업자 → 날짜 최신순 → 입력 순
   const comparePendingEntries = (a: ManualEntry & { bizName: string }, b: ManualEntry & { bizName: string }) => {
-    const prodCmp = (a.product || '').localeCompare(b.product || '', 'ko');
+    const prodCmp = String(a.product ?? '').localeCompare(String(b.product ?? ''), 'ko');
     if (prodCmp !== 0) return prodCmp;
-    const bizCmp = a.bizName.localeCompare(b.bizName, 'ko');
+    const bizCmp = String(a.bizName ?? '').localeCompare(String(b.bizName ?? ''), 'ko');
     if (bizCmp !== 0) return bizCmp;
     const dateCmp = pendingEntryDate(b).localeCompare(pendingEntryDate(a));
     if (dateCmp !== 0) return dateCmp;
@@ -824,7 +824,7 @@ const App: React.FC = () => {
       } catch (e) { console.error('[reservationPending] load error:', bizId, e); return []; }
     }));
     const result = perBizResults.flat();
-    result.sort(comparePendingEntries);
+    try { result.sort(comparePendingEntries); } catch (e) { console.error('[reservationPending] sort error:', e); }
     setAllBizPendingEntries(result);
     setAllBizPendingLoaded(true);
   };
