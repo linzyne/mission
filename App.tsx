@@ -1191,14 +1191,20 @@ const App: React.FC = () => {
 
   const [newProductPrice, setNewProductPrice] = useState({ name: '', price: 0, exposureId: '' });
 
-  // 구매 탭 품목 선택 시 팝업 메모. '오늘 이후 보지않기'는 이 브라우저에 품목id+메모내용으로 기억 → 메모가 바뀌면 다시 뜸
+  // 구매 탭 품목 선택 시 팝업 메모. 안보기는 이 브라우저에 품목id+메모내용으로 기억 → 메모가 바뀌면 다시 뜸
+  // 값: 'forever'(이제 다시 안보기) 또는 'YYYY-MM-DD'(그날 하루 안보기)
   const [productMemoPopup, setProductMemoPopup] = useState<ProductPrice | null>(null);
   const memoHideKey = (p: ProductPrice) => `productMemoHidden:${p.id}:${p.popupMemo || ''}`;
+  const todayLocal = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
   const showProductMemo = (productName: string) => {
     const p = productPrices.find(pp => pp.name === productName);
     if (!p || !(p.popupMemo || '').trim()) return;
-    try { if (localStorage.getItem(memoHideKey(p))) return; } catch {}
+    try { const v = localStorage.getItem(memoHideKey(p)); if (v === 'forever' || v === todayLocal()) return; } catch {}
     setProductMemoPopup(p);
+  };
+  const hideProductMemo = (value: string) => {
+    if (productMemoPopup) { try { localStorage.setItem(memoHideKey(productMemoPopup), value); } catch {} }
+    setProductMemoPopup(null);
   };
 
   // Firestore Sync: Sales Daily
@@ -7416,10 +7422,10 @@ const App: React.FC = () => {
             <div className="text-center text-sm font-black text-pink-500 mb-2">💌 {productMemoPopup.name}</div>
             <div className="bg-white/80 rounded-2xl px-4 py-3 text-sm text-gray-700 font-bold whitespace-pre-wrap break-words max-h-[50vh] overflow-y-auto">{productMemoPopup.popupMemo}</div>
             <div className="flex items-center justify-between mt-3">
-              <button
-                onClick={() => { try { localStorage.setItem(memoHideKey(productMemoPopup), '1'); } catch {} setProductMemoPopup(null); }}
-                className="text-[11px] text-gray-400 hover:text-gray-600 font-bold"
-              >오늘 이후 보지않기</button>
+              <div className="flex flex-col items-start gap-0.5">
+                <button onClick={() => hideProductMemo(todayLocal())} className="text-[11px] text-gray-400 hover:text-gray-600 font-bold">오늘 하루 안보기</button>
+                <button onClick={() => hideProductMemo('forever')} className="text-[11px] text-gray-400 hover:text-gray-600 font-bold">이제 다시 안보기</button>
+              </div>
               <button onClick={() => setProductMemoPopup(null)} className="px-4 py-1.5 bg-pink-400 hover:bg-pink-500 text-white rounded-full text-xs font-black shadow">알겠어요 ♡</button>
             </div>
           </div>
