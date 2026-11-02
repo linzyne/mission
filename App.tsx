@@ -769,6 +769,58 @@ const App: React.FC = () => {
   // 윙업무 날짜: 주문번호 입력 시각 기준, 기록 없는 예전 행만 구매 탭 날짜 칸
   const pendingEntryDate = (en: ManualEntry) => en.orderNumberEnteredAt ? toLocalDateStr(new Date(en.orderNumberEnteredAt)) : (en.date || '');
 
+  // 윙업무 목록 컬럼 정렬: 제목 누르면 오름차순 → 내림차순 → 원래 순서
+  const [wingSort, setWingSort] = useState<Record<string, { key: string; dir: 'asc' | 'desc' }>>({});
+  const toggleWingSort = (table: string, key: string) => setWingSort(prev => {
+    const cur = prev[table];
+    const next = { ...prev };
+    if (!cur || cur.key !== key) next[table] = { key, dir: 'asc' };
+    else if (cur.dir === 'asc') next[table] = { key, dir: 'desc' };
+    else delete next[table];
+    return next;
+  });
+  const sortWingRows = <T,>(rows: T[], table: string, getters: Record<string, (r: T) => string | number | undefined | null>, groupOf?: (r: T) => string) => {
+    const s = wingSort[table];
+    const get = s && getters[s.key];
+    if (!get) return rows;
+    const groupOrder = new Map<string, number>();
+    if (groupOf) rows.forEach(r => { const g = groupOf(r); if (!groupOrder.has(g)) groupOrder.set(g, groupOrder.size); });
+    const sign = s.dir === 'asc' ? 1 : -1;
+    return rows.map((r, i) => ({ r, i })).sort((a, b) => {
+      if (groupOf) {
+        const gCmp = groupOrder.get(groupOf(a.r))! - groupOrder.get(groupOf(b.r))!;
+        if (gCmp !== 0) return gCmp;
+      }
+      const va = get(a.r), vb = get(b.r);
+      const ea = va === undefined || va === null || va === '', eb = vb === undefined || vb === null || vb === '';
+      if (ea || eb) return ea === eb ? a.i - b.i : ea ? 1 : -1; // 빈 칸은 항상 아래
+      const cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb), 'ko', { numeric: true });
+      return cmp !== 0 ? cmp * sign : a.i - b.i;
+    }).map(x => x.r);
+  };
+  const wingSortTh = (table: string, key: string, label: React.ReactNode, className = 'py-1 px-2 text-left whitespace-nowrap') => {
+    const s = wingSort[table];
+    const on = s?.key === key;
+    return (
+      <th className={`${className} cursor-pointer select-none hover:text-gray-800`} onClick={() => toggleWingSort(table, key)}>
+        {label}<span className={`ml-0.5 ${on ? 'text-pink-500' : 'text-gray-300'}`}>{on ? (s.dir === 'asc' ? '▲' : '▼') : '↕'}</span>
+      </th>
+    );
+  };
+  type WingEntry = ManualEntry & { bizId: string; bizName: string };
+  const wingEntryGetters = {
+    biz: (en: WingEntry) => en.bizName,
+    name1: (en: WingEntry) => en.name1,
+    name2: (en: WingEntry) => en.name2,
+    receiver: (en: WingEntry) => en.name2 || en.ordererName,
+    orderNumber: (en: WingEntry) => en.orderNumber,
+    product: (en: WingEntry) => en.product,
+    amount: (en: WingEntry) => en.paymentAmount,
+    account: (en: WingEntry) => en.accountNumber,
+    checkedAt: (en: WingEntry) => (en as any).beforeDepositCheckedAt,
+    date: (en: WingEntry) => en.date,
+  };
+
   // 예약완료 미처리 정렬: 주문번호에 '실배' 있는 건 위로 모음 → 품목 오름차순 → 사업자 → 날짜 최신순 → 입력 순
   const comparePendingEntries = (a: ManualEntry & { bizName: string }, b: ManualEntry & { bizName: string }) => {
     const silbaeCmp = Number(String(b.orderNumber ?? '').includes('실배')) - Number(String(a.orderNumber ?? '').includes('실배'));
@@ -5742,16 +5794,16 @@ const App: React.FC = () => {
                             <thead>
                               <tr className="bg-gray-50 text-gray-500 font-bold">
                                 <th className="py-1 px-2 w-8 text-center"></th>
-                                <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
-                                <th className="py-1 px-2 text-left whitespace-nowrap">날짜</th>
-                                <th className="py-1 px-2 text-left whitespace-nowrap">이름1</th>
-                                <th className="py-1 px-2 text-left whitespace-nowrap">받는사람</th>
-                                <th className="py-1 px-2 text-left whitespace-nowrap">주문번호</th>
-                                <th className="py-1 px-2 text-left whitespace-nowrap">품목</th>
+                                {wingSortTh('pending', 'biz', '사업자')}
+                                {wingSortTh('pending', 'date', '날짜')}
+                                {wingSortTh('pending', 'name1', '이름1')}
+                                {wingSortTh('pending', 'receiver', '받는사람')}
+                                {wingSortTh('pending', 'orderNumber', '주문번호')}
+                                {wingSortTh('pending', 'product', '품목')}
                               </tr>
                             </thead>
                             <tbody>
-                              {allBizPendingEntries.map(en => {
+                              {sortWingRows(allBizPendingEntries, 'pending', { ...wingEntryGetters, date: en => en.orderNumberEnteredAt || en.createdAt || pendingEntryDate(en) }).map(en => {
                                 const key = en.bizId + '_' + en.id;
                                 const checked = selectedPendingIds.has(key);
                                 return (
@@ -5843,20 +5895,22 @@ const App: React.FC = () => {
                                   }}
                                 />
                               </th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">체크날짜</th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">날짜</th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">이름1</th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">이름2</th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">결제금액</th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">계좌번호</th>
+                              {wingSortTh('beforeDeposit', 'biz', '사업자')}
+                              {wingSortTh('beforeDeposit', 'checkedAt', '체크날짜')}
+                              {wingSortTh('beforeDeposit', 'date', '날짜')}
+                              {wingSortTh('beforeDeposit', 'name1', '이름1')}
+                              {wingSortTh('beforeDeposit', 'name2', '이름2')}
+                              {wingSortTh('beforeDeposit', 'amount', '결제금액')}
+                              {wingSortTh('beforeDeposit', 'account', '계좌번호')}
                             </tr>
                           </thead>
                           <tbody>
                             {(() => {
                               const rows: React.ReactNode[] = [];
                               let prevBizId = '';
-                              allBizBeforeDepositEntries.forEach((en, idx) => {
+                              // 사업자 칸 정렬이 아니면 사업자 묶음은 그대로 두고 그 안에서만 정렬
+                              const sortedBeforeDeposit = sortWingRows(allBizBeforeDepositEntries, 'beforeDeposit', wingEntryGetters, wingSort.beforeDeposit?.key === 'biz' ? undefined : en => en.bizId);
+                              sortedBeforeDeposit.forEach((en, idx) => {
                                 const key = en.bizId + '_' + en.id;
                                 const checked = selectedAllDepositIds.has(key);
                                 if (en.bizId !== prevBizId) {
@@ -5900,10 +5954,10 @@ const App: React.FC = () => {
                                     <td className="py-1 px-2 text-blue-600 whitespace-nowrap">{en.accountNumber || '-'}</td>
                                   </tr>
                                 );
-                                if ((idx + 1) % 15 === 0 || idx === allBizBeforeDepositEntries.length - 1 || allBizBeforeDepositEntries[idx + 1]?.bizId !== en.bizId) {
+                                if ((idx + 1) % 15 === 0 || idx === sortedBeforeDeposit.length - 1 || sortedBeforeDeposit[idx + 1]?.bizId !== en.bizId) {
                                   const bizItems = allBizBeforeDepositEntries.filter(e => e.bizId === en.bizId);
                                   const subtotal = bizItems.reduce((sum, e) => sum + (e.paymentAmount || 0), 0);
-                                  if (idx === allBizBeforeDepositEntries.length - 1 || allBizBeforeDepositEntries[idx + 1]?.bizId !== en.bizId) {
+                                  if (idx === sortedBeforeDeposit.length - 1 || sortedBeforeDeposit[idx + 1]?.bizId !== en.bizId) {
                                     rows.push(
                                       <tr key={`subtotal-${key}`} className="border-t border-yellow-300 bg-yellow-50">
                                         <td colSpan={6} className="py-0.5 px-3 text-right text-[10px] font-black text-yellow-700">소계 ({bizItems.length}건)</td>
@@ -5950,15 +6004,15 @@ const App: React.FC = () => {
                               <table className="w-full text-xs border-collapse">
                                 <thead>
                                   <tr className="bg-gray-50 text-gray-500 font-bold">
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">처리시각</th>
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">받는사람</th>
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">주문번호</th>
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">품목</th>
+                                    {wingSortTh('reservationHistory', 'biz', '사업자')}
+                                    {wingSortTh('reservationHistory', 'doneAt', '처리시각')}
+                                    {wingSortTh('reservationHistory', 'receiver', '받는사람')}
+                                    {wingSortTh('reservationHistory', 'orderNumber', '주문번호')}
+                                    {wingSortTh('reservationHistory', 'product', '품목')}
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {entries.map(en => (
+                                  {sortWingRows(entries, 'reservationHistory', { ...wingEntryGetters, doneAt: en => en.reservationCompletedAt }).map(en => (
                                     <tr key={en.bizId + '_' + en.id} className="border-t border-gray-100">
                                       <td className="py-1 px-2 font-bold whitespace-nowrap" style={{ color: getBizColor(en.bizId) }}>{en.bizName}</td>
                                       <td className="py-1 px-2 text-gray-400 whitespace-nowrap">{formatCheckTime(en.reservationCompletedAt)}</td>
@@ -6042,17 +6096,17 @@ const App: React.FC = () => {
                                         }}
                                       />
                                     </th>
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">체크날짜</th>
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">처리시각</th>
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">이름1</th>
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">이름2</th>
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">결제금액</th>
-                                    <th className="py-1 px-2 text-left whitespace-nowrap">계좌번호</th>
+                                    {wingSortTh('depositHistory', 'biz', '사업자')}
+                                    {wingSortTh('depositHistory', 'checkedAt', '체크날짜')}
+                                    {wingSortTh('depositHistory', 'doneAt', '처리시각')}
+                                    {wingSortTh('depositHistory', 'name1', '이름1')}
+                                    {wingSortTh('depositHistory', 'name2', '이름2')}
+                                    {wingSortTh('depositHistory', 'amount', '결제금액')}
+                                    {wingSortTh('depositHistory', 'account', '계좌번호')}
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {entries.map(en => {
+                                  {sortWingRows(entries, 'depositHistory', { ...wingEntryGetters, doneAt: en => en.depositedAt }).map(en => {
                                     const key = en.bizId + '_' + en.id;
                                     const checked = selectedDepositHistoryIds.has(key);
                                     return (
@@ -6119,16 +6173,16 @@ const App: React.FC = () => {
                         <table className="w-full text-xs border-collapse">
                           <thead>
                             <tr className="bg-gray-50 text-gray-500 font-bold">
-                              <th className="py-1 px-2 text-left whitespace-nowrap">사업자</th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">이름1</th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">이름2</th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">주문번호</th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">활동</th>
-                              <th className="py-1 px-2 text-left whitespace-nowrap">시각</th>
+                              {wingSortTh('depositLog', 'biz', '사업자')}
+                              {wingSortTh('depositLog', 'name1', '이름1')}
+                              {wingSortTh('depositLog', 'name2', '이름2')}
+                              {wingSortTh('depositLog', 'orderNumber', '주문번호')}
+                              {wingSortTh('depositLog', 'action', '활동')}
+                              {wingSortTh('depositLog', 'at', '시각')}
                             </tr>
                           </thead>
                           <tbody>
-                            {recentBeforeDepositLog.map((ev, idx) => (
+                            {sortWingRows(recentBeforeDepositLog, 'depositLog', { biz: ev => ev.bizName, name1: ev => ev.name1, name2: ev => ev.name2, orderNumber: ev => ev.orderNumber, action: ev => ev.action === 'check' ? '체크' : '해제', at: ev => ev.at }).map((ev, idx) => (
                               <tr key={idx} className="border-t border-gray-100">
                                 <td className="py-1 px-2 font-bold whitespace-nowrap" style={{ color: getBizColor(ev.bizId) }}>{ev.bizName}</td>
                                 <td className="py-1 px-2 font-bold text-gray-800 whitespace-nowrap">{ev.name1 || '-'}</td>
