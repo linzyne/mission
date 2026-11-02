@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, AdminTab, ManualEntry, ReviewEntry, ProductPrice, SalesDailyEntry, SalesSubTab, BusinessInfo, ExportTemplate, ExportColumn, ExportFieldSource, PlatformConfig } from './types';
 import { verifyImage } from './services/geminiService';
 import { db, auth, wingDb } from './services/firebase';
@@ -2174,6 +2174,20 @@ const App: React.FC = () => {
     if (s.length === 8) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
     return '';
   };
+
+  // 같은 주문번호가 두 줄 이상인 행들 (경고창을 넘겨도 표에서 계속 보이게)
+  const duplicateOrderEntryIds = useMemo(() => {
+    const byNum = new Map<string, string[]>();
+    manualEntries.forEach(e => {
+      const num = String(e.orderNumber || '').trim();
+      if (!num || num.includes('실배')) return;
+      byNum.set(num, [...(byNum.get(num) || []), e.id]);
+    });
+    const ids = new Set<string>();
+    let groups = 0;
+    byNum.forEach(list => { if (list.length > 1) { groups++; list.forEach(id => ids.add(id)); } });
+    return { ids, groups };
+  }, [manualEntries]);
 
   // 주문번호 중복 체크: 동일 주문번호를 가진 다른 행이 있으면 이름과 함께 경고
   const checkDuplicateOrderNumber = (entryId: string, newVal: string) => {
@@ -6900,7 +6914,7 @@ const App: React.FC = () => {
                                   <td className={`p-0 border border-gray-200 ${isPink ? 'bg-white' : ''}`}><input ref={(el) => syncInputValue(el, entry.name2)} data-row={idx} data-col={4} data-entryid={entry.id} defaultValue={entry.name2} onKeyDown={(e) => handleCellKeyDown(e, entry, 'name2', idx, 4)} type="text" className={`excel-input text-center ${isPink ? 'font-black' : rowColor}`} style={getCellColor(entry, 'name2') ? { color: getCellColor(entry, 'name2') } : isPink ? { color: '#ff4da6' } : undefined} placeholder="받는사람" onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'name2')} onBlur={(e) => handleCellBlur(e, entry, 'name2')} /></td>
                                   {(() => {
                                     const orderNumberTd = (
-                                      <td key="orderNumber" className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} data-entryid={entry.id} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" className={`excel-input text-center ${rowColor}`} style={getCellColor(entry, 'orderNumber') ? { color: getCellColor(entry, 'orderNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'orderNumber')} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
+                                      <td key="orderNumber" className="p-0 border border-gray-200"><input ref={(el) => syncInputValue(el, entry.orderNumber)} data-row={idx} data-col={5} data-entryid={entry.id} defaultValue={entry.orderNumber} onKeyDown={(e) => handleCellKeyDown(e, entry, 'orderNumber', idx, 5)} type="text" title={duplicateOrderEntryIds.ids.has(entry.id) ? '다른 줄과 같은 주문번호' : undefined} className={`excel-input text-center ${duplicateOrderEntryIds.ids.has(entry.id) ? 'bg-pink-200' : rowColor}`} style={getCellColor(entry, 'orderNumber') ? { color: getCellColor(entry, 'orderNumber') } : undefined} onContextMenu={(e) => handleCellContextMenu(e, entry.id, 'orderNumber')} onBlur={(e) => handleCellBlur(e, entry, 'orderNumber')} /></td>
                                     );
                                     return (
                                       <>
@@ -6942,6 +6956,16 @@ const App: React.FC = () => {
                         })()}
                       </tbody>
                     </table>
+                    {!duplicateFocusIds && duplicateOrderEntryIds.groups > 0 && (
+                      <div className="sticky bottom-4 z-30 pointer-events-none">
+                        <div className="flex justify-end pr-4">
+                          <button
+                            onClick={() => setDuplicateFocusIds(new Set(duplicateOrderEntryIds.ids))}
+                            className="pointer-events-auto px-3 py-1.5 rounded-full text-xs font-bold text-black bg-pink-400 hover:bg-pink-500 shadow-lg"
+                          >중복 주문번호 {duplicateOrderEntryIds.groups}건 보기</button>
+                        </div>
+                      </div>
+                    )}
                     {duplicateFocusIds && (
                       <div className="sticky bottom-4 z-30 pointer-events-none">
                         <div className="flex justify-end pr-4">
