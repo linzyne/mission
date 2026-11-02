@@ -150,6 +150,7 @@ export interface ProductPrice {
   sellingPrice?: number;
   sellingPriceNoCoupon?: number;
   margin?: number;
+  popupMemo?: string; // 구매 탭에서 품목 고르면 뜨는 팝업 메모
 }
 
 export interface BusinessInfo {

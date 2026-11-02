@@ -1191,6 +1191,16 @@ const App: React.FC = () => {
 
   const [newProductPrice, setNewProductPrice] = useState({ name: '', price: 0, exposureId: '' });
 
+  // 구매 탭 품목 선택 시 팝업 메모. '오늘 이후 보지않기'는 이 브라우저에 품목id+메모내용으로 기억 → 메모가 바뀌면 다시 뜸
+  const [productMemoPopup, setProductMemoPopup] = useState<ProductPrice | null>(null);
+  const memoHideKey = (p: ProductPrice) => `productMemoHidden:${p.id}:${p.popupMemo || ''}`;
+  const showProductMemo = (productName: string) => {
+    const p = productPrices.find(pp => pp.name === productName);
+    if (!p || !(p.popupMemo || '').trim()) return;
+    try { if (localStorage.getItem(memoHideKey(p))) return; } catch {}
+    setProductMemoPopup(p);
+  };
+
   // Firestore Sync: Sales Daily
   const [salesDaily, setSalesDaily] = useState<SalesDailyEntry[]>([]);
   const salesDailyRef = useRef<SalesDailyEntry[]>([]);
@@ -5590,6 +5600,14 @@ const App: React.FC = () => {
                                   onBlur={(e) => { if (e.target.value !== price.name) updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { name: e.target.value }); }}
                                   className="w-full bg-transparent outline-none font-bold text-gray-900 border-b border-transparent focus:border-blue-500 transition-colors"
                                 />
+                                <textarea
+                                  defaultValue={price.popupMemo || ''}
+                                  key={`popupMemo-${price.id}-${price.popupMemo}`}
+                                  rows={1}
+                                  onBlur={(e) => { if (e.target.value !== (price.popupMemo || '')) updateDoc(doc(db, getCol('productPrices', colPrefix), price.id), { popupMemo: e.target.value }); }}
+                                  className="w-full bg-transparent outline-none text-[10px] text-pink-500 font-normal border-b border-transparent focus:border-pink-300 transition-colors resize-y"
+                                  placeholder="🐰 팝업 메모 (구매 탭에서 고르면 뜸)"
+                                />
                               </div>
                             </td>
                             <td className="py-1 px-3">
@@ -6848,6 +6866,7 @@ const App: React.FC = () => {
                                         } else {
                                           updateManualEntry(entry.id, 'product', newVal);
                                         }
+                                        showProductMemo(newVal);
                                       }}
                                       onKeyDown={(e) => handleKeyDown(e, idx, 1)}
                                     >
@@ -7383,6 +7402,25 @@ const App: React.FC = () => {
                   columns: [{ header: '주문번호', source: 'orderNumber' }],
                 });
               }} className="w-full py-2.5 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600">+ 새 양식 추가</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 품목 팝업 메모 */}
+      {productMemoPopup && (
+        <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4" onClick={() => setProductMemoPopup(null)}>
+          <div className="relative w-full max-w-xs bg-gradient-to-br from-yellow-50 to-pink-50 border-2 border-dashed border-pink-300 rounded-3xl shadow-2xl px-5 pt-8 pb-4 animate-in zoom-in-95 fade-in duration-200" onClick={e => e.stopPropagation()}>
+            <div className="absolute -top-7 left-1/2 -translate-x-1/2 text-5xl select-none">🐰</div>
+            <button onClick={() => setProductMemoPopup(null)} className="absolute top-2 right-3 text-pink-300 hover:text-pink-500 text-lg font-black">×</button>
+            <div className="text-center text-sm font-black text-pink-500 mb-2">💌 {productMemoPopup.name}</div>
+            <div className="bg-white/80 rounded-2xl px-4 py-3 text-sm text-gray-700 font-bold whitespace-pre-wrap break-words max-h-[50vh] overflow-y-auto">{productMemoPopup.popupMemo}</div>
+            <div className="flex items-center justify-between mt-3">
+              <button
+                onClick={() => { try { localStorage.setItem(memoHideKey(productMemoPopup), '1'); } catch {} setProductMemoPopup(null); }}
+                className="text-[11px] text-gray-400 hover:text-gray-600 font-bold"
+              >오늘 이후 보지않기</button>
+              <button onClick={() => setProductMemoPopup(null)} className="px-4 py-1.5 bg-pink-400 hover:bg-pink-500 text-white rounded-full text-xs font-black shadow">알겠어요 ♡</button>
             </div>
           </div>
         </div>
