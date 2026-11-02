@@ -728,6 +728,7 @@ const App: React.FC = () => {
   // 예약완료 미처리 전체 사업자 목록
   const [allBizPendingEntries, setAllBizPendingEntries] = useState<Array<ManualEntry & { bizId: string; bizName: string }>>([]);
   const [allBizPendingLoaded, setAllBizPendingLoaded] = useState(false);
+  const [allBizPendingFailed, setAllBizPendingFailed] = useState<string[]>([]); // 불러오기 실패·응답 없음 사업자 이름
   const [selectedPendingIds, setSelectedPendingIds] = useState<Set<string>>(new Set());
   const [pendingUndoStack, setPendingUndoStack] = useState<Array<{
     type: 'reservationComplete' | 'hiddenFromPending' | 'depositComplete';
@@ -780,8 +781,14 @@ const App: React.FC = () => {
     if (dateCmp !== 0) return dateCmp;
     return (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0);
   };
+  // 서버 응답이 끝없이 안 오면(연결 멈춤) '불러오는 중'에 서 있지 않게 20초 뒤 실패로 처리
+  const getDocsWithTimeout = <T,>(p: Promise<T>, ms = 20000) => Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ]);
   const loadAllBizPendingEntries = async () => {
     setAllBizPendingLoaded(false);
+    const failed: string[] = [];
     const today = toLocalDateStr();
     const tenDaysAgo = toLocalDateStr(new Date(Date.now() - 9 * 24 * 60 * 60 * 1000));
     const bizEntries = Object.entries(allBusinesses);
@@ -789,7 +796,7 @@ const App: React.FC = () => {
       const colName = getCol('manualEntries', biz.collectionPrefix);
       try {
         const q = query(collection(db, colName), where('date', '>=', tenDaysAgo), where('date', '<=', today));
-        const snapshot = await getDocs(q);
+        const snapshot = await getDocsWithTimeout(getDocs(q));
         return snapshot.docs.flatMap(d => {
           const data = d.data();
           if (data.reservationComplete) return [];
@@ -823,11 +830,12 @@ const App: React.FC = () => {
             orderNumberEnteredAt: data.orderNumberEnteredAt,
           } as ManualEntry & { bizId: string; bizName: string }];
         });
-      } catch (e) { console.error('[reservationPending] load error:', bizId, e); return []; }
+      } catch (e) { console.error('[reservationPending] load error:', bizId, e); failed.push(biz.name); return []; }
     }));
     const result = perBizResults.flat();
     try { result.sort(comparePendingEntries); } catch (e) { console.error('[reservationPending] sort error:', e); }
     setAllBizPendingEntries(result);
+    setAllBizPendingFailed(failed);
     setAllBizPendingLoaded(true);
   };
 
@@ -5644,6 +5652,9 @@ const App: React.FC = () => {
                       <div>
                         <h2 className="text-base font-black text-gray-900">예약완료 미처리</h2>
                         <p className="text-xs text-gray-400 mt-0.5">최근 10일 이내 · {allBizPendingLoaded ? `${allBizPendingEntries.length}건` : '로딩 중...'}</p>
+                        {allBizPendingLoaded && allBizPendingFailed.length > 0 && (
+                          <p className="text-xs text-red-500 font-bold mt-0.5">불러오기 실패: {allBizPendingFailed.join(', ')} · 새로고침을 눌러 주세요</p>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         {pendingUndoButton}
