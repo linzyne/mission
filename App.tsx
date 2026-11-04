@@ -2175,12 +2175,16 @@ const App: React.FC = () => {
     return '';
   };
 
-  // 같은 주문번호가 두 줄 이상인 행들 (경고창을 넘겨도 표에서 계속 보이게)
+  // 같은 주문번호가 두 줄 이상인 행들 (경고창을 넘겨도 표에서 계속 보이게). 옛날 줄은 빼고 최근 5일 날짜 줄끼리만 본다.
   const duplicateOrderEntryIds = useMemo(() => {
+    const since = new Date();
+    since.setDate(since.getDate() - 4);
+    const sinceStr = toLocalDateStr(since);
     const byNum = new Map<string, string[]>();
     manualEntries.forEach(e => {
       const num = String(e.orderNumber || '').trim();
       if (!num || num.includes('실배')) return;
+      if ((e.date || '') < sinceStr) return;
       byNum.set(num, [...(byNum.get(num) || []), e.id]);
     });
     const ids = new Set<string>();
