@@ -1196,6 +1196,12 @@ const App: React.FC = () => {
   const [productMemoPopup, setProductMemoPopup] = useState<ProductPrice | null>(null);
   const memoHideKey = (p: ProductPrice) => `productMemoHidden:${p.id}:${p.popupMemo || ''}`;
   const todayLocal = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  // 팝업 메모 속 시간("4시 이후", "오후 2시30분까지" 등)을 뽑아 목록 갯수칸에 보임
+  const productMemoTime = (productName: string) => {
+    const memo = productPrices.find(pp => pp.name === productName)?.popupMemo || '';
+    const m = memo.match(/(오전|오후)?\s*\d{1,2}\s*(?:시(?:\s*\d{1,2}\s*분|\s*반)?|:\d{2})(?:\s*(이후|이전|부터|까지|전|후))?/);
+    return m ? m[0].replace(/\s+/g, '') : '';
+  };
   const showProductMemo = (productName: string) => {
     const p = productPrices.find(pp => pp.name === productName);
     if (!p || !(p.popupMemo || '').trim()) return;
@@ -6684,7 +6690,7 @@ const App: React.FC = () => {
                           </th>
                           <th className="py-0 px-0.5 overflow-hidden relative hidden md:table-cell" style={{ width: colWidths.photo + 'px', border: '1px solid #000' }}>사진<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('photo', e)} onDoubleClick={() => resetColWidth('photo')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.id + 'px' }} onClick={() => handleSort('id')}>순번 {sortConfig?.key === 'id' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('id', e)} onDoubleClick={() => resetColWidth('id')} /></th>
-                          <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.count + 'px' }} onClick={() => handleSort('count')}>갯수 {sortConfig?.key === 'count' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('count', e)} onDoubleClick={() => resetColWidth('count')} /></th>
+                          <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative hidden md:table-cell" style={{ width: colWidths.count + 'px' }} onClick={() => handleSort('count')}>시간 {sortConfig?.key === 'count' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('count', e)} onDoubleClick={() => resetColWidth('count')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.product + 'px' }} onClick={() => handleSort('product')}>품목 {sortConfig?.key === 'product' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('product', e)} onDoubleClick={() => resetColWidth('product')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden relative hidden md:table-cell" style={{ width: colWidths.coupon + 'px' }}>쿠폰<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('coupon', e)} onDoubleClick={() => resetColWidth('coupon')} /></th>
                           <th className="py-0 px-0.5 overflow-hidden cursor-pointer hover:bg-gray-200 relative" style={{ width: colWidths.date + 'px' }} onClick={() => handleSort('date')}>날짜 {sortConfig?.key === 'date' && (sortConfig.direction === 'asc' ? '↑' : '↓')}<div className="col-resize-handle" onMouseDown={(e) => handleColResizeStart('date', e)} onDoubleClick={() => resetColWidth('date')} /></th>
@@ -6870,7 +6876,7 @@ const App: React.FC = () => {
                                     </div>
                                   </td>
                                   <td className="p-0.5 border border-gray-200 text-center text-gray-400 text-[10px] hidden md:table-cell">{idx + 1}</td>
-                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input ref={(el) => syncInputValue(el, entry.count > 0 ? entry.count : '')} data-row={idx} data-col={0} data-entryid={entry.id} defaultValue={entry.count > 0 ? entry.count : ''} onKeyDown={(e) => handleCellKeyDown(e, entry, 'count', idx, 0)} type="number" className={`excel-input ${rowColor}`} onBlur={(e) => handleCellBlur(e, entry, 'count')} /></td>
+                                  <td className="p-0 border border-gray-200 hidden md:table-cell"><input readOnly tabIndex={-1} data-row={idx} data-col={0} data-entryid={entry.id} value={productMemoTime(entry.product)} onKeyDown={(e) => handleKeyDown(e, idx, 0)} title={productMemoTime(entry.product) ? '품목 팝업 메모의 시간' : undefined} className={`excel-input ${rowColor} text-center text-[10px] font-bold text-pink-500 cursor-default`} /></td>
                                   <td className="p-0 border border-gray-200">
                                     <select data-row={idx} data-col={1} data-entryid={entry.id}
                                       className={`excel-input ${rowColor} cursor-pointer`}
