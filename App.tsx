@@ -821,16 +821,12 @@ const App: React.FC = () => {
     date: (en: WingEntry) => en.date,
   };
 
-  // 예약완료 미처리 정렬: 주문번호에 '실배' 있는 건 위로 모음 → 품목 오름차순 → 사업자 → 날짜 최신순 → 입력 순
+  // 예약완료 미처리 정렬: 주문번호에 '실배' 있는 건 위로 모음 → 주문번호 오름차순 → 입력 순
   const comparePendingEntries = (a: ManualEntry & { bizName: string }, b: ManualEntry & { bizName: string }) => {
     const silbaeCmp = Number(String(b.orderNumber ?? '').includes('실배')) - Number(String(a.orderNumber ?? '').includes('실배'));
     if (silbaeCmp !== 0) return silbaeCmp;
-    const prodCmp = String(a.product ?? '').localeCompare(String(b.product ?? ''), 'ko');
-    if (prodCmp !== 0) return prodCmp;
-    const bizCmp = String(a.bizName ?? '').localeCompare(String(b.bizName ?? ''), 'ko');
-    if (bizCmp !== 0) return bizCmp;
-    const dateCmp = pendingEntryDate(b).localeCompare(pendingEntryDate(a));
-    if (dateCmp !== 0) return dateCmp;
+    const orderCmp = String(a.orderNumber ?? '').trim().localeCompare(String(b.orderNumber ?? '').trim(), 'ko', { numeric: true });
+    if (orderCmp !== 0) return orderCmp;
     return (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0);
   };
   // 서버 응답이 끝없이 안 오면(연결 멈춤) '불러오는 중'에 서 있지 않게 20초 뒤 실패로 처리
