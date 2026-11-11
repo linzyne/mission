@@ -1276,6 +1276,39 @@ const App: React.FC = () => {
   const batchUploadFileRef = useRef<HTMLInputElement>(null);
   const [salesSubTab, setSalesSubTab] = useState<SalesSubTab>('summary');
 
+  // 전체 사업자 마진: 매출 > 전체 사업자 칸을 볼 때만 모든 사업자의 그 해 salesDaily·monthlyOverhead를 구독
+  const [allBizSales, setAllBizSales] = useState<Record<string, SalesDailyEntry[]>>({});
+  const [allBizOverhead, setAllBizOverhead] = useState<Record<string, Record<string, number>>>({}); // bizId → 월 → 비용(양수)
+  const allBizKey = Object.entries(allBusinesses).map(([id, b]) => `${id}:${b.collectionPrefix}`).sort().join('|');
+  useEffect(() => {
+    if (adminTab !== 'sales' || salesSubTab !== 'allBiz' || !authUser) return;
+    const y = salesMonth.year;
+    const unsubs = Object.entries(allBusinesses).flatMap(([bizId, biz]) => [
+      onSnapshot(query(collection(db, getCol('salesDaily', biz.collectionPrefix)), where('date', '>=', `${y}-01-01`), where('date', '<=', `${y}-12-31`)), (snap) => {
+        setAllBizSales(prev => ({ ...prev, [bizId]: snap.docs.map(d => ({ id: d.id, ...d.data() } as SalesDailyEntry)) }));
+      }, onFbError),
+      onSnapshot(collection(db, getCol('monthlyOverhead', biz.collectionPrefix)), (snap) => {
+        // 손익표와 같은 셈: 업로드 비용(물류비 뺌) − 직접 입력 비용(음수로 저장)
+        const byMonth: Record<string, number> = {};
+        snap.docs.forEach(d => {
+          const data = d.data() as { month: string; categories?: Record<string, number>; items?: { amount: number }[]; isManual?: boolean };
+          if (!data.month) return;
+          let amt = 0;
+          if (data.isManual) {
+            const manual = Array.isArray(data.items) ? data.items.reduce((s, it) => s + (Number(it.amount) || 0), 0)
+              : Object.values(data.categories || {}).reduce((s: number, v) => s + (Number(v) || 0), 0);
+            amt = -manual;
+          } else if (data.categories) {
+            amt = sumOverheadCats(Object.fromEntries(Object.entries(data.categories).map(([k, v]) => [k, Number(v) || 0])));
+          }
+          byMonth[data.month] = (byMonth[data.month] || 0) + amt;
+        });
+        setAllBizOverhead(prev => ({ ...prev, [bizId]: byMonth }));
+      }, onFbError),
+    ]);
+    return () => unsubs.forEach(u => u());
+  }, [adminTab, salesSubTab, salesMonth.year, allBizKey, authUser?.uid]);
+
   // Auto-sync: 비활성화됨 (수동 관리)
   // 1월·2월은 수동 입력 데이터 - 보호 대상
   const isProtectedMonth = (monthStr: string) => monthStr === '2026-01' || monthStr === '2026-02';
@@ -4643,6 +4676,9 @@ const App: React.FC = () => {
                     <button onClick={() => setSalesSubTab('profitLoss')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'profitLoss' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>손익표</button>
                     <button onClick={() => setSalesSubTab('salesDetail')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'salesDetail' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>품목별판매</button>
                     <button onClick={() => setSalesSubTab('dailySum')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'dailySum' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>일별합계</button>
+                    {Object.keys(allBusinesses).length > 1 && (
+                      <button onClick={() => setSalesSubTab('allBiz')} className={`px-5 py-2 rounded-xl text-sm font-black transition-colors ${salesSubTab === 'allBiz' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>전체 사업자</button>
+                    )}
                   </div>
 
                   {salesSubTab === 'summary' ? (() => {
@@ -5132,6 +5168,119 @@ const App: React.FC = () => {
                               </table>
                             </div>
                           )}
+                        </div>
+                      );
+                    })()
+                  ) : salesSubTab === 'allBiz' ? (
+                    /* ===== 전체 사업자: 모든 사업자 합친 일 마진·월 마진 ===== */
+                    (() => {
+                      const bizList = Object.entries(allBusinesses).sort(([a], [b]) => (a === mainBizId ? -1 : b === mainBizId ? 1 : 0));
+                      if (!bizList.every(([id]) => allBizSales[id] && allBizOverhead[id])) return <p className="text-gray-300 text-center py-16">불러오는 중…</p>;
+                      const net = (e: SalesDailyEntry) => (e.totalMargin || 0) + (e.adCost || 0) + (e.housePurchase || 0) + (e.solution || 0) + (e.refund || 0);
+                      const y = String(salesMonth.year);
+                      const fmtWon = (n: number) => `${n.toLocaleString()}원`;
+                      const color = (n: number) => n > 0 ? 'text-blue-600' : n < 0 ? 'text-red-500' : 'text-gray-300';
+
+                      // 월별: 사업자별 순마진(일별합계와 같은 셈) − 비용
+                      const monthNet: Record<string, Record<string, number>> = {};
+                      const byDate: Record<string, Record<string, number>> = {};
+                      bizList.forEach(([bizId]) => (allBizSales[bizId] || []).forEach(e => {
+                        if (!e.date?.startsWith(y)) return;
+                        const m = e.date.substring(0, 7);
+                        (monthNet[m] ||= {})[bizId] = (monthNet[m][bizId] || 0) + net(e);
+                        if (m === salesMonthStr) (byDate[e.date] ||= {})[bizId] = (byDate[e.date][bizId] || 0) + net(e);
+                      }));
+                      const months = Array.from({ length: 12 }, (_, i) => `${y}-${String(i + 1).padStart(2, '0')}`)
+                        .filter(m => monthNet[m] || bizList.some(([id]) => allBizOverhead[id]?.[m]));
+                      const monthSum = (m: string) => {
+                        const n = bizList.reduce((s, [id]) => s + (monthNet[m]?.[id] || 0), 0);
+                        const c = bizList.reduce((s, [id]) => s + (allBizOverhead[id]?.[m] || 0), 0);
+                        return { net: n, cost: c, profit: n - c };
+                      };
+                      const yearTotal = months.reduce((t, m) => { const s = monthSum(m); return { net: t.net + s.net, cost: t.cost + s.cost, profit: t.profit + s.profit }; }, { net: 0, cost: 0, profit: 0 });
+                      const cur = monthSum(salesMonthStr);
+                      const dates = Object.keys(byDate).sort().reverse();
+                      const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+                      const formatDate = (ds: string) => { const [yy, mm, dd] = ds.split('-').map(Number); return `${mm}/${dd} (${dayNames[new Date(yy, mm - 1, dd).getDay()]})`; };
+                      const today = toLocalDateStr();
+
+                      return (
+                        <div className="flex flex-col sm:flex-row gap-5 items-start">
+                          {/* 왼쪽: 월 고르기 + 월 마진 */}
+                          <div className="w-full sm:w-56 shrink-0 space-y-1.5">
+                            {months.length === 0 && <p className="text-gray-300 text-sm py-4">{y}년 데이터 없음</p>}
+                            {months.map(m => {
+                              const s = monthSum(m);
+                              const active = m === salesMonthStr;
+                              return (
+                                <button key={m} onClick={() => setSalesMonth({ year: salesMonth.year, month: parseInt(m.split('-')[1]) })}
+                                  className={`w-full flex justify-between items-baseline px-3 py-2 rounded-xl text-sm font-black transition-colors ${active ? 'bg-gray-900 text-white' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'}`}>
+                                  <span>{parseInt(m.split('-')[1])}월</span>
+                                  <span className={active ? (s.profit >= 0 ? 'text-green-400' : 'text-red-400') : color(s.profit)}>{s.profit.toLocaleString()}</span>
+                                </button>
+                              );
+                            })}
+                            {months.length > 0 && (
+                              <div className="px-3 pt-2 mt-1 border-t text-xs font-bold text-gray-500 space-y-0.5">
+                                <div className="flex justify-between"><span>{y}년 순마진</span><span>{yearTotal.net.toLocaleString()}</span></div>
+                                <div className="flex justify-between"><span>비용</span><span className="text-red-500">{yearTotal.cost ? `-${yearTotal.cost.toLocaleString()}` : '-'}</span></div>
+                                <div className="flex justify-between text-sm font-black text-gray-800"><span>순수익</span><span className={color(yearTotal.profit)}>{yearTotal.profit.toLocaleString()}</span></div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 오른쪽: 고른 달의 사업자별 월 마진 + 매일 마진 */}
+                          <div className="flex-1 min-w-0 max-w-xl space-y-5">
+                            <div className="border rounded-2xl p-4 space-y-3">
+                              <div className="flex justify-between items-baseline">
+                                <span className="text-sm font-black text-gray-700">{salesMonth.month}월 전체 순수익</span>
+                                <span className={`text-2xl font-black ${color(cur.profit)}`}>{fmtWon(cur.profit)}</span>
+                              </div>
+                              <div className="text-xs font-bold text-gray-500 flex gap-4">
+                                <span>순마진 <span className="text-gray-800">{cur.net.toLocaleString()}</span></span>
+                                <span>비용 <span className="text-red-500">{cur.cost ? `-${cur.cost.toLocaleString()}` : '-'}</span></span>
+                              </div>
+                              <div className="border-t pt-2 space-y-1">
+                                {bizList.map(([bizId, biz]) => {
+                                  const n = monthNet[salesMonthStr]?.[bizId] || 0;
+                                  const c = allBizOverhead[bizId]?.[salesMonthStr] || 0;
+                                  return (
+                                    <div key={bizId} className="flex items-baseline gap-2 text-sm">
+                                      <span className="w-2.5 h-2.5 rounded-full shrink-0 self-center" style={{ background: getBizColor(bizId) }} />
+                                      <span className="font-black text-gray-700 flex-1 truncate">{biz.name}</span>
+                                      <span className="text-[11px] text-gray-400">{n.toLocaleString()}{c ? ` − ${c.toLocaleString()}` : ''}</span>
+                                      <span className={`font-black w-24 text-right ${color(n - c)}`}>{(n - c).toLocaleString()}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <div className="text-sm font-black text-gray-700 px-1">매일 마진 <span className="text-[11px] font-bold text-gray-400">마진+광고비+가구매+슬롯+반품, 비용 빼기 전</span></div>
+                              {dates.length === 0 && <p className="text-gray-300 text-center py-10 text-sm">이 달 데이터가 없습니다.</p>}
+                              {dates.map(date => {
+                                const per = byDate[date];
+                                const total = Object.values(per).reduce((s, v) => s + v, 0);
+                                return (
+                                  <div key={date} className={`rounded-xl px-3 py-2 ${date === today ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}`}>
+                                    <div className="flex justify-between items-baseline">
+                                      <span className="text-sm font-black text-gray-700">{formatDate(date)}</span>
+                                      <span className={`text-sm font-black ${color(total)}`}>{fmtWon(total)}</span>
+                                    </div>
+                                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5 text-[11px] font-bold text-gray-500">
+                                      {bizList.filter(([id]) => per[id]).map(([id, biz]) => (
+                                        <span key={id} className="flex items-center gap-1">
+                                          <span className="w-1.5 h-1.5 rounded-full" style={{ background: getBizColor(id) }} />
+                                          {biz.name} <span className={color(per[id])}>{per[id].toLocaleString()}</span>
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
                         </div>
                       );
                     })()

@@ -139,7 +139,7 @@ export interface UserSubmission {
   reviewProofImage?: string;
 }
 
-export type SalesSubTab = 'summary' | 'profitLoss' | 'salesDetail' | 'dailySum';
+export type SalesSubTab = 'summary' | 'profitLoss' | 'salesDetail' | 'dailySum' | 'allBiz';
 
 export interface ProductPrice {
   id: string;
