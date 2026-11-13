@@ -3,7 +3,9 @@ import { Product, Submission, AppMode, CustomerView, AppSettings, HpFormula, Adm
 import { verifyImage } from './services/geminiService';
 import { db, auth, wingDb } from './services/firebase';
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, addDoc, query, orderBy, writeBatch, deleteField, getDocs, getDoc, where, arrayUnion, runTransaction } from 'firebase/firestore';
+import { collection, onSnapshot, doc, query, orderBy, deleteField, getDocs, getDoc, where, arrayUnion, runTransaction, setDoc as rawSetDoc, writeBatch as rawWriteBatch } from 'firebase/firestore';
+// 사용자가 한 쓰기는 되돌리기/다시하기 기록이 남는 래퍼로 (자동으로 도는 쓰기는 raw*)
+import { setDoc, updateDoc, deleteDoc, addDoc, writeBatch, undo as historyUndo, redo as historyRedo, clearHistory, recordStep, useHistory } from './services/history';
 
 const BASE_BUSINESSES: Record<string, BusinessInfo> = {
   angun: {
@@ -242,6 +244,7 @@ const App: React.FC = () => {
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   useEffect(() => onAuthStateChanged(auth, (u) => { setAuthUser(u); setAuthReady(true); }), []);
+  useEffect(() => { clearHistory(); }, [authUser?.uid]); // 로그아웃·계정 바뀌면 되돌리기 기록 비움
   const isAdminAuthenticated = !!authUser;
   const isOwner = authUser?.email === OWNER_EMAIL;
   // 계정별 데이터 접두사: 소유자는 '' (기존 컬렉션), 그 외는 t_<uid>_
@@ -273,7 +276,7 @@ const App: React.FC = () => {
           if (s) {
             const local = JSON.parse(s) as Record<string, BusinessInfo>;
             if (Object.keys(local).length > 0) {
-              setDoc(doc(db, tenantSettingsCol, 'customBusinesses'), { businesses: local });
+              rawSetDoc(doc(db, tenantSettingsCol, 'customBusinesses'), { businesses: local });
             }
           }
         } catch {}
@@ -745,10 +748,6 @@ const App: React.FC = () => {
   const [allBizPendingLoaded, setAllBizPendingLoaded] = useState(false);
   const [allBizPendingFailed, setAllBizPendingFailed] = useState<string[]>([]); // 불러오기 실패·응답 없음 사업자 이름
   const [selectedPendingIds, setSelectedPendingIds] = useState<Set<string>>(new Set());
-  const [pendingUndoStack, setPendingUndoStack] = useState<Array<{
-    type: 'reservationComplete' | 'hiddenFromPending' | 'depositComplete';
-    entries: Array<ManualEntry & { bizId: string; bizName: string }>;
-  }>>([]);
 
   // 윙업무: 전체 사업자 구매목록 메모
   const [allBizPurchaseMemos, setAllBizPurchaseMemos] = useState<Array<{ bizId: string; bizName: string; memo: string; updatedAt?: number }>>([]);
@@ -1146,7 +1145,7 @@ const App: React.FC = () => {
           if (!byDate[d]) byDate[d] = [];
           byDate[d].push(e);
         });
-        const batch = writeBatch(db);
+        const batch = rawWriteBatch(db);
         let base = 1000000000000;
         Object.keys(byDate).sort().forEach(date => {
           byDate[date].forEach((e, i) => {
@@ -1160,7 +1159,7 @@ const App: React.FC = () => {
       // Firestore에 남아있는 proofImage 필드 일괄 삭제 (기존 데이터 정리 - 비용 절감)
       const withFirestoreImage = snapshot.docs.filter(d => d.data().proofImage);
       if (withFirestoreImage.length > 0) {
-        const cleanBatch = writeBatch(db);
+        const cleanBatch = rawWriteBatch(db);
         withFirestoreImage.forEach(d => cleanBatch.update(doc(db, colName, d.id), { proofImage: deleteField() }));
         cleanBatch.commit().catch(err => console.error('[Migration] proofImage 정리 실패:', err));
       }
@@ -1354,76 +1353,16 @@ const App: React.FC = () => {
     setWaybillSources([]);
   }, [selectedBiz]);
 
-  // Sales undo/redo
-  const [salesUndoStack, setSalesUndoStack] = useState<{ type: string, entries: { id: string, data: any }[] }[]>([]);
-  const [salesRedoStack, setSalesRedoStack] = useState<{ type: string, entries: { id: string, data: any }[] }[]>([]);
-
   const salesUpdate = async (entryId: string, field: string, value: any) => {
     const entry = salesDaily.find(e => e.id === entryId);
     if (!entry) return;
     const oldVal = (entry as any)[field];
     if (oldVal === value) return;
-    const undoData: any = { [field]: oldVal };
     const updateData: any = { [field]: value };
     if (field === 'housePurchase') {
-      undoData.hpManual = (entry as any).hpManual ?? false;
       updateData.hpManual = true;
     }
-    setSalesUndoStack(prev => [...prev, { type: 'update', entries: [{ id: entryId, data: undoData }] }]);
-    setSalesRedoStack([]);
     await updateDoc(doc(db, getCol('salesDaily', colPrefix), entryId), updateData);
-  };
-
-  const handleSalesUndo = async () => {
-    if (salesUndoStack.length === 0) return;
-    const last = salesUndoStack[salesUndoStack.length - 1];
-    setSalesUndoStack(prev => prev.slice(0, -1));
-    const batch = writeBatch(db);
-    const redoEntries: { id: string, data: any }[] = [];
-    for (const e of last.entries) {
-      const current = salesDaily.find(s => s.id === e.id);
-      if (last.type === 'update') {
-        const currentData: any = {};
-        Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : 0; });
-        redoEntries.push({ id: e.id, data: currentData });
-        batch.update(doc(db, getCol('salesDaily', colPrefix), e.id), e.data);
-      } else if (last.type === 'delete') {
-        batch.set(doc(db, getCol('salesDaily', colPrefix), e.id), e.data);
-        redoEntries.push({ id: e.id, data: {} });
-      } else if (last.type === 'add') {
-        if (current) redoEntries.push({ id: e.id, data: { ...current } });
-        batch.delete(doc(db, getCol('salesDaily', colPrefix), e.id));
-      }
-    }
-    const redoType = last.type === 'delete' ? 'add' : last.type === 'add' ? 'delete' : 'update';
-    setSalesRedoStack(prev => [...prev, { type: redoType, entries: redoEntries }]);
-    await batch.commit();
-  };
-
-  const handleSalesRedo = async () => {
-    if (salesRedoStack.length === 0) return;
-    const last = salesRedoStack[salesRedoStack.length - 1];
-    setSalesRedoStack(prev => prev.slice(0, -1));
-    const batch = writeBatch(db);
-    const undoEntries: { id: string, data: any }[] = [];
-    for (const e of last.entries) {
-      const current = salesDaily.find(s => s.id === e.id);
-      if (last.type === 'update') {
-        const currentData: any = {};
-        Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : 0; });
-        undoEntries.push({ id: e.id, data: currentData });
-        batch.update(doc(db, getCol('salesDaily', colPrefix), e.id), e.data);
-      } else if (last.type === 'delete') {
-        batch.set(doc(db, getCol('salesDaily', colPrefix), e.id), e.data);
-        undoEntries.push({ id: e.id, data: {} });
-      } else if (last.type === 'add') {
-        if (current) undoEntries.push({ id: e.id, data: { ...current } });
-        batch.delete(doc(db, getCol('salesDaily', colPrefix), e.id));
-      }
-    }
-    const undoType = last.type === 'delete' ? 'add' : last.type === 'add' ? 'delete' : 'update';
-    setSalesUndoStack(prev => [...prev, { type: undoType, entries: undoEntries }]);
-    await batch.commit();
   };
 
   const handleSalesAddRow = async (product: string) => {
@@ -1442,8 +1381,6 @@ const App: React.FC = () => {
     const docId = `${newDate}_${product}_${Date.now()}`;
     const autoHP = calcHousePurchase(product, newDate);
     const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: autoHP, solution: 0, refund: 0 };
-    setSalesUndoStack(prev => [...prev, { type: 'add', entries: [{ id: docId, data: {} }] }]);
-    setSalesRedoStack([]);
     await setDoc(doc(db, getCol('salesDaily', colPrefix), docId), newEntry);
   };
 
@@ -1472,7 +1409,7 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!salesDailyLoaded || manualEntries.length === 0) return;
     const update = async () => {
-      const batch = writeBatch(db);
+      const batch = rawWriteBatch(db);
       let hasUpdate = false;
 
       // 1) 기존 salesDaily 항목 업데이트 (품목명 정규화 매칭)
@@ -1544,9 +1481,7 @@ const App: React.FC = () => {
   }, [manualEntries, salesDailyLoaded]);
 
   const handleSalesDeleteRow = async (entry: SalesDailyEntry) => {
-    const { id, ...data } = entry;
-    setSalesUndoStack(prev => [...prev, { type: 'delete', entries: [{ id, data }] }]);
-    setSalesRedoStack([]);
+    const { id } = entry;
     await deleteDoc(doc(db, getCol('salesDaily', colPrefix), id));
   };
 
@@ -1562,8 +1497,6 @@ const App: React.FC = () => {
     const newDate = `${salesMonthStr}-01`;
     const docId = `${newDate}_${product}`;
     const newEntry = { date: newDate, product, productDetail: '', quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0, adCost: 0, housePurchase: 0, solution: 0, refund: 0 };
-    setSalesUndoStack(prev => [...prev, { type: 'add', entries: [{ id: docId, data: {} }] }]);
-    setSalesRedoStack([]);
     await setDoc(doc(db, getCol('salesDaily', colPrefix), docId), newEntry);
   };
 
@@ -1573,14 +1506,10 @@ const App: React.FC = () => {
     const targets = salesDaily.filter(e => normProductName(e.product) === normTarget && e.date?.startsWith(salesMonthStr));
     if (targets.length === 0) return;
     const batch = writeBatch(db);
-    const undoEntries: { id: string, data: any }[] = [];
     for (const e of targets) {
-      const { id, ...data } = e;
-      undoEntries.push({ id, data });
+      const { id } = e;
       batch.delete(doc(db, getCol('salesDaily', colPrefix), id));
     }
-    setSalesUndoStack(prev => [...prev, { type: 'delete', entries: undoEntries }]);
-    setSalesRedoStack([]);
     await batch.commit();
   };
 
@@ -2038,7 +1967,6 @@ const App: React.FC = () => {
     const matchedPrice = productPrices.find(p => p.name === productName);
     try {
       const batch = writeBatch(db);
-      const undoEntries: { id: string; data: Partial<ManualEntry> }[] = [];
       ids.forEach(id => {
         const entry = manualEntries.find(e => e.id === id);
         if (!entry) return;
@@ -2051,15 +1979,7 @@ const App: React.FC = () => {
           updates.paymentAmount = finalPrice;
         }
         batch.update(doc(db, getCol('manualEntries', colPrefix), id), updates);
-        undoEntries.push({
-          id,
-          data: {
-            product: entry.product,
-            ...(matchedPrice ? { paymentAmount: entry.paymentAmount } : {}),
-          },
-        });
       });
-      pushUndo({ type: 'update', entries: undoEntries, description: '품목 일괄변경' });
       await batch.commit();
       setProductPicker(null);
       setSelectedManualIds(new Set());
@@ -2101,7 +2021,7 @@ const App: React.FC = () => {
 
     silbaeProcessingRef.current = true;
 
-    const batch = writeBatch(db);
+    const batch = rawWriteBatch(db);
     let updateCount = 0;
 
     for (const entry of silbaeEntries) {
@@ -2175,9 +2095,6 @@ const App: React.FC = () => {
 
   // (localEdits removed - using uncontrolled inputs now)
 
-  // Undo stack
-  const [undoStack, setUndoStack] = useState<{ type: string, entries: { id: string, data: any }[], description: string }[]>([]);
-  const [redoStack, setRedoStack] = useState<{ type: string, entries: { id: string, data: any }[], description: string }[]>([]);
 
 
   // ✅ 디바운스 로직 - 입금관리 검색 (변경 사항 3)
@@ -2311,89 +2228,6 @@ const App: React.FC = () => {
 
   const openPreview = (imageSrc: string) => {
     setPreviewImage(imageSrc);
-  };
-
-  // --- Undo helpers ---
-  const pushUndo = (entry: { type: string, entries: { id: string, data: any }[], description: string }) => {
-    setUndoStack(prev => [...prev.slice(-19), entry]);
-    setRedoStack([]);
-  };
-
-  const handleUndo = async () => {
-    if (undoStack.length === 0) return;
-    const last = undoStack[undoStack.length - 1];
-    setUndoStack(prev => prev.slice(0, -1));
-
-    try {
-      const batch = writeBatch(db);
-      // redo용 현재 상태 저장
-      const redoEntries: { id: string, data: any }[] = [];
-      if (last.type === 'delete') {
-        last.entries.forEach(e => {
-          batch.set(doc(db, getCol('manualEntries', colPrefix), e.id), e.data);
-          redoEntries.push({ id: e.id, data: {} });
-        });
-        setRedoStack(prev => [...prev, { type: 'add', entries: redoEntries, description: last.description }]);
-      } else if (last.type === 'update') {
-        last.entries.forEach(e => {
-          const current = manualEntries.find(m => m.id === e.id);
-          const currentData: any = {};
-          Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : ''; });
-          redoEntries.push({ id: e.id, data: currentData });
-          batch.update(doc(db, getCol('manualEntries', colPrefix), e.id), e.data);
-        });
-        setRedoStack(prev => [...prev, { type: 'update', entries: redoEntries, description: last.description }]);
-      } else if (last.type === 'add') {
-        last.entries.forEach(e => {
-          const current = manualEntries.find(m => m.id === e.id);
-          redoEntries.push({ id: e.id, data: current ? { ...current } : {} });
-          batch.delete(doc(db, getCol('manualEntries', colPrefix), e.id));
-        });
-        setRedoStack(prev => [...prev, { type: 'delete', entries: redoEntries, description: last.description }]);
-      }
-      await batch.commit();
-    } catch (e) {
-      console.error('Undo error:', e);
-      alert('실행취소 중 오류가 발생했습니다.');
-    }
-  };
-
-  const handleRedo = async () => {
-    if (redoStack.length === 0) return;
-    const last = redoStack[redoStack.length - 1];
-    setRedoStack(prev => prev.slice(0, -1));
-
-    try {
-      const batch = writeBatch(db);
-      const undoEntries: { id: string, data: any }[] = [];
-      if (last.type === 'add') {
-        last.entries.forEach(e => {
-          const current = manualEntries.find(m => m.id === e.id);
-          undoEntries.push({ id: e.id, data: current ? { ...current } : {} });
-          batch.delete(doc(db, getCol('manualEntries', colPrefix), e.id));
-        });
-        setUndoStack(prev => [...prev, { type: 'delete', entries: undoEntries, description: last.description }]);
-      } else if (last.type === 'update') {
-        last.entries.forEach(e => {
-          const current = manualEntries.find(m => m.id === e.id);
-          const currentData: any = {};
-          Object.keys(e.data).forEach(k => { currentData[k] = current ? (current as any)[k] : ''; });
-          undoEntries.push({ id: e.id, data: currentData });
-          batch.update(doc(db, getCol('manualEntries', colPrefix), e.id), e.data);
-        });
-        setUndoStack(prev => [...prev, { type: 'update', entries: undoEntries, description: last.description }]);
-      } else if (last.type === 'delete') {
-        last.entries.forEach(e => {
-          batch.set(doc(db, getCol('manualEntries', colPrefix), e.id), e.data);
-          undoEntries.push({ id: e.id, data: {} });
-        });
-        setUndoStack(prev => [...prev, { type: 'add', entries: undoEntries, description: last.description }]);
-      }
-      await batch.commit();
-    } catch (e) {
-      console.error('Redo error:', e);
-      alert('다시실행 중 오류가 발생했습니다.');
-    }
   };
 
   // --- Delete empty rows ---
@@ -2562,14 +2396,6 @@ const App: React.FC = () => {
     if (selectedManualIds.size === 0) return;
     if (window.confirm(`${selectedManualIds.size}개의 항목을 삭제하시겠습니까?`)) {
       try {
-        // Save for undo
-        const toDelete = manualEntries.filter(e => selectedManualIds.has(e.id));
-        pushUndo({
-          type: 'delete',
-          entries: toDelete.map(e => ({ id: e.id, data: { ...e } })),
-          description: `${toDelete.length}개 항목 삭제`
-        });
-
         const batch = writeBatch(db);
         selectedManualIds.forEach(id => {
           batch.delete(doc(db, getCol('manualEntries', colPrefix), id));
@@ -2612,12 +2438,6 @@ const App: React.FC = () => {
     if (!window.confirm(`현재 화면의 빈 행 ${emptyRows.length}개를 삭제하시겠습니까?`)) return;
 
     try {
-      pushUndo({
-        type: 'delete',
-        entries: emptyRows.map(e => ({ id: e.id, data: { ...e } })),
-        description: `빈 행 ${emptyRows.length}개 삭제`
-      });
-
       const batch = writeBatch(db);
       emptyRows.forEach(e => batch.delete(doc(db, getCol('manualEntries', colPrefix), e.id)));
       await batch.commit();
@@ -2825,19 +2645,11 @@ const App: React.FC = () => {
 
   const addMoreRows = async (count: number) => {
     const dateToUse = manualViewDateStart !== 'all' ? manualViewDateEnd : toLocalDateStr();
-    const newIds: string[] = [];
     const promises = Array.from({ length: count }).map(() => {
       const newRow = createEmptyRow(dateToUse);
-      newIds.push(newRow.id);
       return setDoc(doc(db, getCol('manualEntries', colPrefix), newRow.id), newRow);
     });
     await Promise.all(promises);
-    // Save for undo
-    pushUndo({
-      type: 'add',
-      entries: newIds.map(id => ({ id, data: {} })),
-      description: `${count}줄 추가`
-    });
   };
 
   const insertRowAfterSelected = async () => {
@@ -2874,12 +2686,6 @@ const App: React.FC = () => {
 
       await setDoc(doc(db, getCol('manualEntries', colPrefix), newRow.id), newRow);
 
-      pushUndo({
-        type: 'add',
-        entries: [{ id: newRow.id, data: {} }],
-        description: '행 삽입'
-      });
-
       // 선택 해제
       setSelectedManualIds(new Set());
     } catch (error) {
@@ -2894,19 +2700,11 @@ const App: React.FC = () => {
 
     // proofImage는 localStorage에만 저장
     if (field === 'proofImage') {
-      pushUndo({ type: 'update', entries: [{ id, data: { proofImage: entry.proofImage } }], description: 'proofImage 수정' });
       updateProofInState(id, value);
       return;
     }
 
     const updates: Partial<ManualEntry> = { [field]: value };
-
-    // Undo: Save previous value
-    pushUndo({
-      type: 'update',
-      entries: [{ id: entry.id, data: { [field]: entry[field] } }],
-      description: `${field} 수정`
-    });
 
     // 주문번호가 입력·변경된 시점 기록 (윙업무 목록의 "날짜" 표시용)
     if (field === 'orderNumber' && String(value || '').trim() && String(entry.orderNumber || '').trim() !== String(value).trim()) {
@@ -3468,23 +3266,25 @@ const App: React.FC = () => {
           const fakeSnaps = await Promise.all(fakeItems.map(it => { const r = refOf(it); return r ? tx.get(r) : null; }));
           const depositSnaps = await Promise.all(depositItems.map(it => { const r = refOf(it); return r ? tx.get(r) : null; }));
           const toUndoEntry = (it: Item, data: any) => ({ ...data, id: it.id, bizId: it.bizId, bizName: bizs[it.bizId]?.name || '' }) as ManualEntry & { bizId: string; bizName: string };
+          const touched: { ref: ReturnType<typeof doc>; before: any }[] = [];
           const reserved: Array<ManualEntry & { bizId: string; bizName: string }> = [];
           const deposited: Array<ManualEntry & { bizId: string; bizName: string }> = [];
           fakeSnaps.forEach((snap, i) => {
             if (!snap?.exists() || snap.data().reservationComplete) return;
             tx.update(snap.ref, { reservationComplete: true, reservationCompleteDate: dateStr, reservationCompletedAt: at });
+            touched.push({ ref: snap.ref, before: snap.data() });
             reserved.push(toUndoEntry(fakeItems[i], snap.data()));
           });
           depositSnaps.forEach((snap, i) => {
             const d = snap?.exists() ? snap.data() : null;
             if (!d || !d.beforeDeposit || d.afterDeposit) return;
             tx.update(snap!.ref, { afterDeposit: true, depositDate: dateStr, depositedAt: at });
+            touched.push({ ref: snap!.ref, before: d });
             deposited.push(toUndoEntry(depositItems[i], d));
           });
-          return { reserved, deposited };
+          return { reserved, deposited, touched };
         });
-        if (result.reserved.length) setPendingUndoStack(prev => [...prev, { type: 'reservationComplete', entries: result.reserved }]);
-        if (result.deposited.length) setPendingUndoStack(prev => [...prev, { type: 'depositComplete', entries: result.deposited }]);
+        recordStep(result.touched);
         const doneKeys = new Set([...result.reserved, ...result.deposited].map(e => e.bizId + '_' + e.id));
         setAllBizPendingEntries(prev => prev.filter(e => !doneKeys.has(e.bizId + '_' + e.id)));
         setAllBizBeforeDepositEntries(prev => prev.filter(e => !doneKeys.has(e.bizId + '_' + e.id)));
@@ -3579,55 +3379,6 @@ const App: React.FC = () => {
     XLSX.writeFile(wb, `입금완료_${toLocalDateStr()}.xlsx`);
   };
 
-  const PENDING_UNDO_LABEL: Record<string, string> = { reservationComplete: '예약완료 처리', hiddenFromPending: '목록 제외', depositComplete: '입금완료 처리' };
-
-  // 윙업무: 마지막 처리(예약완료/목록 제외/입금완료) 되돌리기
-  const undoLastPendingAction = async () => {
-    const last = pendingUndoStack[pendingUndoStack.length - 1];
-    if (!last) return;
-    try {
-      const batch = writeBatch(db);
-      last.entries.forEach(en => {
-        const biz = allBusinesses[en.bizId];
-        if (!biz) return;
-        const ref = doc(db, getCol('manualEntries', biz.collectionPrefix), en.id);
-        if (last.type === 'reservationComplete') {
-          batch.update(ref, { reservationComplete: false, reservationCompletedAt: deleteField() });
-        } else if (last.type === 'hiddenFromPending') {
-          batch.update(ref, { hiddenFromPending: false });
-        } else {
-          batch.update(ref, { afterDeposit: false, depositDate: en.depositDate ?? deleteField(), depositedAt: en.depositedAt ?? deleteField() });
-        }
-      });
-      await batch.commit();
-      setPendingUndoStack(prev => prev.slice(0, -1));
-      const restore = (prev: typeof last.entries) => {
-        const existing = new Set(prev.map(e => e.bizId + '_' + e.id));
-        const restored = last.entries.filter(e => !existing.has(e.bizId + '_' + e.id));
-        return [...restored, ...prev].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-      };
-      if (last.type === 'depositComplete') {
-        setAllBizBeforeDepositEntries(restore);
-        const keys = new Set(last.entries.map(e => e.bizId + '_' + e.id));
-        setRecentDepositHistory(prev => prev.filter(e => !keys.has(e.bizId + '_' + e.id)));
-      } else {
-        setAllBizPendingEntries(prev => restore(prev).sort(comparePendingEntries));
-      }
-    } catch (e) { console.error(e); alert('오류: ' + e); }
-  };
-
-  const lastPendingUndo = pendingUndoStack[pendingUndoStack.length - 1];
-  const pendingUndoButton = lastPendingUndo && (
-    <button
-      onClick={undoLastPendingAction}
-      className="flex items-center gap-1 px-3 py-1.5 bg-orange-100 text-orange-600 rounded-xl text-xs font-bold hover:bg-orange-200"
-      title={`되돌리기: ${PENDING_UNDO_LABEL[lastPendingUndo.type]} ${lastPendingUndo.entries.length}건`}
-    >
-      <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg>
-      되돌리기 ({PENDING_UNDO_LABEL[lastPendingUndo.type]} {lastPendingUndo.entries.length}건)
-    </button>
-  );
-
   const handleAllBizDepositComplete = async () => {
     const selected = allBizBeforeDepositEntries.filter(en => selectedAllDepositIds.has(en.bizId + '_' + en.id));
     if (selected.length === 0) return;
@@ -3643,7 +3394,6 @@ const App: React.FC = () => {
         batch.update(doc(db, colName, en.id), { afterDeposit: true, depositDate, depositedAt: Date.now() });
       });
       await batch.commit();
-      setPendingUndoStack(prev => [...prev, { type: 'depositComplete', entries: selected }]);
       setAllBizBeforeDepositEntries(prev => prev.filter(en => !selectedAllDepositIds.has(en.bizId + '_' + en.id)));
       setSelectedAllDepositIds(new Set());
       alert("처리되었습니다.");
@@ -3772,13 +3522,10 @@ const App: React.FC = () => {
     setCustomerForm({ kakaoNick: '', phoneNumber: '', proofImage: '', orderNumber: '' });
     setShowSuccess(false);
     setCustomerView('landing');
-    setSalesUndoStack([]);
-    setSalesRedoStack([]);
+    clearHistory();
     setPendingUpload(null);
     setLastUploadInfo(null);
     setColorPicker(null);
-    setUndoStack([]);
-    setRedoStack([]);
   }, [selectedBiz]);
 
   const renderDatePicker = (
@@ -3961,6 +3708,34 @@ const App: React.FC = () => {
   };
 
   const selectedProduct = products.find(p => p.id === selectedProductId);
+
+  // 되돌리기 / 다시하기 (모든 탭 공통). 윙업무 목록은 한 번 불러온 목록이라 되돌린 뒤 다시 불러옴
+  const history = useHistory();
+  const runHistory = async (fn: typeof historyUndo) => {
+    const step = await fn();
+    if (step && adminTab === 'reservationPending') {
+      loadAllBizPendingEntries();
+      loadAllBizBeforeDepositEntries();
+      loadRecentReservationHistory();
+      loadRecentDepositHistory();
+    }
+  };
+  const runHistoryRef = useRef(runHistory);
+  runHistoryRef.current = runHistory;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return; // 입력칸 안에선 글자 되돌리기
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); runHistoryRef.current(historyUndo); }
+      else if ((k === 'z' && e.shiftKey) || (k === 'y' && e.ctrlKey)) { e.preventDefault(); runHistoryRef.current(historyRedo); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  const lastUndo = history.undo[history.undo.length - 1];
+  const lastRedo = history.redo[history.redo.length - 1];
 
   return (
     <div className="min-h-screen font-sans text-[#1D1D1F] antialiased" style={{ backgroundColor: hexWithAlpha(currentColor, 0.08) }}>
@@ -5410,12 +5185,6 @@ const App: React.FC = () => {
                       <div className="flex flex-col sm:flex-row gap-3 sm:gap-0 justify-between items-start sm:items-center mb-4">
                         <p className="text-[11px] text-gray-400 hidden sm:block">마진 데이터는 업무일지(발주앱)에서 업로드하며, 가구매는 구매목록 수량 기반으로 자동 계산됩니다.</p>
                         <div className="flex gap-2 items-center flex-wrap">
-                          {salesUndoStack.length > 0 && (
-                            <button onClick={handleSalesUndo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
-                          )}
-                          {salesRedoStack.length > 0 && (
-                            <button onClick={handleSalesRedo} className="p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors" title="다시실행"><svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg></button>
-                          )}
                           <button onClick={() => salesFileRef.current?.click()} className="px-5 py-2.5 bg-green-600 text-white rounded-xl font-black text-xs hover:bg-green-700 transition-colors">업무일지 업로드</button>
                           <input ref={salesFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleSalesUpload} />
                           {lastUploadInfo && (
@@ -5918,7 +5687,6 @@ const App: React.FC = () => {
                         )}
                       </div>
                       <div className="flex items-center gap-2">
-                        {pendingUndoButton}
                         <button
                           onClick={() => { loadAllBizPendingEntries(); setSelectedPendingIds(new Set()); }}
                           className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl text-xs font-bold hover:bg-gray-200"
@@ -5965,7 +5733,6 @@ const App: React.FC = () => {
                                       batch.update(doc(db, colName, en.id), { reservationComplete: true, reservationCompleteDate, reservationCompletedAt: Date.now() });
                                     });
                                     await batch.commit();
-                                    setPendingUndoStack(prev => [...prev, { type: 'reservationComplete', entries: selected }]);
                                     setAllBizPendingEntries(prev => prev.filter(en => !selectedPendingIds.has(en.bizId + '_' + en.id)));
                                     setSelectedPendingIds(new Set());
                                   } catch (e) { console.error(e); alert('오류: ' + e); }
@@ -5984,7 +5751,6 @@ const App: React.FC = () => {
                                       batch.update(doc(db, getCol('manualEntries', biz.collectionPrefix), en.id), { hiddenFromPending: true });
                                     });
                                     await batch.commit();
-                                    setPendingUndoStack(prev => [...prev, { type: 'hiddenFromPending', entries: selected }]);
                                     setAllBizPendingEntries(prev => prev.filter(en => !selectedPendingIds.has(en.bizId + '_' + en.id)));
                                     setSelectedPendingIds(new Set());
                                   } catch (e) { console.error(e); alert('오류: ' + e); }
@@ -6061,7 +5827,6 @@ const App: React.FC = () => {
                         <p className="text-xs text-gray-400 mt-0.5">모든 사업자 · {allBizBeforeDepositLoaded ? `${allBizBeforeDepositEntries.length}건` : '로딩 중...'}</p>
                       </div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        {pendingUndoButton}
                         <button
                           onClick={copyAllBizBeforeDepositToClipboard}
                           className="px-3 py-1.5 bg-blue-100 text-blue-600 rounded-xl text-xs font-black hover:bg-blue-200"
@@ -6467,12 +6232,6 @@ const App: React.FC = () => {
                         <button onClick={() => { if (selectedManualIds.size === 0) { alert('행을 먼저 선택해주세요.'); return; } deleteSelectedManualEntries(); }} className="px-3 py-1.5 bg-red-500 text-white rounded-lg font-bold text-[11px] hover:bg-red-600">삭제</button>
                       </div>
                       <div className="hidden md:flex gap-1 items-center ml-auto">
-                        {undoStack.length > 0 && (
-                          <button onClick={handleUndo} className="p-1.5 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200" title="실행취소"><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg></button>
-                        )}
-                        {redoStack.length > 0 && (
-                          <button onClick={handleRedo} className="p-1.5 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200" title="다시실행"><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg></button>
-                        )}
                       </div>
                     </div>
                     <div className={`hidden md:flex gap-1.5 items-center rounded-xl px-3 py-1.5 border ${selectedManualIds.size > 0 ? 'bg-blue-50 border-blue-200' : 'bg-transparent border-transparent pointer-events-none invisible'}`}>
@@ -8078,6 +7837,29 @@ const App: React.FC = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {mode === 'admin' && isAdminAuthenticated && (lastUndo || lastRedo) && (
+        <div className="fixed left-3 bottom-3 z-[60] w-40 flex flex-col gap-1.5 p-2 bg-white/95 backdrop-blur rounded-2xl border border-gray-200 shadow-lg">
+          <button
+            onClick={() => runHistory(historyUndo)}
+            disabled={!lastUndo || history.busy}
+            title="되돌리기 (⌘Z / Ctrl+Z)"
+            className="w-full text-left px-3 py-1.5 rounded-xl bg-gray-900 text-white hover:bg-gray-700 disabled:bg-gray-100 disabled:text-gray-400"
+          >
+            <div className="text-xs font-black">↶ 되돌리기</div>
+            {lastUndo && <div className="text-[10px] font-medium opacity-80 truncate">{lastUndo.label}</div>}
+          </button>
+          <button
+            onClick={() => runHistory(historyRedo)}
+            disabled={!lastRedo || history.busy}
+            title="다시하기 (⌘⇧Z / Ctrl+Y)"
+            className="w-full text-left px-3 py-1.5 rounded-xl bg-gray-100 text-gray-800 hover:bg-gray-200 disabled:text-gray-400 disabled:hover:bg-gray-100"
+          >
+            <div className="text-xs font-black">↷ 다시하기</div>
+            {lastRedo && <div className="text-[10px] font-medium text-gray-600 truncate">{lastRedo.label}</div>}
+          </button>
         </div>
       )}
 
