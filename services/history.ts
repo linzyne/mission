@@ -39,6 +39,7 @@ const COL_LABELS: [string, string][] = [
 ];
 const makeLabel = (changes: Change[]) => {
   const cols = new Set(changes.map(c => {
+    if (c.ref.id === 'purchaseMemo') return '메모';
     const id = c.ref.parent.id;
     return COL_LABELS.find(([k]) => id.endsWith(k))?.[1] ?? id;
   }));

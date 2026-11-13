@@ -7848,7 +7848,7 @@ const App: React.FC = () => {
             title="되돌리기 (⌘Z / Ctrl+Z)"
             className="w-full text-left px-3 py-1.5 rounded-xl bg-gray-900 text-white hover:bg-gray-700 disabled:bg-gray-100 disabled:text-gray-400"
           >
-            <div className="text-xs font-black">↶ 되돌리기</div>
+            <div className="flex items-center gap-1 text-xs font-black"><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg>되돌리기</div>
             {lastUndo && <div className="text-[10px] font-medium opacity-80 truncate">{lastUndo.label}</div>}
           </button>
           <button
@@ -7857,7 +7857,7 @@ const App: React.FC = () => {
             title="다시하기 (⌘⇧Z / Ctrl+Y)"
             className="w-full text-left px-3 py-1.5 rounded-xl bg-gray-100 text-gray-800 hover:bg-gray-200 disabled:text-gray-400 disabled:hover:bg-gray-100"
           >
-            <div className="text-xs font-black">↷ 다시하기</div>
+            <div className="flex items-center gap-1 text-xs font-black"><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg>다시하기</div>
             {lastRedo && <div className="text-[10px] font-medium text-gray-600 truncate">{lastRedo.label}</div>}
           </button>
         </div>
