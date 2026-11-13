@@ -209,6 +209,21 @@ const DEFAULT_DEPOSIT_TEMPLATE: ExportTemplate = {
   ],
 };
 
+// 윙_발주 가구매 명단 한 줄: 사업자_이름_주문번호, 실배면 사업자_이름_주문번호_실배
+// (윙_발주는 실배 줄의 주문을 발주서·정산요약엔 두고 매출현황 마진에서만 뺀다)
+// 실배는 주문번호 칸에 '실배', 진짜 주문번호는 비고에 있다가 입금 탭에서 주문번호로 옮겨짐(silbae 표시) — 두 경우 다 처리
+function wingFakeLine(en: Pick<ManualEntry, 'name2' | 'ordererName' | 'orderNumber' | 'memo' | 'silbae'>, bizLabel: string): string {
+  const head = `${bizLabel}_${en.name2 || en.ordererName || ''}`;
+  const orderNumber = String(en.orderNumber || '');
+  if (orderNumber.includes('실배')) {
+    const nums = String(en.memo || '').match(/\d{5,}/g);
+    const num = nums ? nums.reduce((a, b) => a.length >= b.length ? a : b) : '';
+    return num ? `${head}_${num}_실배` : `${head}_${orderNumber}`;
+  }
+  if (en.silbae || String(en.memo || '').includes('실배')) return `${head}_${orderNumber}_실배`;
+  return `${head}_${orderNumber}`;
+}
+
 const App: React.FC = () => {
   const [mode, setMode] = useState<AppMode>('admin');
   const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
@@ -876,6 +891,7 @@ const App: React.FC = () => {
             reservationComplete: false,
             createdAt: data.createdAt,
             orderNumberEnteredAt: data.orderNumberEnteredAt,
+            silbae: data.silbae === true,
           } as ManualEntry & { bizId: string; bizName: string }];
         });
       } catch (e) { console.error('[reservationPending] load error:', bizId, e); failed.push(biz.name); return []; }
@@ -2092,7 +2108,7 @@ const App: React.FC = () => {
       const numbers = String(entry.memo).match(/\d+/g);
       if (numbers && numbers.length > 0) {
         const orderNum = numbers.reduce((a, b) => a.length >= b.length ? a : b);
-        batch.update(doc(db, getCol('manualEntries', colPrefix), entry.id), { orderNumber: orderNum, orderNumberEnteredAt: Date.now() });
+        batch.update(doc(db, getCol('manualEntries', colPrefix), entry.id), { orderNumber: orderNum, orderNumberEnteredAt: Date.now(), silbae: true });
         updateCount++;
       }
     }
@@ -3350,7 +3366,7 @@ const App: React.FC = () => {
         .filter(en => (en.date || '') >= from && (en.date || '') <= today)
         .sort((a, b) => byBizName(a, b) || pendingEntryDate(b).localeCompare(pendingEntryDate(a)) || (a.orderNumberEnteredAt || a.createdAt || 0) - (b.orderNumberEnteredAt || b.createdAt || 0));
       const fakeLines = fakeEntries
-        .map(en => `${bizs[en.bizId]?.legalName || en.bizName}_${en.name2 || en.ordererName || ''}_${en.orderNumber}`)
+        .map(en => wingFakeLine(en, bizs[en.bizId]?.legalName || en.bizName))
         .join('\n');
       const depositEntries = Object.values(depositByBiz).flat()
         .sort((a, b) => byBizName(a, b) || (b.date || '').localeCompare(a.date || ''));
@@ -5935,7 +5951,7 @@ const App: React.FC = () => {
                               <button
                                 onClick={async () => {
                                   const selected = allBizPendingEntries.filter(en => selectedPendingIds.has(en.bizId + '_' + en.id));
-                                  const text = selected.map(en => `${allBusinesses[en.bizId]?.legalName || en.bizName}_${en.name2 || en.ordererName || ''}_${en.orderNumber || ''}`).join('\n');
+                                  const text = selected.map(en => wingFakeLine(en, allBusinesses[en.bizId]?.legalName || en.bizName)).join('\n');
                                   await navigator.clipboard.writeText(text);
                                   const dateInput = window.prompt(`${selected.length}건 예약완료 처리\n예약완료 날짜를 입력해주세요`, toLocalDateStr());
                                   if (dateInput === null) return;

@@ -38,6 +38,7 @@ export interface ManualEntry {
   ordererName: string;
   orderNumber: string;
   orderNumberEnteredAt?: number;
+  silbae?: boolean; // 실배(실제 배송되는 가구매) — 주문번호 칸의 '실배'를 비고 숫자로 바꿀 때 표시를 남김
   address: string;
   memo: string;
   paymentAmount: number;
