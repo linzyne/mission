@@ -3957,6 +3957,20 @@ const App: React.FC = () => {
                     }`}
                   >{tab.label}</button>
                 ))}
+                <div className="ml-auto flex-shrink-0 flex gap-1.5">
+                  <button
+                    onClick={() => runHistory(historyUndo)}
+                    disabled={!lastUndo || history.busy}
+                    title={lastUndo ? `되돌리기: ${lastUndo.label} (⌘Z)` : '되돌릴 작업 없음'}
+                    className="flex items-center gap-1 px-3 py-2 rounded-2xl text-xs font-black bg-gray-900 text-white hover:bg-gray-700 disabled:bg-gray-100 disabled:text-gray-300"
+                  ><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg>되돌리기</button>
+                  <button
+                    onClick={() => runHistory(historyRedo)}
+                    disabled={!lastRedo || history.busy}
+                    title={lastRedo ? `다시하기: ${lastRedo.label} (⌘⇧Z)` : '다시 할 작업 없음'}
+                    className="flex items-center gap-1 px-3 py-2 rounded-2xl text-xs font-black bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:text-gray-300 disabled:hover:bg-gray-100"
+                  ><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg>다시하기</button>
+                </div>
               </div>
 
               {adminTab === 'dashboard' ? (
@@ -7837,29 +7851,6 @@ const App: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {mode === 'admin' && isAdminAuthenticated && (lastUndo || lastRedo) && (
-        <div className="fixed left-3 bottom-3 z-[60] w-40 flex flex-col gap-1.5 p-2 bg-white/95 backdrop-blur rounded-2xl border border-gray-200 shadow-lg">
-          <button
-            onClick={() => runHistory(historyUndo)}
-            disabled={!lastUndo || history.busy}
-            title="되돌리기 (⌘Z / Ctrl+Z)"
-            className="w-full text-left px-3 py-1.5 rounded-xl bg-gray-900 text-white hover:bg-gray-700 disabled:bg-gray-100 disabled:text-gray-400"
-          >
-            <div className="flex items-center gap-1 text-xs font-black"><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4m-4 4l4 4" /></svg>되돌리기</div>
-            {lastUndo && <div className="text-[10px] font-medium opacity-80 truncate">{lastUndo.label}</div>}
-          </button>
-          <button
-            onClick={() => runHistory(historyRedo)}
-            disabled={!lastRedo || history.busy}
-            title="다시하기 (⌘⇧Z / Ctrl+Y)"
-            className="w-full text-left px-3 py-1.5 rounded-xl bg-gray-100 text-gray-800 hover:bg-gray-200 disabled:text-gray-400 disabled:hover:bg-gray-100"
-          >
-            <div className="flex items-center gap-1 text-xs font-black"><svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4m4 4l-4 4" /></svg>다시하기</div>
-            {lastRedo && <div className="text-[10px] font-medium text-gray-600 truncate">{lastRedo.label}</div>}
-          </button>
         </div>
       )}
 
