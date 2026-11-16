@@ -3329,6 +3329,49 @@ const App: React.FC = () => {
     }, e => console.error('[미션클리어] 요청 구독 오류:', e));
   }, [isOwner, wingFeedBizKey]);
 
+  // 윙_발주 미매칭 명단에서 "이걸로 수정": missionHubOrderFixes 요청을 받아 그 항목 주문번호를 고침.
+  // 지금 주문번호(실배면 비고 속 번호)가 요청의 옛 번호와 같을 때만 바꿈 — 그새 직접 고쳤으면 안 건드림.
+  // 오타 고침이라 orderNumberEnteredAt은 그대로 둠(예약대기 날짜·순서 유지).
+  useEffect(() => {
+    if (!isOwner || !wingFeedBizKey) return;
+    const busy = new Set<string>();
+    type FixReq = { bizId: string; id: string; oldOrderNumber: string; newOrderNumber: string };
+    const process = async (reqId: string, req: FixReq) => {
+      if (busy.has(reqId)) return;
+      busy.add(reqId);
+      const reqRef = doc(wingDb, 'missionHubOrderFixes', reqId);
+      try {
+        const biz = allBusinessesRef.current[req.bizId];
+        if (!biz) throw new Error('사업자를 못 찾음');
+        const ref = doc(db, getCol('manualEntries', biz.collectionPrefix), req.id);
+        const result = await runTransaction(db, async tx => {
+          const snap = await tx.get(ref);
+          if (!snap.exists()) throw new Error('항목이 없음');
+          const data = snap.data();
+          const orderNumber = String(data.orderNumber ?? '').trim();
+          const memo = String(data.memo ?? '');
+          let updates: Record<string, string>;
+          if (orderNumber === req.oldOrderNumber) updates = { orderNumber: req.newOrderNumber };
+          else if (orderNumber.includes('실배') && memo.includes(req.oldOrderNumber)) updates = { memo: memo.replace(req.oldOrderNumber, req.newOrderNumber) };
+          else throw new Error(`주문번호가 이미 바뀜 (지금 ${orderNumber})`);
+          tx.update(ref, updates);
+          return { ref, before: data, updates };
+        });
+        recordStep([{ ref: result.ref, before: result.before }]);
+        setAllBizPendingEntries(prev => prev.map(e => e.bizId === req.bizId && e.id === req.id ? { ...e, ...result.updates } : e));
+        await updateDoc(reqRef, { status: 'done', processedAt: Date.now() });
+      } catch (e) {
+        console.error('[주문번호 고침] 처리 실패:', e);
+        await updateDoc(reqRef, { status: 'error', error: e instanceof Error ? e.message : String(e), processedAt: Date.now() }).catch(() => {});
+      } finally {
+        busy.delete(reqId);
+      }
+    };
+    return onSnapshot(query(collection(wingDb, 'missionHubOrderFixes'), where('status', '==', 'pending')), snap => {
+      snap.docs.forEach(d => process(d.id, d.data() as FixReq));
+    }, e => console.error('[주문번호 고침] 요청 구독 오류:', e));
+  }, [isOwner, wingFeedBizKey]);
+
   const copyAllBizBeforeDepositToClipboard = async () => {
     if (allBizBeforeDepositEntries.length === 0) return alert("복사할 데이터가 없습니다.");
     const tpl = migrateTpl(DEFAULT_DEPOSIT_TEMPLATE);
