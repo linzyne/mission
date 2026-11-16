@@ -1551,6 +1551,27 @@ const App: React.FC = () => {
   const [batchUploadProcessing, setBatchUploadProcessing] = useState(false);
   const [batchUploadDragging, setBatchUploadDragging] = useState(false);
 
+  // 품목별비용엔 있는데 그날 마진시트엔 없는 품목(지난 판매분 반품·CS환불, 판매 없는 날 광고비 등) — 판매 0으로 비용만 올린다
+  const costOnlyItems = (uploadDate: string, soldProducts: string[], costs: Record<string, { product: string; refund: number; adCost: number; solution: number }>, existing: SalesDailyEntry[]) => {
+    const sold = new Set(soldProducts.map(normProductName));
+    return Object.entries(costs)
+      .filter(([key, c]) => key.startsWith(`${uploadDate}|||`) && !sold.has(normProductName(c.product)))
+      .map(([, c]) => {
+        const existingSD = existing.find(entry => entry.date === uploadDate && normProductName(entry.product) === normProductName(c.product));
+        return {
+          docId: existingSD?.id || `${uploadDate}_${c.product}`,
+          product: c.product,
+          productDetail: existingSD?.productDetail || '',
+          quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0,
+          adCost: c.adCost,
+          housePurchase: existingSD?.housePurchase || 0,
+          solution: c.solution,
+          refund: c.refund,
+          hpManual: existingSD?.hpManual || false,
+        };
+      });
+  };
+
   const handleSalesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1594,7 +1615,7 @@ const App: React.FC = () => {
     }
 
     // 품목별비용 시트 파싱 (반품/광고비/슬롯)
-    type CostByProduct = { refund: number; adCost: number; solution: number };
+    type CostByProduct = { product: string; refund: number; adCost: number; solution: number };
     const costByProductDate: Record<string, CostByProduct> = {};
     const costSheetName = wb.SheetNames.find((n: string) => n.includes('품목별비용'));
     if (costSheetName) {
@@ -1608,8 +1629,8 @@ const App: React.FC = () => {
         const amount = Number(row[8] || 0);           // I열: 금액
         if (!date || !product || !amount) continue;
         const key = `${date}|||${normProductName(product)}`;
-        if (!costByProductDate[key]) costByProductDate[key] = { refund: 0, adCost: 0, solution: 0 };
-        if (category === '반품') costByProductDate[key].refund += amount;
+        if (!costByProductDate[key]) costByProductDate[key] = { product, refund: 0, adCost: 0, solution: 0 };
+        if (category === '반품' || category === 'CS환불') costByProductDate[key].refund += amount; // CS환불: 윙발주 CS접수 환불 차감
         else if (category === '광고비') costByProductDate[key].adCost += amount;
         else if (category === '슬롯') costByProductDate[key].solution += amount;
       }
@@ -1652,6 +1673,7 @@ const App: React.FC = () => {
         hpManual: existingSD?.hpManual || false,
       };
     });
+    salesItems.push(...costOnlyItems(uploadDate, Object.values(merged).map(m => m.product), costByProductDate, salesDaily));
 
     setPendingUpload({ uploadDate, salesItems, overheadCategories });
     e.target.value = '';
@@ -1775,7 +1797,7 @@ const App: React.FC = () => {
         }
         console.log('[일괄업무일지] 합산된 품목 수:', Object.keys(merged).length);
 
-        type CostByProduct = { refund: number; adCost: number; solution: number };
+        type CostByProduct = { product: string; refund: number; adCost: number; solution: number };
         const costByProductDate: Record<string, CostByProduct> = {};
         const costSheetName = wb.SheetNames.find((n: string) => n.includes('품목별비용'));
         if (costSheetName) {
@@ -1789,8 +1811,8 @@ const App: React.FC = () => {
             const amount = Number(row[8] || 0);
             if (!date || !product || !amount) continue;
             const key = `${date}|||${normProductName(product)}`;
-            if (!costByProductDate[key]) costByProductDate[key] = { refund: 0, adCost: 0, solution: 0 };
-            if (category === '반품') costByProductDate[key].refund += amount;
+            if (!costByProductDate[key]) costByProductDate[key] = { product, refund: 0, adCost: 0, solution: 0 };
+            if (category === '반품' || category === 'CS환불') costByProductDate[key].refund += amount; // CS환불: 윙발주 CS접수 환불 차감
             else if (category === '광고비') costByProductDate[key].adCost += amount;
             else if (category === '슬롯') costByProductDate[key].solution += amount;
           }
@@ -1831,6 +1853,7 @@ const App: React.FC = () => {
             hpManual: existingSD?.hpManual || false,
           };
         });
+        salesItems.push(...costOnlyItems(uploadDate, Object.values(merged).map(m => m.product), costByProductDate, existingSalesDaily));
 
         results.push({ fileName: file.name, uploadDate, bizId: matchedBizId, salesItems, overheadCategories });
       }
