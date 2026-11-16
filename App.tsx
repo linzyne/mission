@@ -4988,11 +4988,17 @@ const App: React.FC = () => {
 
                       // 월별: 사업자별 순마진(일별합계와 같은 셈) − 비용
                       const monthNet: Record<string, Record<string, number>> = {};
+                      // 순마진 안의 항목별(마진·광고비·가구매·슬롯·반품, 지출은 음수) — 월 → 사업자 → 항목
+                      type Parts = { margin: number; ad: number; hp: number; sol: number; ref: number };
+                      const zeroParts = (): Parts => ({ margin: 0, ad: 0, hp: 0, sol: 0, ref: 0 });
+                      const addParts = (a: Parts, b: Parts): Parts => ({ margin: a.margin + b.margin, ad: a.ad + b.ad, hp: a.hp + b.hp, sol: a.sol + b.sol, ref: a.ref + b.ref });
+                      const monthParts: Record<string, Record<string, Parts>> = {};
                       const byDate: Record<string, Record<string, number>> = {};
                       bizList.forEach(([bizId]) => (allBizSales[bizId] || []).forEach(e => {
                         if (!e.date?.startsWith(y)) return;
                         const m = e.date.substring(0, 7);
                         (monthNet[m] ||= {})[bizId] = (monthNet[m][bizId] || 0) + net(e);
+                        (monthParts[m] ||= {})[bizId] = addParts(monthParts[m][bizId] || zeroParts(), { margin: e.totalMargin || 0, ad: e.adCost || 0, hp: e.housePurchase || 0, sol: e.solution || 0, ref: e.refund || 0 });
                         if (m === salesMonthStr) (byDate[e.date] ||= {})[bizId] = (byDate[e.date][bizId] || 0) + net(e);
                       }));
                       const months = Array.from({ length: 12 }, (_, i) => `${y}-${String(i + 1).padStart(2, '0')}`)
@@ -5000,9 +5006,23 @@ const App: React.FC = () => {
                       const monthSum = (m: string) => {
                         const n = bizList.reduce((s, [id]) => s + (monthNet[m]?.[id] || 0), 0);
                         const c = bizList.reduce((s, [id]) => s + (allBizOverhead[id]?.[m] || 0), 0);
-                        return { net: n, cost: c, profit: n - c };
+                        const parts = bizList.reduce((s, [id]) => addParts(s, monthParts[m]?.[id] || zeroParts()), zeroParts());
+                        return { net: n, cost: c, profit: n - c, parts };
                       };
-                      const yearTotal = months.reduce((t, m) => { const s = monthSum(m); return { net: t.net + s.net, cost: t.cost + s.cost, profit: t.profit + s.profit }; }, { net: 0, cost: 0, profit: 0 });
+                      const yearTotal = months.reduce((t, m) => { const s = monthSum(m); return { net: t.net + s.net, cost: t.cost + s.cost, profit: t.profit + s.profit, parts: addParts(t.parts, s.parts) }; }, { net: 0, cost: 0, profit: 0, parts: zeroParts() });
+                      // 마진 → 지출(광고비·가구매·슬롯·반품·비용) → 순수익 세로 목록
+                      const signed = (n: number) => n ? n.toLocaleString() : '-';
+                      const breakdown = (p: Parts, cost: number, profit: number, cls: string) => (
+                        <div className={cls}>
+                          <div className="flex justify-between"><span>마진</span><span className="text-gray-800">{signed(p.margin)}</span></div>
+                          <div className="flex justify-between"><span>광고비</span><span className={color(p.ad)}>{signed(p.ad)}</span></div>
+                          <div className="flex justify-between"><span>가구매</span><span className={color(p.hp)}>{signed(p.hp)}</span></div>
+                          <div className="flex justify-between"><span>슬롯</span><span className={color(p.sol)}>{signed(p.sol)}</span></div>
+                          <div className="flex justify-between"><span>반품</span><span className={color(p.ref)}>{signed(p.ref)}</span></div>
+                          <div className="flex justify-between"><span>비용</span><span className={cost ? 'text-red-500' : 'text-gray-300'}>{cost ? `-${cost.toLocaleString()}` : '-'}</span></div>
+                          <div className="flex justify-between border-t pt-0.5 mt-0.5 font-black text-gray-800"><span>순수익</span><span className={color(profit)}>{profit.toLocaleString()}</span></div>
+                        </div>
+                      );
                       const cur = monthSum(salesMonthStr);
                       const dates = Object.keys(byDate).sort().reverse();
                       const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
@@ -5026,10 +5046,9 @@ const App: React.FC = () => {
                               );
                             })}
                             {months.length > 0 && (
-                              <div className="px-3 pt-2 mt-1 border-t text-xs font-bold text-gray-500 space-y-0.5">
-                                <div className="flex justify-between"><span>{y}년 순마진</span><span>{yearTotal.net.toLocaleString()}</span></div>
-                                <div className="flex justify-between"><span>비용</span><span className="text-red-500">{yearTotal.cost ? `-${yearTotal.cost.toLocaleString()}` : '-'}</span></div>
-                                <div className="flex justify-between text-sm font-black text-gray-800"><span>순수익</span><span className={color(yearTotal.profit)}>{yearTotal.profit.toLocaleString()}</span></div>
+                              <div className="px-3 pt-2 mt-1 border-t">
+                                <div className="text-xs font-black text-gray-700 mb-0.5">{y}년 합계</div>
+                                {breakdown(yearTotal.parts, yearTotal.cost, yearTotal.profit, 'text-xs font-bold text-gray-500 space-y-0.5')}
                               </div>
                             )}
                           </div>
@@ -5041,21 +5060,21 @@ const App: React.FC = () => {
                                 <span className="text-sm font-black text-gray-700">{salesMonth.month}월 전체 순수익</span>
                                 <span className={`text-2xl font-black ${color(cur.profit)}`}>{fmtWon(cur.profit)}</span>
                               </div>
-                              <div className="text-xs font-bold text-gray-500 flex gap-4">
-                                <span>순마진 <span className="text-gray-800">{cur.net.toLocaleString()}</span></span>
-                                <span>비용 <span className="text-red-500">{cur.cost ? `-${cur.cost.toLocaleString()}` : '-'}</span></span>
-                              </div>
+                              {breakdown(cur.parts, cur.cost, cur.profit, 'text-xs font-bold text-gray-500 space-y-0.5 max-w-xs')}
                               <div className="border-t pt-2 space-y-1">
                                 {bizList.map(([bizId, biz]) => {
                                   const n = monthNet[salesMonthStr]?.[bizId] || 0;
                                   const c = allBizOverhead[bizId]?.[salesMonthStr] || 0;
+                                  const p = monthParts[salesMonthStr]?.[bizId] || zeroParts();
                                   return (
-                                    <div key={bizId} className="flex items-baseline gap-2 text-sm">
-                                      <span className="w-2.5 h-2.5 rounded-full shrink-0 self-center" style={{ background: getBizColor(bizId) }} />
-                                      <span className="font-black text-gray-700 flex-1 truncate">{biz.name}</span>
-                                      <span className="text-[11px] text-gray-400">{n.toLocaleString()}{c ? ` − ${c.toLocaleString()}` : ''}</span>
-                                      <span className={`font-black w-24 text-right ${color(n - c)}`}>{(n - c).toLocaleString()}</span>
-                                    </div>
+                                    <details key={bizId} className="group">
+                                      <summary className="flex items-baseline gap-2 text-sm cursor-pointer list-none">
+                                        <span className="w-2.5 h-2.5 rounded-full shrink-0 self-center" style={{ background: getBizColor(bizId) }} />
+                                        <span className="font-black text-gray-700 flex-1 truncate">{biz.name} <span className="text-[10px] text-gray-300 group-open:hidden">▸</span><span className="text-[10px] text-gray-300 hidden group-open:inline">▾</span></span>
+                                        <span className={`font-black w-24 text-right ${color(n - c)}`}>{(n - c).toLocaleString()}</span>
+                                      </summary>
+                                      {breakdown(p, c, n - c, 'text-[11px] font-bold text-gray-400 space-y-0.5 pl-5 pr-0 py-1 max-w-xs')}
+                                    </details>
                                   );
                                 })}
                               </div>
