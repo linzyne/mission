@@ -485,6 +485,8 @@ const App: React.FC = () => {
   // 절대 사라지면 안 됨: 입력 즉시 localStorage에 백업 → 서버 저장 끝나야 백업의 pending 해제.
   // 새로고침·창 닫기로 서버 저장이 끊겨도 다음에 열 때 백업으로 되살려 다시 저장.
   const [purchaseMemo, setPurchaseMemo] = useState('');
+  // 윙_발주에서 확인완료 누른 시각 — 지금 메모가 그때 메모와 같을 때만 (확인완료면 메모 칸 잠김, 윙에서 삭제하면 풀림)
+  const [purchaseMemoConfirmedAt, setPurchaseMemoConfirmedAt] = useState(0);
   const purchaseMemoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const purchaseMemoPending = useRef<{ prefix: string; memo: string } | null>(null);
   const memoBackupKey = (prefix: string) => `purchaseMemoBackup:${prefix || '_'}`;
@@ -508,11 +510,14 @@ const App: React.FC = () => {
   };
   useEffect(() => {
     // 사업자 정보(colPrefix)가 확정되기 전엔 읽지 않음 — 다른 사업자 메모를 읽어 덮어쓰는 것 방지
-    if (!selectedBiz || !bizInfo) { setPurchaseMemo(''); return; }
+    if (!selectedBiz || !bizInfo) { setPurchaseMemo(''); setPurchaseMemoConfirmedAt(0); return; }
     const prefix = colPrefix;
     const backup = readMemoBackup(prefix);
     if (backup) setPurchaseMemo(backup.memo || '');
+    setPurchaseMemoConfirmedAt(0);
     const unsub = onSnapshot(doc(db, getCol('settings', prefix), 'purchaseMemo'), (d) => {
+      const data = d.exists() ? d.data() : null;
+      setPurchaseMemoConfirmedAt(data?.confirmedAt && data.confirmedMemo === data.memo && String(data.memo || '').trim() ? data.confirmedAt : 0);
       if (purchaseMemoTimer.current || purchaseMemoPending.current?.prefix === prefix) return; // 입력·저장 중엔 덮어쓰지 않음
       const local = readMemoBackup(prefix);
       if (local?.pending) {
@@ -541,6 +546,7 @@ const App: React.FC = () => {
     };
   }, []);
   const changePurchaseMemo = (memo: string) => {
+    if (purchaseMemoConfirmedAt) return;
     const prefix = colPrefix;
     setPurchaseMemo(memo);
     writeMemoBackup(prefix, memo, true);
@@ -750,13 +756,14 @@ const App: React.FC = () => {
   const [selectedPendingIds, setSelectedPendingIds] = useState<Set<string>>(new Set());
 
   // 윙업무: 전체 사업자 구매목록 메모
-  const [allBizPurchaseMemos, setAllBizPurchaseMemos] = useState<Array<{ bizId: string; bizName: string; memo: string; updatedAt?: number }>>([]);
+  const [allBizPurchaseMemos, setAllBizPurchaseMemos] = useState<Array<{ bizId: string; bizName: string; memo: string; updatedAt?: number; confirmedAt?: number }>>([]);
   const loadAllBizPurchaseMemos = async () => {
     const results = await Promise.all(Object.entries(allBusinesses).map(async ([bizId, biz]) => {
       try {
         const d = await getDoc(doc(db, getCol('settings', biz.collectionPrefix), 'purchaseMemo'));
         const memo = d.exists() ? String(d.data().memo || '') : '';
-        return { bizId, bizName: biz.name, memo, updatedAt: d.exists() ? d.data().updatedAt : undefined };
+        const confirmedAt = d.exists() && d.data().confirmedMemo === memo ? d.data().confirmedAt : undefined;
+        return { bizId, bizName: biz.name, memo, updatedAt: d.exists() ? d.data().updatedAt : undefined, confirmedAt };
       } catch (e) { console.error('[purchaseMemo] load error:', bizId, e); return null; }
     }));
     setAllBizPurchaseMemos(results.filter((r): r is NonNullable<typeof r> => !!r && !!r.memo.trim()).sort((a, b) => a.bizName.localeCompare(b.bizName, 'ko')));
@@ -3171,7 +3178,7 @@ const App: React.FC = () => {
     const daysAgoStr = (n: number) => toLocalDateStr(new Date(Date.now() - n * 24 * 60 * 60 * 1000));
     const fakeByBiz: Record<string, Array<ManualEntry & { bizId: string; bizName: string }>> = {};
     const depositByBiz: Record<string, Array<ManualEntry & { bizId: string; bizName: string }>> = {};
-    const memoByBiz: Record<string, { memo: string; updatedAt: number }> = {};
+    const memoByBiz: Record<string, { memo: string; updatedAt: number; confirmedAt: number }> = {};
     const failed = new Set<string>();
     let timer: ReturnType<typeof setTimeout> | null = null;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3198,7 +3205,7 @@ const App: React.FC = () => {
       // 구매 탭 상단 메모 (내용 있는 사업자만)
       const memos = Object.entries(memoByBiz)
         .filter(([, m]) => m.memo.trim())
-        .map(([bizId, m]) => ({ bizId, bizName: bizs[bizId]?.name || bizId, memo: m.memo, updatedAt: m.updatedAt }))
+        .map(([bizId, m]) => ({ bizId, bizName: bizs[bizId]?.name || bizId, memo: m.memo, updatedAt: m.updatedAt, ...(m.confirmedAt ? { confirmedAt: m.confirmedAt } : {}) }))
         .sort((a, b) => a.bizName.localeCompare(b.bizName, 'ko'));
       return { fakeLines, depositText, fakeItems, depositItems, memos };
     };
@@ -3245,7 +3252,9 @@ const App: React.FC = () => {
         }, e => { console.error('[윙_발주 연동] 입금전 구독 오류:', bizId, e); failed.add(bizId); }),
         onSnapshot(doc(db, getCol('settings', biz.collectionPrefix), 'purchaseMemo'), { includeMetadataChanges: true }, d => {
           if (d.metadata.fromCache) return;
-          memoByBiz[bizId] = d.exists() ? { memo: String(d.data().memo || ''), updatedAt: d.data().updatedAt || 0 } : { memo: '', updatedAt: 0 };
+          const data = d.exists() ? d.data() : null;
+          const memo = String(data?.memo || '');
+          memoByBiz[bizId] = { memo, updatedAt: data?.updatedAt || 0, confirmedAt: data?.confirmedAt && data.confirmedMemo === memo ? data.confirmedAt : 0 };
           schedule();
         }, e => { console.error('[윙_발주 연동] 메모 구독 오류:', bizId, e); failed.add(bizId); }),
       ];
@@ -3327,6 +3336,41 @@ const App: React.FC = () => {
     return onSnapshot(query(collection(wingDb, 'missionHubClearRequests'), where('status', '==', 'pending')), snap => {
       snap.docs.forEach(d => process(d.id, d.data() as any));
     }, e => console.error('[미션클리어] 요청 구독 오류:', e));
+  }, [isOwner, wingFeedBizKey]);
+
+  // 윙_발주 가구매 명단 위 메모의 "확인완료"·"삭제": missionHubMemoRequests 요청을 받아
+  // 확인완료 → 그 메모를 확인완료로 표시(구매 탭 메모 칸 잠김), 삭제 → 메모 지움.
+  // 지금 메모가 요청 때 메모와 같을 때만 — 그새 고쳤으면 안 건드림.
+  useEffect(() => {
+    if (!isOwner || !wingFeedBizKey) return;
+    const busy = new Set<string>();
+    type MemoReq = { bizId: string; memo: string; action: 'confirm' | 'delete'; clickedAt: number };
+    const process = async (reqId: string, req: MemoReq) => {
+      if (busy.has(reqId)) return;
+      busy.add(reqId);
+      const reqRef = doc(wingDb, 'missionHubMemoRequests', reqId);
+      try {
+        const biz = allBusinessesRef.current[req.bizId];
+        if (!biz) throw new Error('사업자를 못 찾음');
+        const ref = doc(db, getCol('settings', biz.collectionPrefix), 'purchaseMemo');
+        await runTransaction(db, async tx => {
+          const snap = await tx.get(ref);
+          const memo = snap.exists() ? String(snap.data().memo || '') : '';
+          if (memo !== req.memo) throw new Error('미션허브 메모가 그새 바뀜');
+          if (req.action === 'confirm') tx.set(ref, { confirmedAt: req.clickedAt, confirmedMemo: memo }, { merge: true });
+          else tx.set(ref, { memo: '', updatedAt: Date.now() });
+        });
+        await updateDoc(reqRef, { status: 'done', processedAt: Date.now() });
+      } catch (e) {
+        console.error('[메모 확인완료·삭제] 처리 실패:', e);
+        await updateDoc(reqRef, { status: 'error', error: e instanceof Error ? e.message : String(e), processedAt: Date.now() }).catch(() => {});
+      } finally {
+        busy.delete(reqId);
+      }
+    };
+    return onSnapshot(query(collection(wingDb, 'missionHubMemoRequests'), where('status', '==', 'pending')), snap => {
+      snap.docs.forEach(d => process(d.id, d.data() as MemoReq));
+    }, e => console.error('[메모 확인완료·삭제] 요청 구독 오류:', e));
   }, [isOwner, wingFeedBizKey]);
 
   // 윙_발주 미매칭 명단에서 "이걸로 수정": missionHubOrderFixes 요청을 받아 그 항목 주문번호를 고침.
@@ -5768,8 +5812,9 @@ const App: React.FC = () => {
                             <span className="text-lg">📝</span>
                             <span className="text-xs font-black text-white px-2 py-0.5 rounded-full" style={{ backgroundColor: getBizColor(m.bizId) }}>{m.bizName}</span>
                             <span className="text-xs font-black text-pink-500">메모</span>
+                            {m.confirmedAt && <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full">✅ 확인완료</span>}
                           </div>
-                          <div className="whitespace-pre-wrap break-words text-sm font-bold text-gray-700 leading-relaxed">{m.memo}</div>
+                          <div className={`whitespace-pre-wrap break-words text-sm font-bold leading-relaxed ${m.confirmedAt ? 'text-gray-400 line-through' : 'text-gray-700'}`}>{m.memo}</div>
                         </div>
                       ))}
                     </section>
@@ -6279,14 +6324,18 @@ const App: React.FC = () => {
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className="text-lg">📝</span>
                         <span className="text-xs font-black text-pink-500">메모</span>
-                        <span className="text-[10px] text-pink-300 font-bold">자동저장 ✨</span>
+                        {purchaseMemoConfirmedAt
+                          ? <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full">✅ 확인완료 · {new Date(purchaseMemoConfirmedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                          : <span className="text-[10px] text-pink-300 font-bold">자동저장 ✨</span>}
                       </div>
                       <textarea
                         value={purchaseMemo}
+                        disabled={!!purchaseMemoConfirmedAt}
+                        title={purchaseMemoConfirmedAt ? '윙_발주에서 확인완료한 메모 — 윙_발주에서 삭제하면 다시 쓸 수 있어요' : undefined}
                         onChange={e => changePurchaseMemo(e.target.value)}
                         placeholder="오늘 챙길 것, 전달사항 등을 적어두세요 🐰"
                         rows={Math.min(6, Math.max(2, purchaseMemo.split('\n').length))}
-                        className="w-full bg-transparent outline-none resize-none text-sm font-bold text-gray-700 placeholder:text-pink-300 leading-relaxed"
+                        className={`w-full bg-transparent outline-none resize-none text-sm font-bold placeholder:text-pink-300 leading-relaxed ${purchaseMemoConfirmedAt ? 'text-gray-400 line-through cursor-not-allowed' : 'text-gray-700'}`}
                       />
                     </div>
                     <div className="flex items-center gap-3 flex-wrap">
