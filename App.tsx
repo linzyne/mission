@@ -31,10 +31,6 @@ const BASE_BUSINESSES: Record<string, BusinessInfo> = {
 // 이 이메일로 로그인하면 기존 데이터(안군·조에 등)를 그대로 사용. 그 외 계정은 t_<uid>_ 접두사로 데이터 분리
 const OWNER_EMAIL = 'kimseongah77@gmail.com';
 
-// 이 날짜부터 반품·CS환불은 업무일지 품목별비용 대신 윙_발주 반품 기록에서 바로 받는다(그 전 달은 업무일지로 이미 들어감)
-const WING_REFUND_FROM = '2026-11-01';
-const WING_REFUND_PRODUCT = '반품(윙_발주)';
-
 function getCol(baseName: string, prefix: string): string {
   return prefix ? `${prefix}${baseName}` : baseName;
 }
@@ -1566,7 +1562,7 @@ const App: React.FC = () => {
   const costOnlyItems = (uploadDate: string, soldProducts: string[], costs: Record<string, { product: string; refund: number; adCost: number; solution: number }>, existing: SalesDailyEntry[]) => {
     const sold = new Set(soldProducts.map(normProductName));
     return Object.entries(costs)
-      .filter(([key, c]) => key.startsWith(`${uploadDate}|||`) && !sold.has(normProductName(c.product)) && (c.refund || c.adCost || c.solution))
+      .filter(([key, c]) => key.startsWith(`${uploadDate}|||`) && !sold.has(normProductName(c.product)))
       .map(([, c]) => {
         const existingSD = existing.find(entry => entry.date === uploadDate && normProductName(entry.product) === normProductName(c.product));
         return {
@@ -1641,7 +1637,7 @@ const App: React.FC = () => {
         if (!date || !product || !amount) continue;
         const key = `${date}|||${normProductName(product)}`;
         if (!costByProductDate[key]) costByProductDate[key] = { product, refund: 0, adCost: 0, solution: 0 };
-        if (category === '반품' || category === 'CS환불') { if (date < WING_REFUND_FROM) costByProductDate[key].refund += amount; } // CS환불: 윙발주 CS접수 환불 차감. 이후 날짜는 윙_발주에서 바로 받음
+        if (category === '반품' || category === 'CS환불') costByProductDate[key].refund += amount; // CS환불: 윙발주 CS접수 환불 차감
         else if (category === '광고비') costByProductDate[key].adCost += amount;
         else if (category === '슬롯') costByProductDate[key].solution += amount;
       }
@@ -1823,7 +1819,7 @@ const App: React.FC = () => {
             if (!date || !product || !amount) continue;
             const key = `${date}|||${normProductName(product)}`;
             if (!costByProductDate[key]) costByProductDate[key] = { product, refund: 0, adCost: 0, solution: 0 };
-            if (category === '반품' || category === 'CS환불') { if (date < WING_REFUND_FROM) costByProductDate[key].refund += amount; } // CS환불: 윙발주 CS접수 환불 차감. 이후 날짜는 윙_발주에서 바로 받음
+            if (category === '반품' || category === 'CS환불') costByProductDate[key].refund += amount; // CS환불: 윙발주 CS접수 환불 차감
             else if (category === '광고비') costByProductDate[key].adCost += amount;
             else if (category === '슬롯') costByProductDate[key].solution += amount;
           }
@@ -3278,44 +3274,6 @@ const App: React.FC = () => {
       window.removeEventListener('pagehide', flush);
       document.removeEventListener('visibilitychange', onHide);
     };
-  }, [isOwner, wingFeedBizKey]);
-
-  // 윙_발주 반품·CS환불 → salesDaily 날짜별 '반품(윙_발주)' 줄. 업무일지를 거치지 않으므로
-  // 업무일지 받은 뒤 접수한 것·업무일지 없는 날(주말) 접수한 것도 들어간다. 반품 있는 날 문서만 구독
-  useEffect(() => {
-    if (!isOwner || !wingFeedBizKey) return;
-    const unsubs = (Object.entries(allBusinessesRef.current) as [string, BusinessInfo][]).map(([bizId, biz]) => {
-      const wingId = bizId === 'angun' ? '안군농원' : biz.name; // 윙_발주 사업자 id: 안군농원·조에·한나푸드…
-      const wingCol = wingId === '안군농원' ? 'salesHistory' : `salesHistory_${wingId}`;
-      const col = getCol('salesDaily', biz.collectionPrefix);
-      return onSnapshot(query(collection(wingDb, wingCol), where('returnTotal', '<', 0)), async snap => {
-        const want = new Map<string, { refund: number; detail: string }>();
-        snap.docs.forEach(d => {
-          if (d.id < WING_REFUND_FROM) return;
-          const recs: { type?: string; company?: string; productName?: string; count?: number; totalMargin?: number }[] = d.data().returnRecords || [];
-          const refund = recs.reduce((s, r) => s + (Number(r.totalMargin) || 0), 0);
-          if (refund) want.set(d.id, { refund, detail: recs.map(r => `${r.type || '반품'} ${r.company || ''} ${r.productName || ''} ${r.count || 1}개`).join(', ') });
-        });
-        const have = await getDocs(query(collection(db, col), where('product', '==', WING_REFUND_PRODUCT)));
-        const batch = rawWriteBatch(db);
-        let n = 0;
-        have.docs.forEach(d => {
-          const w = want.get(d.data().date);
-          if (!w) { batch.delete(d.ref); n++; }
-          else if (w.refund === d.data().refund && w.detail === d.data().productDetail) want.delete(d.data().date);
-        });
-        want.forEach((w, date) => {
-          batch.set(doc(db, col, `${date}_${WING_REFUND_PRODUCT}`), {
-            date, product: WING_REFUND_PRODUCT, productDetail: w.detail,
-            quantity: 0, sellingPrice: 0, supplyPrice: 0, marginPerUnit: 0, totalMargin: 0,
-            adCost: 0, housePurchase: 0, solution: 0, refund: w.refund,
-          });
-          n++;
-        });
-        if (n) await batch.commit();
-      }, err => console.warn(`[윙 반품 연동] ${wingId}`, err));
-    });
-    return () => unsubs.forEach(u => u());
   }, [isOwner, wingFeedBizKey]);
 
   // 윙_발주 "미션클리어": 윙_발주가 missionHubClearRequests에 올린 요청을 받아
