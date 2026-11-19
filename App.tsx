@@ -545,6 +545,16 @@ const App: React.FC = () => {
       document.removeEventListener('visibilitychange', onVis);
     };
   }, []);
+  // 확인완료된 메모 지우고 새로 쓰기 (memo를 비우면 confirmedMemo와 달라져 잠금 풀림)
+  const startNewPurchaseMemo = () => {
+    const prefix = colPrefix;
+    if (purchaseMemoTimer.current) { clearTimeout(purchaseMemoTimer.current); purchaseMemoTimer.current = null; }
+    setPurchaseMemoConfirmedAt(0);
+    setPurchaseMemo('');
+    writeMemoBackup(prefix, '', true);
+    purchaseMemoPending.current = { prefix, memo: '' };
+    savePurchaseMemo(prefix, '').catch(onFbError);
+  };
   const changePurchaseMemo = (memo: string) => {
     if (purchaseMemoConfirmedAt) return;
     const prefix = colPrefix;
@@ -6332,12 +6342,15 @@ const App: React.FC = () => {
                         <span className="text-xs font-black text-pink-500">메모</span>
                         {purchaseMemoConfirmedAt
                           ? <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded-full">✅ 확인완료 · {new Date(purchaseMemoConfirmedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                          : null}
+                        {purchaseMemoConfirmedAt
+                          ? <button onClick={startNewPurchaseMemo} className="ml-auto text-[11px] font-black text-white bg-pink-400 hover:bg-pink-500 px-2 py-0.5 rounded-full">✏️ 새 메모</button>
                           : <span className="text-[10px] text-pink-300 font-bold">자동저장 ✨</span>}
                       </div>
                       <textarea
                         value={purchaseMemo}
                         disabled={!!purchaseMemoConfirmedAt}
-                        title={purchaseMemoConfirmedAt ? '윙_발주에서 확인완료한 메모 — 윙_발주에서 삭제하면 다시 쓸 수 있어요' : undefined}
+                        title={purchaseMemoConfirmedAt ? '윙_발주에서 확인완료한 메모 — 오른쪽 위 "새 메모"를 누르면 지우고 새로 쓸 수 있어요' : undefined}
                         onChange={e => changePurchaseMemo(e.target.value)}
                         placeholder="오늘 챙길 것, 전달사항 등을 적어두세요 🐰"
                         rows={Math.min(6, Math.max(2, purchaseMemo.split('\n').length))}
