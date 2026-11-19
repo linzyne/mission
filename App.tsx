@@ -2278,12 +2278,8 @@ const App: React.FC = () => {
         if (field === 'orderNumber') checkDuplicateOrderNumber(entry.id, newVal);
       }
       const nextInput = document.querySelector(`input[data-row="${idx + 1}"][data-col="${col}"]`) as HTMLInputElement;
-      if (nextInput) { nextInput.focus(); setCellSelection({ startRow: idx + 1, startCol: col, endRow: idx + 1, endCol: col }); }
+      if (nextInput) nextInput.focus();
       else e.currentTarget.blur();
-    } else if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c') {
-      // 엑셀처럼: 글자를 선택 안 하고 ⌘C 하면 칸 전체 복사 (안 그러면 아무것도 안 복사돼서 이전 클립보드가 그대로 붙음)
-      const el = e.currentTarget;
-      if (el.selectionStart === el.selectionEnd) el.select();
     } else if (e.key === 'Escape') {
       const origVal = entry[field];
       e.currentTarget.value = (origVal != null && origVal !== 0) ? String(origVal) : '';
@@ -2935,8 +2931,6 @@ const App: React.FC = () => {
     const nextInput = document.querySelector(`input[data-row="${targetRow}"][data-col="${targetCol}"]`) as HTMLInputElement;
     if (nextInput) {
       nextInput.focus();
-      // 키보드로 옮겨도 선택 칸을 같이 옮겨야 붙여넣기·복사가 예전 칸에 가지 않음
-      setCellSelection({ startRow: targetRow, startCol: targetCol, endRow: targetRow, endCol: targetCol });
     }
   };
 
