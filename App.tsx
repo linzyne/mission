@@ -487,6 +487,8 @@ const App: React.FC = () => {
   const [purchaseMemo, setPurchaseMemo] = useState('');
   // 윙_발주에서 확인완료 누른 시각 — 지금 메모가 그때 메모와 같을 때만 (확인완료면 메모 칸 잠김, 윙에서 삭제하면 풀림)
   const [purchaseMemoConfirmedAt, setPurchaseMemoConfirmedAt] = useState(0);
+  // 지난 메모 — '새 메모' 누르면 지금 메모가 여기로 옮겨짐. 삭제 누르기 전엔 절대 안 지움.
+  const [purchaseMemoHistory, setPurchaseMemoHistory] = useState<Array<{ memo: string; confirmedAt?: number; movedAt: number }>>([]);
   const purchaseMemoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const purchaseMemoPending = useRef<{ prefix: string; memo: string } | null>(null);
   const memoBackupKey = (prefix: string) => `purchaseMemoBackup:${prefix || '_'}`;
@@ -497,7 +499,7 @@ const App: React.FC = () => {
     try { localStorage.setItem(memoBackupKey(prefix), JSON.stringify({ memo, pending, at: Date.now() })); } catch {}
   };
   const savePurchaseMemo = async (prefix: string, memo: string) => {
-    await setDoc(doc(db, getCol('settings', prefix), 'purchaseMemo'), { memo, updatedAt: Date.now() });
+    await setDoc(doc(db, getCol('settings', prefix), 'purchaseMemo'), { memo, updatedAt: Date.now() }, { merge: true });
     // 저장 중에 또 입력했으면 pending 유지
     if (purchaseMemoPending.current?.prefix === prefix && purchaseMemoPending.current.memo !== memo) return;
     if (purchaseMemoPending.current?.prefix === prefix) purchaseMemoPending.current = null;
@@ -510,14 +512,16 @@ const App: React.FC = () => {
   };
   useEffect(() => {
     // 사업자 정보(colPrefix)가 확정되기 전엔 읽지 않음 — 다른 사업자 메모를 읽어 덮어쓰는 것 방지
-    if (!selectedBiz || !bizInfo) { setPurchaseMemo(''); setPurchaseMemoConfirmedAt(0); return; }
+    if (!selectedBiz || !bizInfo) { setPurchaseMemo(''); setPurchaseMemoConfirmedAt(0); setPurchaseMemoHistory([]); return; }
     const prefix = colPrefix;
     const backup = readMemoBackup(prefix);
     if (backup) setPurchaseMemo(backup.memo || '');
     setPurchaseMemoConfirmedAt(0);
+    setPurchaseMemoHistory([]);
     const unsub = onSnapshot(doc(db, getCol('settings', prefix), 'purchaseMemo'), (d) => {
       const data = d.exists() ? d.data() : null;
       setPurchaseMemoConfirmedAt(data?.confirmedAt && data.confirmedMemo === data.memo && String(data.memo || '').trim() ? data.confirmedAt : 0);
+      setPurchaseMemoHistory(Array.isArray(data?.history) ? data!.history : []);
       if (purchaseMemoTimer.current || purchaseMemoPending.current?.prefix === prefix) return; // 입력·저장 중엔 덮어쓰지 않음
       const local = readMemoBackup(prefix);
       if (local?.pending) {
@@ -545,15 +549,34 @@ const App: React.FC = () => {
       document.removeEventListener('visibilitychange', onVis);
     };
   }, []);
-  // 확인완료된 메모 지우고 새로 쓰기 (memo를 비우면 confirmedMemo와 달라져 잠금 풀림)
-  const startNewPurchaseMemo = () => {
+  // 확인완료된 메모를 '지난 메모'로 옮기고 빈 칸에서 새로 쓰기 (지난 메모는 삭제 전까지 보관)
+  const startNewPurchaseMemo = async () => {
     const prefix = colPrefix;
-    if (purchaseMemoTimer.current) { clearTimeout(purchaseMemoTimer.current); purchaseMemoTimer.current = null; }
-    setPurchaseMemoConfirmedAt(0);
-    setPurchaseMemo('');
-    writeMemoBackup(prefix, '', true);
-    purchaseMemoPending.current = { prefix, memo: '' };
-    savePurchaseMemo(prefix, '').catch(onFbError);
+    const ref = doc(db, getCol('settings', prefix), 'purchaseMemo');
+    try {
+      await runTransaction(db, async tx => {
+        const snap = await tx.get(ref);
+        const data = snap.exists() ? snap.data() : {};
+        const memo = String(data.memo || '');
+        const history = Array.isArray(data.history) ? [...data.history] : [];
+        if (memo.trim()) history.push({ memo, ...(data.confirmedAt ? { confirmedAt: data.confirmedAt } : {}), movedAt: Date.now() });
+        tx.set(ref, { memo: '', updatedAt: Date.now(), history, confirmedAt: deleteField(), confirmedMemo: deleteField() }, { merge: true });
+      });
+      setPurchaseMemoConfirmedAt(0);
+      setPurchaseMemo('');
+      writeMemoBackup(prefix, '', false);
+    } catch (e) { onFbError(e as any); alert('새 메모로 바꾸기 실패 — 지난 메모는 그대로예요'); }
+  };
+  const deletePurchaseMemoHistory = async (movedAt: number) => {
+    if (!confirm('이 지난 메모를 삭제할까요?')) return;
+    const ref = doc(db, getCol('settings', colPrefix), 'purchaseMemo');
+    try {
+      await runTransaction(db, async tx => {
+        const snap = await tx.get(ref);
+        const history = snap.exists() && Array.isArray(snap.data().history) ? snap.data().history : [];
+        tx.set(ref, { history: history.filter((h: any) => h.movedAt !== movedAt) }, { merge: true });
+      });
+    } catch (e) { onFbError(e as any); }
   };
   const changePurchaseMemo = (memo: string) => {
     if (purchaseMemoConfirmedAt) return;
@@ -3372,9 +3395,16 @@ const App: React.FC = () => {
         await runTransaction(db, async tx => {
           const snap = await tx.get(ref);
           const memo = snap.exists() ? String(snap.data().memo || '') : '';
-          if (memo !== req.memo) throw new Error('미션허브 메모가 그새 바뀜');
+          const history: any[] = snap.exists() && Array.isArray(snap.data().history) ? snap.data().history : [];
+          if (memo !== req.memo) {
+            // 그새 '새 메모'로 넘어갔으면 지난 메모에서 찾아 처리
+            const hi = history.findIndex(h => h.memo === req.memo);
+            if (hi < 0) throw new Error('미션허브 메모가 그새 바뀜');
+            if (req.action === 'delete') tx.set(ref, { history: history.filter((_, i) => i !== hi) }, { merge: true });
+            return;
+          }
           if (req.action === 'confirm') tx.set(ref, { confirmedAt: req.clickedAt, confirmedMemo: memo }, { merge: true });
-          else tx.set(ref, { memo: '', updatedAt: Date.now() });
+          else tx.set(ref, { memo: '', updatedAt: Date.now() }, { merge: true });
         });
         await updateDoc(reqRef, { status: 'done', processedAt: Date.now() });
       } catch (e) {
@@ -6350,12 +6380,26 @@ const App: React.FC = () => {
                       <textarea
                         value={purchaseMemo}
                         disabled={!!purchaseMemoConfirmedAt}
-                        title={purchaseMemoConfirmedAt ? '윙_발주에서 확인완료한 메모 — 오른쪽 위 "새 메모"를 누르면 지우고 새로 쓸 수 있어요' : undefined}
+                        title={purchaseMemoConfirmedAt ? '윙_발주에서 확인완료한 메모 — 오른쪽 위 "새 메모"를 누르면 이 메모는 지난 메모로 옮겨지고 새로 쓸 수 있어요' : undefined}
                         onChange={e => changePurchaseMemo(e.target.value)}
                         placeholder="오늘 챙길 것, 전달사항 등을 적어두세요 🐰"
                         rows={Math.min(6, Math.max(2, purchaseMemo.split('\n').length))}
                         className={`w-full bg-transparent outline-none resize-none text-sm font-bold placeholder:text-pink-300 leading-relaxed ${purchaseMemoConfirmedAt ? 'text-gray-400 line-through cursor-not-allowed' : 'text-gray-700'}`}
                       />
+                      {purchaseMemoHistory.length > 0 && (
+                        <div className="mt-1 pt-1.5 border-t border-dashed border-pink-200 space-y-1">
+                          <div className="text-[10px] font-black text-pink-300">지난 메모 {purchaseMemoHistory.length}</div>
+                          {[...purchaseMemoHistory].reverse().map(h => (
+                            <div key={h.movedAt} className="flex items-start gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-bold text-gray-400 line-through whitespace-pre-wrap break-words">{h.memo}</div>
+                                {h.confirmedAt && <div className="text-[9px] font-bold text-emerald-500">✅ 확인완료 · {new Date(h.confirmedAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>}
+                              </div>
+                              <button onClick={() => deletePurchaseMemoHistory(h.movedAt)} className="shrink-0 text-[10px] font-bold text-gray-400 hover:text-red-500 border border-gray-200 hover:border-red-300 rounded px-1.5 py-0.5">삭제</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 flex-wrap">
                       <h2 className="hidden md:block text-xl font-black text-gray-900">구매목록</h2>
